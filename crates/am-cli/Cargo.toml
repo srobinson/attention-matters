@@ -3,8 +3,22 @@ name = "am-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI interface for the DAE attention engine"
+description = "CLI and MCP server for the DAE attention engine"
+
+[[bin]]
+name = "am"
+path = "src/main.rs"
 
 [dependencies]
 am-core = { workspace = true }
 am-store = { path = "../am-store" }
+rmcp = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -303,6 +303,41 @@ impl Store {
         Ok(())
     }
 
+    // --- Conversation buffer ---
+
+    pub fn append_buffer(&self, user_text: &str, assistant_text: &str) -> Result<usize> {
+        self.conn.execute(
+            "INSERT INTO conversation_buffer (user_text, assistant_text) VALUES (?1, ?2)",
+            params![user_text, assistant_text],
+        )?;
+        let count: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM conversation_buffer", [], |row| {
+                    row.get(0)
+                })?;
+        Ok(count)
+    }
+
+    pub fn drain_buffer(&self) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT user_text, assistant_text FROM conversation_buffer ORDER BY id")?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        self.conn.execute_batch("DELETE FROM conversation_buffer")?;
+        Ok(rows)
+    }
+
+    pub fn buffer_count(&self) -> Result<usize> {
+        let count: usize =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM conversation_buffer", [], |row| {
+                    row.get(0)
+                })?;
+        Ok(count)
+    }
+
     // --- Indexed queries ---
 
     pub fn get_occurrences_by_word(&self, word: &str) -> Result<Vec<Occurrence>> {
