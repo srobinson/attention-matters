@@ -7,3 +7,8 @@ description = "Persistence layer for am-core DAE state"
 
 [dependencies]
 am-core = { workspace = true }
+rusqlite = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
