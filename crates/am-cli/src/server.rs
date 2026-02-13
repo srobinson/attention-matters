@@ -98,7 +98,7 @@ struct ImportRequest {
 #[tool_router]
 impl AmServer {
     #[tool(
-        description = "Query the DAE geometric memory system. Returns composed context with conscious, subconscious, and novel recall sections."
+        description = "Query geometric memory. Call this at the START of every session with the user's first message to recall relevant context from past sessions. Returns conscious recall (insights you previously marked important), subconscious recall (relevant past conversations/documents), and novel connections (lateral associations). Use the returned context silently — weave it into your response naturally without announcing 'I remember...'."
     )]
     async fn am_query(
         &self,
@@ -127,7 +127,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Strengthen memory connections from response text. Activates words, applies drift and Kuramoto phase coupling, then persists to storage."
+        description = "Strengthen memory connections from your response text. Call this after giving a substantive response — it activates matching memories, drifts related concepts closer together on the manifold, and applies phase coupling. This is how the memory system consolidates over time. Not needed for every response — use after meaningful technical exchanges, not simple acknowledgements."
     )]
     async fn am_activate_response(
         &self,
@@ -166,7 +166,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Mark text as a conscious memory (salient insight). Extracts <salient> tags if present, otherwise stores the full text. Writes to both project and global databases."
+        description = "Mark an insight as conscious memory — something worth remembering across sessions and across projects. Use for: architecture decisions, user preferences, recurring patterns, hard-won debugging insights, project conventions. These surface as CONSCIOUS RECALL in future queries. Be selective — mark only genuinely reusable insights, not routine facts. Writes to both project-local and global (cross-project) memory."
     )]
     async fn am_salient(
         &self,
@@ -201,7 +201,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Buffer a conversation exchange (user + assistant messages). After 5 exchanges, automatically creates a new episode from the buffer."
+        description = "Buffer a conversation exchange. Call with each substantive user/assistant exchange pair. After 5 exchanges, automatically creates a memory episode on the geometric manifold. This is how conversations become searchable memories in future sessions. Skip trivial exchanges (greetings, confirmations) — buffer the ones with real content."
     )]
     async fn am_buffer(
         &self,
@@ -253,7 +253,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Ingest a document as a new episode. Text is split into sentence chunks, tokenized, and placed on the geometric manifold. Persists to storage."
+        description = "Ingest a document as a memory episode. Use when the user shares important reference material (design docs, specs, READMEs) that should be searchable in future sessions. Text is chunked into neighborhoods and placed on the geometric manifold."
     )]
     async fn am_ingest(
         &self,
@@ -291,7 +291,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Get DAE system diagnostics: total occurrences (N), episode count, and conscious memory count."
+        description = "Get memory system statistics: total occurrences (N), episode count, and conscious memory count. Useful for understanding memory state. Not needed routinely — call when the user asks about memory or for diagnostics."
     )]
     async fn am_stats(&self) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
@@ -347,9 +347,23 @@ impl ServerHandler for AmServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
             instructions: Some(
-                "DAE (Daemon Attention Engine) geometric memory system. \
-                 Query memories, strengthen connections, mark salient insights, \
-                 buffer conversations, ingest documents, and manage state."
+                "You have persistent geometric memory across sessions via the DAE attention engine.\n\n\
+                 SESSION LIFECYCLE:\n\
+                 1. RECALL: At session start, call am_query with the user's first message or task description. \
+                    Use returned context silently — integrate naturally, never announce \"I remember...\".\n\
+                 2. ENGAGE: During the session, call am_buffer with substantive exchange pairs. \
+                    Skip trivial exchanges (greetings, yes/no). After 5 buffered exchanges, \
+                    a memory episode is created automatically.\n\
+                 3. STRENGTHEN: After giving a meaningful technical response, call am_activate_response \
+                    with your response text to consolidate related memories.\n\
+                 4. MARK INSIGHTS: When you discover architecture decisions, user preferences, \
+                    recurring patterns, or hard-won insights, call am_salient to store them as \
+                    conscious memory. These persist globally across all projects.\n\n\
+                 PRINCIPLES:\n\
+                 - Memory should be invisible to the user. Don't mention the memory system unless asked.\n\
+                 - Be selective with am_salient — mark genuinely reusable insights, not routine facts.\n\
+                 - If am_query returns empty, that's fine — the project is new. Don't mention it.\n\
+                 - Novel connections in query results are lateral associations — use them for creative leaps."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),

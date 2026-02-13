@@ -25,6 +25,10 @@ just test     # cargo test --workspace
 just fmt      # cargo fmt
 ```
 
+## Memory
+
+This project has persistent geometric memory via the `am` MCP server. Query memory at session start with the user's task. Buffer substantive exchanges. Mark architecture decisions and hard-won insights as salient.
+
 ## Module Map (am-core)
 
 | Module | Purpose |
