@@ -55,7 +55,11 @@ fn detect_git_root(from: &Path) -> Option<PathBuf> {
 /// Falls back to hashing cwd if not in a git repo.
 fn resolve_project_id(project_name: Option<&str>) -> String {
     if let Some(name) = project_name {
-        return sanitize_name(name);
+        let sanitized = sanitize_name(name);
+        if !sanitized.is_empty() {
+            return sanitized;
+        }
+        // Empty after sanitization — fall through to auto-detection
     }
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -339,6 +343,18 @@ mod tests {
         assert_eq!(sanitize_name("hello world"), "hello_world");
         assert_eq!(sanitize_name("my/project"), "my_project");
         assert_eq!(sanitize_name("valid-name_123"), "valid-name_123");
+    }
+
+    #[test]
+    fn test_empty_name_falls_through_to_hash() {
+        // Empty string after sanitization should not produce ".db" filename
+        let id = resolve_project_id(Some(""));
+        assert!(
+            !id.is_empty(),
+            "empty project name should fall through to hash"
+        );
+        // Should be a hex hash (auto-detected from cwd/git)
+        assert!(id.len() >= 16);
     }
 
     #[test]
