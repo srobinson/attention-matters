@@ -43,7 +43,10 @@ fn ingest_query_roundtrip() {
     let mut system = DAESystem::new("test");
 
     let episode = ingest_text(SCIENCE_TEXT, Some("science"), &mut rng);
-    assert!(episode.neighborhoods.len() >= 2, "should chunk into multiple neighborhoods");
+    assert!(
+        episode.neighborhoods.len() >= 2,
+        "should chunk into multiple neighborhoods"
+    );
     let occ_count: usize = episode
         .neighborhoods
         .iter()
@@ -57,7 +60,12 @@ fn ingest_query_roundtrip() {
 
     let query_result = QueryEngine::process_query(&mut system, "quantum particles wave function");
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(&mut system, &surface, &query_result, &query_result.interference);
+    let composed = compose_context(
+        &mut system,
+        &surface,
+        &query_result,
+        &query_result.interference,
+    );
 
     // Should have non-empty context since query terms overlap with ingested text
     assert!(
@@ -98,9 +106,15 @@ fn conscious_memory_flow() {
     );
 
     // Query with terms from the salient text
-    let query_result = QueryEngine::process_query(&mut system, "quantum entanglement teleportation");
+    let query_result =
+        QueryEngine::process_query(&mut system, "quantum entanglement teleportation");
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(&mut system, &surface, &query_result, &query_result.interference);
+    let composed = compose_context(
+        &mut system,
+        &surface,
+        &query_result,
+        &query_result.interference,
+    );
 
     assert!(
         composed.context.contains("CONSCIOUS RECALL:"),
@@ -127,9 +141,15 @@ fn multi_episode_recall() {
 
     // Query with terms spanning science + cooking
     system.add_to_conscious("particles and sugars react under heat", &mut rng);
-    let query_result = QueryEngine::process_query(&mut system, "particles sugars temperature reaction");
+    let query_result =
+        QueryEngine::process_query(&mut system, "particles sugars temperature reaction");
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(&mut system, &surface, &query_result, &query_result.interference);
+    let composed = compose_context(
+        &mut system,
+        &surface,
+        &query_result,
+        &query_result.interference,
+    );
 
     assert!(
         !composed.context.is_empty(),
@@ -228,7 +248,10 @@ fn serde_roundtrip_with_query() {
         "query results should be identical after serde roundtrip"
     );
     assert_eq!(composed1.metrics.conscious, composed2.metrics.conscious);
-    assert_eq!(composed1.metrics.subconscious, composed2.metrics.subconscious);
+    assert_eq!(
+        composed1.metrics.subconscious,
+        composed2.metrics.subconscious
+    );
     assert_eq!(composed1.metrics.novel, composed2.metrics.novel);
 }
 
@@ -275,9 +298,17 @@ fn empty_system_query() {
 
     let query_result = QueryEngine::process_query(&mut system, "anything at all");
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(&mut system, &surface, &query_result, &query_result.interference);
+    let composed = compose_context(
+        &mut system,
+        &surface,
+        &query_result,
+        &query_result.interference,
+    );
 
-    assert!(composed.context.is_empty(), "empty system should produce empty context");
+    assert!(
+        composed.context.is_empty(),
+        "empty system should produce empty context"
+    );
     assert_eq!(composed.metrics.conscious, 0);
     assert_eq!(composed.metrics.subconscious, 0);
     assert_eq!(composed.metrics.novel, 0);

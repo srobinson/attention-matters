@@ -260,10 +260,7 @@ mod tests {
         // Whether episode is vivid also depends on mass > 0.5
         // With N=12, mass = 4/12 * 1.0 = 0.333 < 0.5 — may not be vivid
         // This tests the logic: all surfaced but mass may be too small
-        assert!(
-            !surface.surfaced.is_empty(),
-            "all words should surface"
-        );
+        assert!(!surface.surfaced.is_empty(), "all words should surface");
 
         // All surfaced → at least neighborhoods should be vivid
         assert!(
@@ -332,7 +329,10 @@ mod tests {
         let result = QueryEngine::process_query(&mut sys, "nonexistent words here");
         let surface = compute_surface(&sys, &result);
 
-        assert!(surface.surfaced.is_empty(), "no words activated → empty surface");
+        assert!(
+            surface.surfaced.is_empty(),
+            "no words activated → empty surface"
+        );
         assert!(surface.vivid_neighborhood_ids.is_empty());
         assert!(surface.vivid_episode_ids.is_empty());
         assert!(surface.fragments.is_empty());
@@ -379,12 +379,8 @@ mod tests {
         use crate::neighborhood::Neighborhood;
 
         let mut rng = rng();
-        let nbhd = Neighborhood::from_tokens(
-            &to_tokens(&["a", "b", "c", "d"]),
-            None,
-            "a b c d",
-            &mut rng,
-        );
+        let nbhd =
+            Neighborhood::from_tokens(&to_tokens(&["a", "b", "c", "d"]), None, "a b c d", &mut rng);
 
         // neighborhood has 4 occurrences
         // is_vivid checks: count > episode_count * THRESHOLD
@@ -392,7 +388,10 @@ mod tests {
         assert!(nbhd.is_vivid(6), "4 > 6*0.5=3 should be vivid");
 
         // 4 > 8 * 0.5 → 4 > 4 → false (not strictly greater)
-        assert!(!nbhd.is_vivid(8), "4 > 8*0.5=4 should NOT be vivid (equal, not greater)");
+        assert!(
+            !nbhd.is_vivid(8),
+            "4 > 8*0.5=4 should NOT be vivid (equal, not greater)"
+        );
 
         // 4 > 10 * 0.5 → 4 > 5 → false
         assert!(!nbhd.is_vivid(10), "4 > 10*0.5=5 should NOT be vivid");
@@ -433,11 +432,14 @@ mod tests {
         let result = QueryEngine::process_query(&mut sys, "shared only1 only2 only3");
         let surface = compute_surface(&sys, &result);
 
-        // Verify per-neighborhood counts are tracked
+        // Both neighborhoods have surfaced words, so both should be tracked
         assert!(
-            surface.neighborhood_surfaced_counts.contains_key(&n1_id)
-                || surface.neighborhood_surfaced_counts.contains_key(&n2_id),
-            "should track surfaced counts per neighborhood"
+            surface.neighborhood_surfaced_counts.contains_key(&n1_id),
+            "n1 should have surfaced counts"
+        );
+        assert!(
+            surface.neighborhood_surfaced_counts.contains_key(&n2_id),
+            "n2 should have surfaced counts"
         );
     }
 }

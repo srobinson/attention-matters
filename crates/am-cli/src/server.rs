@@ -381,7 +381,7 @@ mod tests {
 
     fn parse_result(result: &CallToolResult) -> serde_json::Value {
         let text = text_from_result(result);
-        serde_json::from_str(&text).unwrap_or(serde_json::Value::Null)
+        serde_json::from_str(&text).expect("handler should return valid JSON")
     }
 
     #[tokio::test]
@@ -613,7 +613,9 @@ mod tests {
         // Ingest
         server
             .am_ingest(Parameters(IngestRequest {
-                text: "First document about testing. With multiple sentences here. And a final line.".to_string(),
+                text:
+                    "First document about testing. With multiple sentences here. And a final line."
+                        .to_string(),
                 name: Some("doc1".to_string()),
             }))
             .await

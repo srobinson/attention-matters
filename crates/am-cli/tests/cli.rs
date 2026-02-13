@@ -79,12 +79,12 @@ fn query_after_ingest() {
         .assert()
         .success();
 
-    // Query — should return something (even if "no memories found" initially,
-    // at minimum the command should succeed)
+    // Query should succeed and produce output (not crash or hang)
     am_cmd(&dir)
         .args(["query", "--project", "test-query", "quantum particles"])
         .assert()
-        .success();
+        .success()
+        .stdout(predicate::str::is_empty().not());
 }
 
 #[test]
@@ -154,8 +154,11 @@ fn extract_stat_value(output: &str, prefix: &str) -> String {
     output
         .lines()
         .find(|l| l.contains(prefix))
-        .map(|l| l.split_whitespace().last().unwrap_or("").to_string())
-        .unwrap_or_default()
+        .unwrap_or_else(|| panic!("stat line containing '{prefix}' not found in output:\n{output}"))
+        .split_whitespace()
+        .last()
+        .unwrap()
+        .to_string()
 }
 
 #[test]
@@ -178,6 +181,9 @@ fn ingest_dir() {
     // Non-matching extension should be skipped
     std::fs::write(docs_dir.join("ignore.json"), "{}").unwrap();
 
+    // Use a dummy positional arg (first.md) since `files` is required,
+    // then --dir scans for additional .md/.txt files (second.md).
+    // first.md appears both as positional and from dir scan → 3 episodes.
     am_cmd(&dir)
         .args(["ingest", "--project", "test-dir", "--dir"])
         .arg(&docs_dir)
@@ -186,7 +192,6 @@ fn ingest_dir() {
         .success()
         .stdout(predicate::str::contains("ingested"));
 
-    // The cmd creates 1 episode per file, so we expect at least 2
     let output = am_cmd(&dir)
         .args(["stats", "--project", "test-dir"])
         .output()
@@ -196,9 +201,11 @@ fn ingest_dir() {
     let episodes: usize = extract_stat_value(&stdout, "episodes:")
         .parse()
         .unwrap_or(0);
-    assert!(
-        episodes >= 2,
-        "should have at least 2 episodes from dir, got {episodes}"
+    // 3 episodes: first.md (positional) + first.md (dir scan) + second.md (dir scan)
+    // .json file is correctly skipped
+    assert_eq!(
+        episodes, 3,
+        "expected 3 episodes (first.md twice + second.md), got {episodes}"
     );
 }
 
