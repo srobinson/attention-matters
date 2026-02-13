@@ -11,7 +11,7 @@ use crate::tokenizer::tokenize;
 /// Reference to an occurrence by its location in the hierarchy.
 /// (episode_idx, neighborhood_idx, occurrence_idx)
 /// episode_idx: usize::MAX means conscious_episode, otherwise index into episodes vec.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OccurrenceRef {
     pub episode_idx: usize,
     pub neighborhood_idx: usize,
