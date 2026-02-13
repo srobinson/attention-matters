@@ -1,0 +1,9 @@
+[package]
+name = "am-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Persistence layer for am-core DAE state"
+
+[dependencies]
+am-core = { workspace = true }

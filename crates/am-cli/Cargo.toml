@@ -1,0 +1,10 @@
+[package]
+name = "am-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI interface for the DAE attention engine"
+
+[dependencies]
+am-core = { workspace = true }
+am-store = { path = "../am-store" }

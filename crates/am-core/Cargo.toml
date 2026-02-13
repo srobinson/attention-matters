@@ -1,0 +1,16 @@
+[package]
+name = "am-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DAE geometric memory engine — pure math, zero I/O"
+
+[dependencies]
+rand = { workspace = true }
+uuid = { workspace = true }
+regex = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+approx = "0.5"

@@ -1,0 +1,21 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/am-core",
+    "crates/am-store",
+    "crates/am-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+am-core = { path = "crates/am-core" }
+am-store = { path = "crates/am-store" }
+rand = "0.9"
+uuid = { version = "1", features = ["v4", "serde"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
