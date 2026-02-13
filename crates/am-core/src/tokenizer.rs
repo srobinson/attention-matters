@@ -118,8 +118,8 @@ mod tests {
 
     #[test]
     fn test_ingest_text_3_sentence_chunks() {
-        let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
         use rand::SeedableRng;
+        let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
         let text = "First sentence. Second sentence. Third sentence. Fourth sentence. Fifth sentence. Sixth sentence.";
         let ep = ingest_text(text, Some("test"), &mut rng);
 
@@ -130,8 +130,8 @@ mod tests {
 
     #[test]
     fn test_ingest_text_empty() {
-        let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
         use rand::SeedableRng;
+        let mut rng = rand::rngs::SmallRng::seed_from_u64(42);
         let ep = ingest_text("", None, &mut rng);
         assert_eq!(ep.neighborhoods.len(), 0);
     }

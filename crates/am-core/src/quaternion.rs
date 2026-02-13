@@ -215,7 +215,8 @@ impl Mul for Quaternion {
 
 /// Box-Muller transform for generating Gaussian-distributed random numbers.
 fn gauss_random(rng: &mut impl Rng) -> f64 {
-    let u1: f64 = rng.random();
+    // Clamp u1 away from 0 to avoid ln(0) = -inf
+    let u1: f64 = rng.random::<f64>().max(f64::MIN_POSITIVE);
     let u2: f64 = rng.random();
     (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
 }
