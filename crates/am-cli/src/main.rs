@@ -17,10 +17,6 @@ struct Cli {
     #[arg(long, global = true)]
     project: Option<String>,
 
-    /// Explicit database path (overrides --project and auto-detection)
-    #[arg(long, global = true)]
-    db: Option<PathBuf>,
-
     /// Enable verbose debug output
     #[arg(long, global = true)]
     verbose: bool,
@@ -68,7 +64,11 @@ enum Commands {
 }
 
 fn open_store(cli: &Cli) -> Result<ProjectStore> {
-    ProjectStore::open(cli.project.as_deref(), None).context("failed to open project store")
+    let base_dir = std::env::var("AM_DATA_DIR")
+        .ok()
+        .map(std::path::PathBuf::from);
+    ProjectStore::open(cli.project.as_deref(), base_dir.as_deref())
+        .context("failed to open project store")
 }
 
 fn init_tracing(verbose: bool) {
