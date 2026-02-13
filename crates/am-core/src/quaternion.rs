@@ -183,7 +183,6 @@ impl Quaternion {
     pub fn from_array(arr: [f64; 4]) -> Self {
         Self::new(arr[0], arr[1], arr[2], arr[3])
     }
-
 }
 
 impl std::ops::Neg for Quaternion {
@@ -241,8 +240,16 @@ mod tests {
 
     fn assert_approx_eq(a: Quaternion, b: Quaternion, tol: f64) {
         // Check both q and -q (antipodal equivalence for rotations)
-        let direct = (a.w - b.w).abs().max((a.x - b.x).abs()).max((a.y - b.y).abs()).max((a.z - b.z).abs());
-        let antipodal = (a.w + b.w).abs().max((a.x + b.x).abs()).max((a.y + b.y).abs()).max((a.z + b.z).abs());
+        let direct = (a.w - b.w)
+            .abs()
+            .max((a.x - b.x).abs())
+            .max((a.y - b.y).abs())
+            .max((a.z - b.z).abs());
+        let antipodal = (a.w + b.w)
+            .abs()
+            .max((a.x + b.x).abs())
+            .max((a.y + b.y).abs())
+            .max((a.z + b.z).abs());
         let min_diff = direct.min(antipodal);
         assert!(
             min_diff < tol,

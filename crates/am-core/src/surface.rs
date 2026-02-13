@@ -21,10 +21,7 @@ pub struct SurfaceResult {
 }
 
 /// Compute which content surfaces from activation and interference.
-pub fn compute_surface(
-    system: &DAESystem,
-    query_result: &QueryResult,
-) -> SurfaceResult {
+pub fn compute_surface(system: &DAESystem, query_result: &QueryResult) -> SurfaceResult {
     let n = system.n();
     let mut surfaced: HashSet<OccurrenceRef> = HashSet::new();
 
@@ -135,7 +132,9 @@ mod tests {
         let mut ep = Episode::new("memories");
         ep.add_neighborhood(Neighborhood::from_tokens(
             &to_tokens(&["quantum", "physics"]),
-            None, "quantum physics", &mut rng,
+            None,
+            "quantum physics",
+            &mut rng,
         ));
         sys.add_episode(ep);
         sys.add_to_conscious("quantum mechanics", &mut rng);
@@ -155,7 +154,9 @@ mod tests {
         let mut ep = Episode::new("memories");
         ep.add_neighborhood(Neighborhood::from_tokens(
             &to_tokens(&["quantum", "physics", "novel"]),
-            None, "quantum physics novel", &mut rng,
+            None,
+            "quantum physics novel",
+            &mut rng,
         ));
         sys.add_episode(ep);
         sys.add_to_conscious("quantum mechanics", &mut rng);
@@ -164,9 +165,10 @@ mod tests {
         let surface = compute_surface(&sys, &result);
 
         // "novel" is only in subconscious — should be surfaced as novel
-        let novel_surfaced = surface.surfaced.iter().any(|r| {
-            sys.get_occurrence(*r).word == "novel"
-        });
+        let novel_surfaced = surface
+            .surfaced
+            .iter()
+            .any(|r| sys.get_occurrence(*r).word == "novel");
         assert!(novel_surfaced, "novel word should be surfaced");
     }
 }

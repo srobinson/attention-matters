@@ -103,11 +103,8 @@ impl WireExport {
     /// Create wire export from domain DAESystem.
     pub fn from_system(system: &DAESystem) -> Self {
         let conscious = domain_episode_to_wire(&system.conscious_episode);
-        let episodes: Vec<WireEpisode> = system
-            .episodes
-            .iter()
-            .map(domain_episode_to_wire)
-            .collect();
+        let episodes: Vec<WireEpisode> =
+            system.episodes.iter().map(domain_episode_to_wire).collect();
 
         let total_activation: u64 = system
             .episodes
@@ -173,7 +170,11 @@ fn domain_episode_to_wire(ep: &Episode) -> WireEpisode {
         is_conscious: ep.is_conscious,
         id: ep.id.to_string(),
         timestamp: ep.timestamp.clone(),
-        neighborhoods: ep.neighborhoods.iter().map(domain_neighborhood_to_wire).collect(),
+        neighborhoods: ep
+            .neighborhoods
+            .iter()
+            .map(domain_neighborhood_to_wire)
+            .collect(),
     }
 }
 
@@ -182,13 +183,17 @@ fn domain_neighborhood_to_wire(nbhd: &Neighborhood) -> WireNeighborhood {
         seed: nbhd.seed.to_array(),
         id: nbhd.id.to_string(),
         source_text: nbhd.source_text.clone(),
-        occurrences: nbhd.occurrences.iter().map(|occ| WireOccurrence {
-            word: occ.word.clone(),
-            position: occ.position.to_array(),
-            phasor: occ.phasor.theta,
-            activation_count: occ.activation_count,
-            neighborhood_id: occ.neighborhood_id.to_string(),
-        }).collect(),
+        occurrences: nbhd
+            .occurrences
+            .iter()
+            .map(|occ| WireOccurrence {
+                word: occ.word.clone(),
+                position: occ.position.to_array(),
+                phasor: occ.phasor.theta,
+                activation_count: occ.activation_count,
+                neighborhood_id: occ.neighborhood_id.to_string(),
+            })
+            .collect(),
     }
 }
 
@@ -227,11 +232,15 @@ mod tests {
         let mut ep = Episode::new("memories");
         ep.add_neighborhood(Neighborhood::from_tokens(
             &to_tokens(&["hello", "world"]),
-            None, "hello world", &mut rng,
+            None,
+            "hello world",
+            &mut rng,
         ));
         ep.add_neighborhood(Neighborhood::from_tokens(
             &to_tokens(&["rust", "is", "great"]),
-            None, "rust is great", &mut rng,
+            None,
+            "rust is great",
+            &mut rng,
         ));
         sys.add_episode(ep);
         sys.add_to_conscious("test conscious", &mut rng);
@@ -352,7 +361,9 @@ mod tests {
         let sys2 = import_json(&json).unwrap();
 
         let p1 = sys.episodes[0].neighborhoods[0].occurrences[0].phasor.theta;
-        let p2 = sys2.episodes[0].neighborhoods[0].occurrences[0].phasor.theta;
+        let p2 = sys2.episodes[0].neighborhoods[0].occurrences[0]
+            .phasor
+            .theta;
 
         assert!(
             (p1 - p2).abs() < 1e-10,

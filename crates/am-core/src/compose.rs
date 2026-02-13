@@ -154,7 +154,11 @@ fn score_neighborhoods(
             let nbhd = system.get_neighborhood_for_occurrence(*r);
             (
                 nbhd.id,
-                if r.is_conscious() { usize::MAX } else { r.episode_idx },
+                if r.is_conscious() {
+                    usize::MAX
+                } else {
+                    r.episode_idx
+                },
                 occ.word.to_lowercase(),
                 occ.activation_count,
             )
@@ -165,15 +169,17 @@ fn score_neighborhoods(
         let weight = system.get_word_weight(word);
         let plasticity = 1.0 / (1.0 + (1.0 + *activation_count as f64).ln());
 
-        let entry = scored.entry(*nbhd_id).or_insert_with(|| ScoredNeighborhood {
-            neighborhood_id: *nbhd_id,
-            episode_idx: *ep_idx,
-            score: 0.0,
-            activated_count: 0,
-            words: HashSet::new(),
-            max_word_weight: 0.0,
-            max_plasticity: 0.0,
-        });
+        let entry = scored
+            .entry(*nbhd_id)
+            .or_insert_with(|| ScoredNeighborhood {
+                neighborhood_id: *nbhd_id,
+                episode_idx: *ep_idx,
+                score: 0.0,
+                activated_count: 0,
+                words: HashSet::new(),
+                max_word_weight: 0.0,
+                max_plasticity: 0.0,
+            });
 
         entry.score += weight * *activation_count as f64;
         entry.words.insert(word.clone());
@@ -311,7 +317,9 @@ mod tests {
         let mut ep = Episode::new("memories");
         ep.add_neighborhood(Neighborhood::from_tokens(
             &to_tokens(&["alpha", "beta"]),
-            None, "alpha beta", &mut rng,
+            None,
+            "alpha beta",
+            &mut rng,
         ));
         sys.add_episode(ep);
 

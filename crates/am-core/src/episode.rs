@@ -47,7 +47,10 @@ impl Episode {
 
     /// Total activation across all neighborhoods.
     pub fn total_activation(&self) -> u32 {
-        self.neighborhoods.iter().map(|n| n.total_activation()).sum()
+        self.neighborhoods
+            .iter()
+            .map(|n| n.total_activation())
+            .sum()
     }
 
     /// Episode mass: count/N * M
@@ -73,8 +76,12 @@ impl Episode {
     }
 
     /// Mutable iteration over all occurrences.
-    pub fn all_occurrences_mut(&mut self) -> impl Iterator<Item = &mut crate::occurrence::Occurrence> {
-        self.neighborhoods.iter_mut().flat_map(|n| n.occurrences.iter_mut())
+    pub fn all_occurrences_mut(
+        &mut self,
+    ) -> impl Iterator<Item = &mut crate::occurrence::Occurrence> {
+        self.neighborhoods
+            .iter_mut()
+            .flat_map(|n| n.occurrences.iter_mut())
     }
 }
 

@@ -87,7 +87,10 @@ impl QueryEngine {
                 .collect();
             (sub, con)
         } else {
-            (activation.subconscious.clone(), activation.conscious.clone())
+            (
+                activation.subconscious.clone(),
+                activation.conscious.clone(),
+            )
         };
 
         Self::drift_and_consolidate(system, &drift_sub);
@@ -162,7 +165,10 @@ impl QueryEngine {
             .collect();
 
         // Compute IDF weights
-        let weights: Vec<f64> = states.iter().map(|(_, _, _, w)| system.get_word_weight(w)).collect();
+        let weights: Vec<f64> = states
+            .iter()
+            .map(|(_, _, _, w)| system.get_word_weight(w))
+            .collect();
 
         // Collect all deltas
         let n = mobile.len();
@@ -448,15 +454,21 @@ mod tests {
         let mut ep = Episode::new("memories");
         let n1 = Neighborhood::from_tokens(
             &to_tokens(&["quantum", "physics", "particle"]),
-            None, "quantum physics particle", &mut rng,
+            None,
+            "quantum physics particle",
+            &mut rng,
         );
         let n2 = Neighborhood::from_tokens(
             &to_tokens(&["quantum", "computing", "algorithm"]),
-            None, "quantum computing algorithm", &mut rng,
+            None,
+            "quantum computing algorithm",
+            &mut rng,
         );
         let n3 = Neighborhood::from_tokens(
             &to_tokens(&["neural", "network", "learning"]),
-            None, "neural network learning", &mut rng,
+            None,
+            "neural network learning",
+            &mut rng,
         );
         ep.add_neighborhood(n1);
         ep.add_neighborhood(n2);
@@ -479,11 +491,15 @@ mod tests {
         let mut ep = Episode::new("test");
         let n1 = Neighborhood::from_tokens(
             &to_tokens(&["alpha", "beta", "gamma", "delta"]),
-            None, "alpha beta gamma delta", &mut rng,
+            None,
+            "alpha beta gamma delta",
+            &mut rng,
         );
         let n2 = Neighborhood::from_tokens(
             &to_tokens(&["alpha", "beta", "epsilon", "zeta"]),
-            None, "alpha beta epsilon zeta", &mut rng,
+            None,
+            "alpha beta epsilon zeta",
+            &mut rng,
         );
         ep.add_neighborhood(n1);
         ep.add_neighborhood(n2);
@@ -494,11 +510,16 @@ mod tests {
         let activation = QueryEngine::activate(&mut sys, "alpha beta gamma delta epsilon zeta");
 
         // Get refs for "alpha" which is in both neighborhoods
-        let alpha_refs: Vec<_> = activation.subconscious.iter()
+        let alpha_refs: Vec<_> = activation
+            .subconscious
+            .iter()
             .filter(|r| sys.get_occurrence(**r).word == "alpha")
             .copied()
             .collect();
-        assert!(alpha_refs.len() >= 2, "need alpha in at least 2 neighborhoods");
+        assert!(
+            alpha_refs.len() >= 2,
+            "need alpha in at least 2 neighborhoods"
+        );
 
         let pos_before_0 = sys.get_occurrence(alpha_refs[0]).position;
         let pos_before_1 = sys.get_occurrence(alpha_refs[1]).position;
@@ -524,7 +545,9 @@ mod tests {
         let mut ep = Episode::new("test");
         let mut n = Neighborhood::from_tokens(
             &to_tokens(&["word1", "word2"]),
-            None, "word1 word2", &mut rng,
+            None,
+            "word1 word2",
+            &mut rng,
         );
         // Make word1 anchored by setting high activation relative to container
         n.occurrences[0].activation_count = 100;
@@ -548,8 +571,11 @@ mod tests {
         let mut sys = make_test_system();
         let activation = QueryEngine::activate(&mut sys, "quantum");
 
-        let (interference, word_groups) =
-            QueryEngine::compute_interference(&sys, &activation.subconscious, &activation.conscious);
+        let (interference, word_groups) = QueryEngine::compute_interference(
+            &sys,
+            &activation.subconscious,
+            &activation.conscious,
+        );
 
         assert!(!interference.is_empty(), "should have interference results");
         assert!(!word_groups.is_empty(), "should have word groups");
@@ -577,7 +603,9 @@ mod tests {
         assert!(
             (k_con + k_sub - 1.0).abs() < 0.01,
             "K_CON + K_SUB should ≈ 1: {} + {} = {}",
-            k_con, k_sub, k_con + k_sub
+            k_con,
+            k_sub,
+            k_con + k_sub
         );
     }
 

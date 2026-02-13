@@ -180,7 +180,12 @@ impl DAESystem {
 
         let refs = match self.word_occurrence_index.get(&word_lower) {
             Some(refs) => refs.clone(),
-            None => return ActivationResult { subconscious: vec![], conscious: vec![] },
+            None => {
+                return ActivationResult {
+                    subconscious: vec![],
+                    conscious: vec![],
+                };
+            }
         };
 
         let mut subconscious = Vec::new();
@@ -208,8 +213,7 @@ impl DAESystem {
     /// pre-activates all occurrences once.
     pub fn add_to_conscious(&mut self, text: &str, rng: &mut impl Rng) -> Uuid {
         let tokens = tokenize(text);
-        let mut neighborhood =
-            Neighborhood::from_tokens(&tokens, None, text, rng);
+        let mut neighborhood = Neighborhood::from_tokens(&tokens, None, text, rng);
 
         for occ in &mut neighborhood.occurrences {
             occ.activate();
@@ -285,7 +289,9 @@ impl DAESystem {
     /// Get episode index for a neighborhood UUID.
     pub fn get_episode_idx_for_neighborhood(&mut self, neighborhood_id: Uuid) -> Option<usize> {
         self.ensure_indexes();
-        self.neighborhood_episode_index.get(&neighborhood_id).copied()
+        self.neighborhood_episode_index
+            .get(&neighborhood_id)
+            .copied()
     }
 
     /// Get the total number of neighborhoods across all episodes.

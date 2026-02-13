@@ -119,17 +119,15 @@ mod tests {
 
     #[test]
     fn test_golden_angle_maximizes_separation() {
-        let phasors: Vec<DaemonPhasor> = (0..10).map(|i| DaemonPhasor::from_index(i, 0.0)).collect();
+        let phasors: Vec<DaemonPhasor> =
+            (0..10).map(|i| DaemonPhasor::from_index(i, 0.0)).collect();
         for i in 0..phasors.len() {
             for j in (i + 1)..phasors.len() {
                 let mut diff = (phasors[i].theta - phasors[j].theta).abs();
                 if diff > std::f64::consts::PI {
                     diff = std::f64::consts::TAU - diff;
                 }
-                assert!(
-                    diff > 0.25,
-                    "phasors {i} and {j} too close: {diff} rad"
-                );
+                assert!(diff > 0.25, "phasors {i} and {j} too close: {diff} rad");
             }
         }
     }

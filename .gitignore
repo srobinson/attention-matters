@@ -1,6 +1,6 @@
-/target
-/nancy
-*.swp
-*.swo
-*~
 .DS_Store
+*.swo
+*.swp
+*~
+/.nancy
+/target

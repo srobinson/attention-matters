@@ -20,7 +20,12 @@ pub struct Occurrence {
 }
 
 impl Occurrence {
-    pub fn new(word: String, position: Quaternion, phasor: DaemonPhasor, neighborhood_id: Uuid) -> Self {
+    pub fn new(
+        word: String,
+        position: Quaternion,
+        phasor: DaemonPhasor,
+        neighborhood_id: Uuid,
+    ) -> Self {
         Self {
             word,
             position,
@@ -100,12 +105,7 @@ mod tests {
 
     #[test]
     fn test_plasticity_values() {
-        let cases = [
-            (0, 1.0),
-            (1, 0.591),
-            (10, 0.294),
-            (100, 0.178),
-        ];
+        let cases = [(0, 1.0), (1, 0.591), (10, 0.294), (100, 0.178)];
 
         for (c, expected) in cases {
             let occ = make_occ("test", c);
@@ -129,7 +129,10 @@ mod tests {
         let occ2 = make_occ("test", 3);
         let d1 = occ1.drift_rate(10);
         let d2 = occ2.drift_rate(10);
-        assert!(d2 > d1, "drift should increase with activation: {d1} vs {d2}");
+        assert!(
+            d2 > d1,
+            "drift should increase with activation: {d1} vs {d2}"
+        );
     }
 
     #[test]

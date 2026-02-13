@@ -29,7 +29,12 @@ impl Neighborhood {
 
     /// Create a neighborhood from tokens, placing each word within
     /// NEIGHBORHOOD_RADIUS of the seed with golden-angle phasor spacing.
-    pub fn from_tokens(tokens: &[String], seed: Option<Quaternion>, source_text: &str, rng: &mut impl Rng) -> Self {
+    pub fn from_tokens(
+        tokens: &[String],
+        seed: Option<Quaternion>,
+        source_text: &str,
+        rng: &mut impl Rng,
+    ) -> Self {
         let seed = seed.unwrap_or_else(|| Quaternion::random(rng));
         let mut neighborhood = Self::new(seed, source_text.to_string());
 
@@ -121,7 +126,8 @@ mod tests {
             let wrapped = diff.rem_euclid(std::f64::consts::TAU);
             let golden = crate::constants::GOLDEN_ANGLE;
             assert!(
-                (wrapped - golden).abs() < 1e-10 || (wrapped - golden + std::f64::consts::TAU).abs() < 1e-10,
+                (wrapped - golden).abs() < 1e-10
+                    || (wrapped - golden + std::f64::consts::TAU).abs() < 1e-10,
                 "phasor spacing not golden angle at index {i}: {wrapped}"
             );
         }
