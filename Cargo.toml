@@ -15,6 +15,7 @@ license = "MIT"
 am-core = { path = "crates/am-core" }
 am-store = { path = "crates/am-store" }
 rand = "0.9"
+rusqlite = { version = "0.32", features = ["bundled"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }
