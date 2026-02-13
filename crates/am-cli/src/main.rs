@@ -17,10 +17,6 @@ struct Cli {
     #[arg(long, global = true)]
     project: Option<String>,
 
-    /// Explicit database path (overrides --project and auto-detection)
-    #[arg(long, global = true)]
-    db: Option<PathBuf>,
-
     /// Enable verbose debug output
     #[arg(long, global = true)]
     verbose: bool,
