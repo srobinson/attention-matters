@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'You have persistent geometric memory via the am MCP server. Call am_query NOW with a summary of the user\\'s first message to recall relevant context from past sessions. Do this BEFORE responding or exploring the codebase. Then during the session, call am_buffer with substantive exchange pairs. After meaningful technical responses, call am_activate_response to strengthen memory connections.'"
+          }
+        ]
+      }
+    ]
+  }
+}
