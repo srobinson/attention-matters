@@ -28,16 +28,6 @@
           "type": "json",
           "path": "npm/@attention-matters/cli/package.json",
           "jsonpath": "$.dependencies['attention-matters']"
-        },
-        {
-          "type": "json",
-          "path": "npm/@alphab.io/am/package.json",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "json",
-          "path": "npm/@alphab.io/am/package.json",
-          "jsonpath": "$.dependencies['attention-matters']"
         }
       ],
       "changelog-sections": [

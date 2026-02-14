@@ -127,4 +127,3 @@ jobs:
           }
           publish npm/attention-matters
           publish npm/@attention-matters/cli
-          publish npm/@alphab.io/am
