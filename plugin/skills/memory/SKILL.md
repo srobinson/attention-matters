@@ -24,7 +24,7 @@ hooks:
             one substantive exchange. If not, the session's knowledge will be
             lost. Return {"decision": "block", "reason": "Call am_buffer with
             a summary of this session's key exchange before ending."} if no
-            buffer was sent. Otherwise return {"decision": "allow"}.
+            buffer was sent. Otherwise return {"decision": "approve"}.
 ---
 
 # Persistent Memory — attention-matters
