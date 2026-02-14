@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/srobinson/attention-matters/compare/v0.1.1...v0.1.2) (2026-02-14)
+
+
+### Bug Fixes
+
+* use macos-latest for x86_64 darwin builds ([2eefbc4](https://github.com/srobinson/attention-matters/commit/2eefbc4d26f1a7f81cc5b608938f4e26a4303c2b))
+
 ## [0.1.1](https://github.com/srobinson/attention-matters/compare/v0.1.0...v0.1.1) (2026-02-14)
 
 
