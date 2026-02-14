@@ -31,6 +31,7 @@ fn wait_for_pidfile(data_dir: &TempDir) {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    panic!("pidfile {} not created within 5s", pidfile.display());
 }
 
 /// Send the MCP initialize handshake so the server enters its main loop.
@@ -128,9 +129,10 @@ fn serve_exits_on_sigterm() {
     }
 
     let start = Instant::now();
-    let _ = child.wait().expect("wait");
+    let status = child.wait().expect("wait");
     let elapsed = start.elapsed();
 
+    assert!(status.success(), "SIGTERM should exit 0, got {status}");
     assert!(elapsed < Duration::from_secs(2), "took {elapsed:?}");
 }
 

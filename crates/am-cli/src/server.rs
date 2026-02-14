@@ -46,8 +46,12 @@ impl AmServer {
     /// even when the tokio runtime is shutting down.
     pub async fn checkpoint_wal(&self) {
         let state = self.state.lock().await;
-        state.store.project_store().checkpoint_truncate();
-        state.store.global_store().checkpoint_truncate();
+        if let Err(e) = state.store.project_store().checkpoint_truncate() {
+            tracing::warn!("project WAL checkpoint failed: {e}");
+        }
+        if let Err(e) = state.store.global_store().checkpoint_truncate() {
+            tracing::warn!("global WAL checkpoint failed: {e}");
+        }
         tracing::info!("WAL checkpoint complete (project + global)");
     }
 
