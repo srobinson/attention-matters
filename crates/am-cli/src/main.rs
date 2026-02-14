@@ -13,9 +13,58 @@ use rand::rngs::SmallRng;
 use rmcp::{ServiceExt, transport::stdio};
 
 #[derive(Parser)]
-#[command(name = "am", about = "DAE attention engine CLI and MCP server")]
+#[command(
+    name = "am",
+    about = "Geometric memory for AI agents — persistent recall across sessions",
+    long_about = "\
+\x1b[1mam\x1b[0m — Geometric memory for AI agents
+
+Models memory as points on a 3-sphere (S³ manifold) using quaternion positions,
+golden-angle phasors, IDF-weighted drift, and Kuramoto phase coupling. Memories
+aren't stored in flat text — they're positioned in geometric space where related
+concepts naturally cluster through physics-inspired dynamics.
+
+\x1b[1mHow it works:\x1b[0m
+  • Words are placed on S³ as quaternion positions within neighborhoods
+  • Querying activates matching words and drifts them closer via SLERP
+  • Phase coupling synchronizes related concepts across sessions
+  • Conscious memories (marked salient) persist globally across projects
+
+\x1b[1mAs an MCP server\x1b[0m (primary mode):
+  Claude Code runs `am serve` automatically. The AI calls these tools:
+    \x1b[36mam_query\x1b[0m              Recall context at session start
+    \x1b[36mam_activate_response\x1b[0m  Strengthen connections after responses
+    \x1b[36mam_salient\x1b[0m            Mark insights as conscious memory
+    \x1b[36mam_buffer\x1b[0m             Buffer exchanges → auto-create episodes
+    \x1b[36mam_ingest\x1b[0m             Ingest documents as memory episodes
+    \x1b[36mam_stats\x1b[0m              Memory system diagnostics
+    \x1b[36mam_export\x1b[0m / \x1b[36mam_import\x1b[0m  Portable state backup and restore
+
+\x1b[1mAs a CLI\x1b[0m (for humans):
+  Query, ingest, inspect, and manage memories directly.",
+    after_help = "\x1b[1mSetup with Claude Code:\x1b[0m
+  claude mcp add am -- npx -y attention-matters serve
+
+\x1b[1mQuick start:\x1b[0m
+  am ingest README.md              # Feed a document into memory
+  am query \"authentication flow\"   # Recall relevant context
+  am inspect                       # See what's in memory
+  am inspect conscious             # Browse conscious memories
+  am stats                         # System diagnostics
+
+\x1b[1mProject detection:\x1b[0m
+  am auto-detects the current project from git remote, repo root,
+  or manifest (Cargo.toml, package.json, pyproject.toml). Override
+  with --project <name> for explicit control.
+
+\x1b[1mData location:\x1b[0m  ~/.attention-matters/
+  Set AM_DATA_DIR to override.
+
+\x1b[2mhttps://github.com/srobinson/attention-matters\x1b[0m",
+    version
+)]
 struct Cli {
-    /// Override project auto-detection
+    /// Override project auto-detection (e.g., --project my-app)
     #[arg(long, global = true)]
     project: Option<String>,
 
@@ -30,47 +79,123 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Start MCP server on stdio transport
+    #[command(
+        long_about = "Start the MCP (Model Context Protocol) server on stdio transport.\n\n\
+            This is the primary mode — Claude Code launches this automatically\n\
+            when configured as an MCP server. The server exposes 8 tools that\n\
+            the AI agent calls to build and query geometric memory.",
+        after_help = "\x1b[1mSetup:\x1b[0m\n  \
+            claude mcp add am -- npx -y attention-matters serve\n\n\
+            \x1b[1mThe server exposes:\x1b[0m\n  \
+            am_query, am_activate_response, am_salient, am_buffer,\n  \
+            am_ingest, am_stats, am_export, am_import"
+    )]
     Serve,
 
-    /// Query the memory system
+    /// Query the memory system and show recall
+    #[command(
+        long_about = "Query the geometric memory system.\n\n\
+            Activates matching words on the S³ manifold, drifts related\n\
+            concepts closer via IDF-weighted SLERP, computes phasor\n\
+            interference, and returns composed context split into:\n\
+            • Conscious recall (previously marked salient)\n\
+            • Subconscious recall (from ingested documents/conversations)\n\
+            • Novel connections (lateral associations via interference)",
+        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+            am query \"authentication middleware\"\n  \
+            am query \"database schema migration\" --verbose"
+    )]
     Query {
-        /// Text to query
+        /// Text to query (natural language)
         text: String,
     },
 
-    /// Ingest a document file (.txt, .md, .html)
+    /// Ingest documents into geometric memory
+    #[command(
+        long_about = "Ingest document files as memory episodes.\n\n\
+            Text is split into 3-sentence chunks, each becoming a\n\
+            neighborhood of word occurrences placed on the S³ manifold\n\
+            with golden-angle phasor spacing. Supports .txt, .md, .html.",
+        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+            am ingest README.md ARCHITECTURE.md\n  \
+            am ingest --dir ./docs notes.txt\n  \
+            am ingest --project my-app spec.md"
+    )]
     Ingest {
         /// File path(s) to ingest
         #[arg(required = true)]
         files: Vec<PathBuf>,
 
-        /// Ingest all matching files in a directory
+        /// Also ingest .txt/.md/.html files from this directory
         #[arg(long)]
         dir: Option<PathBuf>,
     },
 
-    /// Show system statistics
+    /// Show memory system statistics
+    #[command(
+        long_about = "Display statistics about the current project's memory.\n\n\
+            Shows total occurrences (N), episode count, conscious memory\n\
+            count, database size, and activation distribution.",
+        after_help = "\x1b[1mExample:\x1b[0m\n  \
+            am stats\n  \
+            am stats --project openclaw"
+    )]
     Stats,
 
-    /// Export state to a JSON file
+    /// Export memory state to portable JSON
+    #[command(
+        long_about = "Export the full memory state as v0.7.2-compatible JSON.\n\n\
+            The exported file contains all episodes, neighborhoods,\n\
+            occurrences, and conscious memories. Can be imported on\n\
+            another machine or into a different project.",
+        after_help = "\x1b[1mExample:\x1b[0m\n  \
+            am export backup.json\n  \
+            am export --project my-app state.json"
+    )]
     Export {
         /// Output file path
         path: PathBuf,
     },
 
-    /// Import state from a JSON file
+    /// Import memory state from JSON
+    #[command(
+        long_about = "Import a previously exported memory state.\n\n\
+            Replaces the current project's memory with the imported\n\
+            state. Conscious memories are also replicated to the\n\
+            global cross-project store.",
+        after_help = "\x1b[1mExample:\x1b[0m\n  \
+            am import backup.json\n  \
+            am import --project my-app state.json"
+    )]
     Import {
         /// Input file path
         path: PathBuf,
     },
 
     /// Browse memories, episodes, and neighborhoods
+    #[command(
+        long_about = "Inspect the contents of geometric memory.\n\n\
+            Five modes let you see exactly what's stored:\n\
+            • overview (default) — summary with top words and recent episodes\n\
+            • conscious — list all conscious (salient) memories\n\
+            • episodes — list subconscious episodes with stats\n\
+            • neighborhoods — all neighborhoods ranked by activation\n\
+            • --query — run a query and show the full recall breakdown\n\n\
+            Trust requires transparency. This command shows you\n\
+            what the AI remembers and why.",
+        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+            am inspect                        # Overview\n  \
+            am inspect conscious              # List conscious memories\n  \
+            am inspect episodes --limit 50    # More episodes\n  \
+            am inspect neighborhoods --json   # Machine-readable\n  \
+            am inspect --query \"auth flow\"    # Query with full breakdown"
+    )]
     Inspect {
         /// What to inspect
         #[arg(value_enum, default_value_t = InspectMode::Overview)]
         mode: InspectMode,
 
-        /// Query text (for --query mode)
+        /// Run a query and show full recall breakdown
         #[arg(long, short)]
         query: Option<String>,
 
@@ -86,13 +211,13 @@ enum Commands {
 
 #[derive(Clone, ValueEnum)]
 enum InspectMode {
-    /// Overview: conscious count, episode count, top words
+    /// Summary with top words and recent episodes
     Overview,
-    /// List all conscious memories
+    /// List all conscious (salient) memories
     Conscious,
-    /// List episodes with summaries
+    /// List subconscious episodes with stats
     Episodes,
-    /// List neighborhoods by activation
+    /// All neighborhoods ranked by activation
     Neighborhoods,
 }
 
