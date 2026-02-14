@@ -1,4 +1,5 @@
 mod server;
+mod sync;
 
 use std::path::PathBuf;
 
@@ -207,6 +208,36 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Ingest Claude Code session transcripts into memory
+    #[command(
+        long_about = "Sync Claude Code session transcripts into geometric memory.\n\n\
+            Reads session transcripts from Claude Code's project directory\n\
+            and ingests them as memory episodes. Each session becomes one\n\
+            episode containing the substantive exchanges (user questions\n\
+            and assistant responses, excluding tool calls and system noise).\n\n\
+            This makes memory self-populating — past conversations become\n\
+            searchable context in future sessions without relying on the\n\
+            model calling am_buffer.",
+        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+            am sync                    # Ingest new transcripts since last sync\n  \
+            am sync --all              # Re-ingest all transcripts\n  \
+            am sync --dry-run          # Show what would be ingested\n  \
+            am sync --dir ~/.claude    # Custom Claude config directory"
+    )]
+    Sync {
+        /// Re-ingest all transcripts (ignore last-sync marker)
+        #[arg(long)]
+        all: bool,
+
+        /// Show what would be ingested without actually ingesting
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Override Claude config directory (default: ~/.claude or CLAUDE_CONFIG_DIR)
+        #[arg(long)]
+        dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -263,6 +294,7 @@ async fn main() -> Result<()> {
             limit,
             json,
         } => cmd_inspect(&cli, mode, query.as_deref(), *limit, *json),
+        Commands::Sync { all, dry_run, dir } => cmd_sync(&cli, *all, *dry_run, dir.as_deref()),
     }
 }
 
@@ -895,6 +927,153 @@ fn truncate_text(text: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &collapsed[..max_len.saturating_sub(3)])
     }
+}
+
+fn cmd_sync(
+    cli: &Cli,
+    all: bool,
+    dry_run: bool,
+    dir_override: Option<&std::path::Path>,
+) -> Result<()> {
+    let store = open_store(cli)?;
+    let mut system = store
+        .load_project_system()
+        .context("failed to load system")?;
+    let mut rng = SmallRng::from_os_rng();
+
+    let claude_dir = sync::resolve_claude_dir(dir_override);
+    let project_dir = match sync::find_project_dir(&claude_dir) {
+        Some(dir) => dir,
+        None => {
+            println!(
+                "No Claude Code project directory found for current working directory.\n\
+                 Searched: {}/projects/",
+                claude_dir.display()
+            );
+            println!(
+                "\nTip: Run this from your project root, or use --dir to specify the Claude config directory."
+            );
+            return Ok(());
+        }
+    };
+
+    let synced_sessions: std::collections::HashSet<String> = if all {
+        std::collections::HashSet::new()
+    } else {
+        store
+            .project_store()
+            .get_metadata("synced_sessions")
+            .ok()
+            .flatten()
+            .map(|s| s.split(',').map(String::from).collect())
+            .unwrap_or_default()
+    };
+
+    let sessions = sync::discover_sessions(&project_dir).context("failed to discover sessions")?;
+
+    let new_sessions: Vec<_> = sessions
+        .iter()
+        .filter(|s| !synced_sessions.contains(&s.session_id))
+        .collect();
+
+    let bold = "\x1b[1m";
+    let dim = "\x1b[2m";
+    let reset = "\x1b[0m";
+
+    if new_sessions.is_empty() {
+        println!(
+            "All {bold}{}{reset} sessions already synced.",
+            sessions.len()
+        );
+        return Ok(());
+    }
+
+    println!(
+        "{bold}Found {}{reset} new session(s) to sync {dim}(of {} total){reset}\n",
+        new_sessions.len(),
+        sessions.len()
+    );
+
+    let mut total_episodes = 0u32;
+    let mut total_text_len = 0usize;
+    let mut newly_synced: Vec<String> = synced_sessions.into_iter().collect();
+
+    for session in &new_sessions {
+        let text = match sync::extract_session_text(&session.path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("  warning: failed to parse {}: {e}", session.path.display());
+                continue;
+            }
+        };
+
+        if text.is_empty() {
+            if dry_run {
+                println!(
+                    "  {dim}skip{reset} {} (no substantive content)",
+                    &session.session_id[..8]
+                );
+            }
+            newly_synced.push(session.session_id.clone());
+            continue;
+        }
+
+        let text_preview = truncate_text(&text, 60);
+        total_text_len += text.len();
+
+        if dry_run {
+            println!(
+                "  {bold}sync{reset} {} ({} chars) {dim}{text_preview}{reset}",
+                &session.session_id[..8],
+                text.len()
+            );
+        } else {
+            let episode_name = format!("session-{}", &session.session_id[..8]);
+            let episode = ingest_text(&text, Some(&episode_name), &mut rng);
+            let nbhd_count = episode.neighborhoods.len();
+            system.add_episode(episode);
+            total_episodes += 1;
+
+            println!(
+                "  {bold}synced{reset} {} → {} neighborhoods {dim}{text_preview}{reset}",
+                &session.session_id[..8],
+                nbhd_count,
+            );
+
+            newly_synced.push(session.session_id.clone());
+        }
+    }
+
+    if dry_run {
+        println!(
+            "\n{dim}Dry run: would ingest ~{} chars from {} sessions.{reset}",
+            total_text_len,
+            new_sessions.len()
+        );
+    } else {
+        if total_episodes > 0 {
+            store
+                .save_project_system(&system)
+                .context("failed to save system")?;
+        }
+
+        // Update synced sessions list
+        newly_synced.sort();
+        newly_synced.dedup();
+        let synced_str = newly_synced.join(",");
+        store
+            .project_store()
+            .set_metadata("synced_sessions", &synced_str)
+            .context("failed to save sync state")?;
+
+        println!(
+            "\n{bold}Done.{reset} Ingested {total_episodes} episode(s). N={}, episodes={}",
+            system.n(),
+            system.episodes.len()
+        );
+    }
+
+    Ok(())
 }
 
 fn cmd_export(cli: &Cli, path: &std::path::Path) -> Result<()> {

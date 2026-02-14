@@ -367,6 +367,112 @@ fn inspect_json_outputs() {
 }
 
 #[test]
+fn sync_dry_run() {
+    let dir = TempDir::new().unwrap();
+
+    // Create a fake Claude project directory structure.
+    // sync --dir points at the Claude config dir; inside it needs projects/<encoded-cwd>/
+    let claude_dir = dir.path().join("fake-claude");
+    // Encode the CWD the same way sync.rs does: replace / with -
+    let cwd = std::env::current_dir().unwrap();
+    let encoded = cwd.to_string_lossy().replace('/', "-");
+    let project_dir = claude_dir.join("projects").join(&encoded);
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    // Write a session transcript with substantive content
+    let session_path = project_dir.join("abc-12345678.jsonl");
+    let mut f = std::fs::File::create(&session_path).unwrap();
+    use std::io::Write;
+    writeln!(f, "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"How does the geometric memory system handle quaternion drift on the S3 manifold?\"}}}}").unwrap();
+    writeln!(f, "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"The drift mechanism uses IDF-weighted SLERP to move occurrences closer to query centroids.\"}}]}}}}").unwrap();
+
+    // Dry run should find the session but not ingest
+    am_cmd(&dir)
+        .args([
+            "sync",
+            "--dry-run",
+            "--project",
+            "test-sync",
+            "--dir",
+        ])
+        .arg(&claude_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Found 1"))
+        .stdout(predicate::str::contains("sync"))
+        .stdout(predicate::str::contains("Dry run"));
+
+    // Stats should still be empty after dry run
+    am_cmd(&dir)
+        .args(["stats", "--project", "test-sync"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   0"));
+}
+
+#[test]
+fn sync_ingests_sessions() {
+    let dir = TempDir::new().unwrap();
+
+    let claude_dir = dir.path().join("fake-claude2");
+    let cwd = std::env::current_dir().unwrap();
+    let encoded = cwd.to_string_lossy().replace('/', "-");
+    let project_dir = claude_dir.join("projects").join(&encoded);
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    // Two sessions
+    use std::io::Write;
+    let mut f1 = std::fs::File::create(project_dir.join("sess-aaaaaaaa.jsonl")).unwrap();
+    writeln!(f1, "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"Explain the Kuramoto phase coupling model for memory synchronization.\"}}}}").unwrap();
+    writeln!(f1, "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Kuramoto coupling synchronizes phasor phases across neighborhoods that co-activate frequently.\"}}]}}}}").unwrap();
+
+    let mut f2 = std::fs::File::create(project_dir.join("sess-bbbbbbbb.jsonl")).unwrap();
+    writeln!(f2, "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"What is the golden angle spacing for phasor distribution on the manifold?\"}}}}").unwrap();
+    writeln!(f2, "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Golden angle is approximately 2.399 radians, derived from the golden ratio phi to maximize separation.\"}}]}}}}").unwrap();
+
+    // Real sync
+    am_cmd(&dir)
+        .args(["sync", "--project", "test-sync2", "--dir"])
+        .arg(&claude_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Found 2"))
+        .stdout(predicate::str::contains("synced"))
+        .stdout(predicate::str::contains("Done."));
+
+    // Stats should show 2 episodes
+    am_cmd(&dir)
+        .args(["stats", "--project", "test-sync2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   2"));
+
+    // Re-sync should say all synced
+    am_cmd(&dir)
+        .args(["sync", "--project", "test-sync2", "--dir"])
+        .arg(&claude_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already synced"));
+}
+
+#[test]
+fn sync_no_project_dir() {
+    let dir = TempDir::new().unwrap();
+
+    // Point at a dir with no projects/ subdirectory
+    let empty_claude = dir.path().join("empty-claude");
+    std::fs::create_dir_all(&empty_claude).unwrap();
+
+    am_cmd(&dir)
+        .args(["sync", "--project", "test-sync-empty", "--dir"])
+        .arg(&empty_claude)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No Claude Code project directory"));
+}
+
+#[test]
 fn project_isolation() {
     let dir = TempDir::new().unwrap();
 
