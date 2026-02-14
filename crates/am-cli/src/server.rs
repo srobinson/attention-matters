@@ -41,6 +41,16 @@ impl AmServer {
         })
     }
 
+    /// Explicitly flush WAL on both project and global stores.
+    /// Belt-and-suspenders with Store::Drop, but ensures checkpoint runs
+    /// even when the tokio runtime is shutting down.
+    pub async fn checkpoint_wal(&self) {
+        let state = self.state.lock().await;
+        state.store.project_store().checkpoint_truncate();
+        state.store.global_store().checkpoint_truncate();
+        tracing::info!("WAL checkpoint complete (project + global)");
+    }
+
     fn stats_json(system: &mut DAESystem) -> serde_json::Value {
         let n = system.n();
         let episodes = system.episodes.len();
