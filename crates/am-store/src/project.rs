@@ -426,6 +426,59 @@ fn merge_orphan_into(orphan_path: &Path, target_path: &Path) -> Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Startup GC — automatic size management
+// ---------------------------------------------------------------------------
+
+/// Run automatic GC if the project DB exceeds the soft size limit.
+fn startup_gc(store: &Store) {
+    let db_size = store.db_size();
+    if db_size < am_core::DB_SOFT_LIMIT_BYTES {
+        return;
+    }
+
+    tracing::info!(
+        "DB size {}MB exceeds {}MB soft limit — running GC",
+        db_size / (1024 * 1024),
+        am_core::DB_SOFT_LIMIT_BYTES / (1024 * 1024),
+    );
+
+    // Phase 1: evict occurrences at or below the activation floor
+    match store.gc_pass(am_core::ACTIVATION_FLOOR) {
+        Ok(result) => {
+            tracing::info!(
+                "GC phase 1: evicted {} occurrences (activation <= {}), \
+                 removed {} empty episodes. DB: {}MB → {}MB",
+                result.evicted_occurrences,
+                am_core::ACTIVATION_FLOOR,
+                result.removed_episodes,
+                result.before_size / (1024 * 1024),
+                result.after_size / (1024 * 1024),
+            );
+
+            // Phase 2: if still over limit, aggressively evict coldest
+            if result.after_size >= am_core::DB_SOFT_LIMIT_BYTES {
+                let target = (am_core::DB_SOFT_LIMIT_BYTES as f64
+                    * am_core::DB_GC_TARGET_RATIO) as u64;
+                match store.gc_to_target_size(target) {
+                    Ok(r2) => {
+                        tracing::info!(
+                            "GC phase 2 (aggressive): evicted {} more occurrences, \
+                             removed {} episodes. DB: {}MB → {}MB",
+                            r2.evicted_occurrences,
+                            r2.removed_episodes,
+                            r2.before_size / (1024 * 1024),
+                            r2.after_size / (1024 * 1024),
+                        );
+                    }
+                    Err(e) => tracing::warn!("GC phase 2 failed: {e}"),
+                }
+            }
+        }
+        Err(e) => tracing::warn!("GC phase 1 failed: {e}"),
+    }
+}
+
 /// Manages per-project storage with a global conscious layer.
 ///
 /// Layout:
@@ -463,6 +516,9 @@ impl ProjectStore {
 
         let project = Store::open(&project_path)?;
         let global = Store::open(&global_path)?;
+
+        // Startup GC: if project DB exceeds soft limit, evict cold occurrences
+        startup_gc(&project);
 
         Ok(Self {
             project,

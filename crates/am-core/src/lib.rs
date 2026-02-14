@@ -22,7 +22,8 @@ pub mod tokenizer;
 
 pub use compose::{ContextMetrics, ContextResult, compose_context, extract_salient};
 pub use constants::{
-    EPSILON, GOLDEN_ANGLE, M, NEIGHBORHOOD_RADIUS, PHI, SLERP_THRESHOLD, THRESHOLD,
+    ACTIVATION_FLOOR, DB_GC_TARGET_RATIO, DB_SOFT_LIMIT_BYTES, EPSILON, GOLDEN_ANGLE, M,
+    NEIGHBORHOOD_RADIUS, PHI, SLERP_THRESHOLD, THRESHOLD,
 };
 pub use episode::Episode;
 pub use neighborhood::Neighborhood;

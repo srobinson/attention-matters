@@ -280,12 +280,25 @@ fn cmd_stats(cli: &Cli) -> Result<()> {
         .load_project_system()
         .context("failed to load system")?;
 
-    println!("project:   {}", store.project_id());
-    println!("N:         {}", system.n());
-    println!("episodes:  {}", system.episodes.len());
+    let db_size = store.project_store().db_size();
+    let activation = store
+        .project_store()
+        .activation_distribution()
+        .context("failed to get activation stats")?;
+
+    println!("project:    {}", store.project_id());
+    println!("N:          {}", system.n());
+    println!("episodes:   {}", system.episodes.len());
     println!(
-        "conscious: {}",
+        "conscious:  {}",
         system.conscious_episode.neighborhoods.len()
+    );
+    println!("db_size:    {:.1}MB", db_size as f64 / (1024.0 * 1024.0));
+    println!("activation: mean={:.2}, max={}, zero={}/{}",
+        activation.mean_activation,
+        activation.max_activation,
+        activation.zero_activation,
+        activation.total,
     );
     Ok(())
 }
