@@ -1,14 +1,19 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "bootstrap-sha": "dca0527",
+  "bootstrap-sha": "93fdcc9",
   "packages": {
     ".": {
-      "release-type": "rust",
+      "release-type": "simple",
       "component": "attention-matters",
       "include-component-in-tag": false,
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
       "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
         {
           "type": "json",
           "path": "npm/attention-matters/package.json",
@@ -46,6 +51,5 @@
         { "type": "ci", "section": "CI", "hidden": true }
       ]
     }
-  },
-  "plugins": []
+  }
 }

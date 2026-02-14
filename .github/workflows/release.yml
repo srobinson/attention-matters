@@ -45,8 +45,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
@@ -65,7 +64,6 @@ jobs:
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ../../../am-${{ matrix.target }}.tar.gz am
-          cd ../../..
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
