@@ -243,6 +243,130 @@ fn missing_required_args() {
 }
 
 #[test]
+fn inspect_overview_fresh_db() {
+    let dir = TempDir::new().unwrap();
+    am_cmd(&dir)
+        .args(["inspect", "--project", "test-inspect"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("MEMORY OVERVIEW"))
+        .stdout(predicate::str::contains("occurrences:"))
+        .stdout(predicate::str::contains("episodes:"))
+        .stdout(predicate::str::contains("conscious:"));
+}
+
+#[test]
+fn inspect_after_ingest() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("inspect.txt");
+    std::fs::write(
+        &input,
+        "Geometric memory models encode information on manifolds. \
+         Quaternion representations enable smooth interpolation. \
+         Phase coupling synchronizes distributed memory traces.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-inspect2"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Overview should show data
+    am_cmd(&dir)
+        .args(["inspect", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RECENT EPISODES"))
+        .stdout(predicate::str::contains("TOP WORDS"));
+
+    // Episodes view
+    am_cmd(&dir)
+        .args(["inspect", "episodes", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("EPISODES"))
+        .stdout(predicate::str::contains("neighborhoods"));
+
+    // Neighborhoods view
+    am_cmd(&dir)
+        .args(["inspect", "neighborhoods", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("NEIGHBORHOODS"));
+
+    // Conscious view (empty after just ingest)
+    am_cmd(&dir)
+        .args(["inspect", "conscious", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CONSCIOUS MEMORIES"));
+
+    // JSON output
+    am_cmd(&dir)
+        .args(["inspect", "--json", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"total_occurrences\""))
+        .stdout(predicate::str::contains("\"episodes\""));
+
+    // Query mode
+    am_cmd(&dir)
+        .args([
+            "inspect",
+            "--query",
+            "geometric memory",
+            "--project",
+            "test-inspect2",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RECALL"));
+}
+
+#[test]
+fn inspect_json_outputs() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("jsontest.txt");
+    std::fs::write(
+        &input,
+        "Testing JSON output format for inspect command. \
+         Multiple sentences help create neighborhoods. \
+         This third sentence fills the minimum requirement.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-json"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Episodes JSON
+    am_cmd(&dir)
+        .args(["inspect", "episodes", "--json", "--project", "test-json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"name\""));
+
+    // Neighborhoods JSON
+    am_cmd(&dir)
+        .args([
+            "inspect",
+            "neighborhoods",
+            "--json",
+            "--project",
+            "test-json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"source_text\""));
+}
+
+#[test]
 fn project_isolation() {
     let dir = TempDir::new().unwrap();
 

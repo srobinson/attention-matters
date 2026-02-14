@@ -26,6 +26,36 @@ pub struct ActivationStats {
     pub mean_activation: f64,
 }
 
+#[derive(Debug)]
+pub struct EpisodeInfo {
+    pub id: String,
+    pub name: String,
+    pub is_conscious: bool,
+    pub timestamp: String,
+    pub neighborhood_count: u64,
+    pub occurrence_count: u64,
+    pub total_activation: u64,
+}
+
+#[derive(Debug)]
+pub struct NeighborhoodInfo {
+    pub id: String,
+    pub source_text: String,
+    pub occurrence_count: u64,
+    pub total_activation: u64,
+}
+
+#[derive(Debug)]
+pub struct NeighborhoodDetail {
+    pub id: String,
+    pub source_text: String,
+    pub episode_name: String,
+    pub is_conscious: bool,
+    pub occurrence_count: u64,
+    pub total_activation: u64,
+    pub max_activation: u32,
+}
+
 pub struct Store {
     conn: Connection,
 }
@@ -449,6 +479,129 @@ impl Store {
             parse_uuid(&id_str)
         })
         .collect()
+    }
+
+    // --- Inspection queries (SQL-level, no full system load) ---
+
+    /// List all episodes with summary stats.
+    pub fn list_episodes(&self) -> Result<Vec<EpisodeInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT e.id, e.name, e.is_conscious, e.timestamp,
+                    COUNT(DISTINCT n.id) as nbhd_count,
+                    COUNT(o.id) as occ_count,
+                    COALESCE(SUM(o.activation_count), 0) as total_activation
+             FROM episodes e
+             LEFT JOIN neighborhoods n ON n.episode_id = e.id
+             LEFT JOIN occurrences o ON o.neighborhood_id = n.id
+             GROUP BY e.id
+             ORDER BY e.is_conscious DESC, e.rowid",
+        )?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(EpisodeInfo {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    is_conscious: row.get::<_, i32>(2)? != 0,
+                    timestamp: row.get(3)?,
+                    neighborhood_count: row.get(4)?,
+                    occurrence_count: row.get(5)?,
+                    total_activation: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    /// List conscious neighborhoods with their source text.
+    pub fn list_conscious_neighborhoods(&self) -> Result<Vec<NeighborhoodInfo>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT n.id, n.source_text, COUNT(o.id) as occ_count,
+                    COALESCE(SUM(o.activation_count), 0) as total_activation
+             FROM neighborhoods n
+             JOIN episodes e ON n.episode_id = e.id
+             LEFT JOIN occurrences o ON o.neighborhood_id = n.id
+             WHERE e.is_conscious = 1
+             GROUP BY n.id
+             ORDER BY n.rowid",
+        )?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(NeighborhoodInfo {
+                    id: row.get(0)?,
+                    source_text: row.get(1)?,
+                    occurrence_count: row.get(2)?,
+                    total_activation: row.get(3)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    /// List all neighborhoods (across all episodes).
+    pub fn list_neighborhoods(&self) -> Result<Vec<NeighborhoodDetail>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT n.id, n.source_text, e.name, e.is_conscious,
+                    COUNT(o.id) as occ_count,
+                    COALESCE(SUM(o.activation_count), 0) as total_activation,
+                    COALESCE(MAX(o.activation_count), 0) as max_activation
+             FROM neighborhoods n
+             JOIN episodes e ON n.episode_id = e.id
+             LEFT JOIN occurrences o ON o.neighborhood_id = n.id
+             GROUP BY n.id
+             ORDER BY total_activation DESC",
+        )?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(NeighborhoodDetail {
+                    id: row.get(0)?,
+                    source_text: row.get(1)?,
+                    episode_name: row.get(2)?,
+                    is_conscious: row.get::<_, i32>(3)? != 0,
+                    occurrence_count: row.get(4)?,
+                    total_activation: row.get(5)?,
+                    max_activation: row.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    /// Get top words by activation count.
+    pub fn top_words(&self, limit: usize) -> Result<Vec<(String, u32, u64)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT word, SUM(activation_count) as total_act, COUNT(*) as occ_count
+             FROM occurrences
+             GROUP BY word
+             ORDER BY total_act DESC
+             LIMIT ?1",
+        )?;
+
+        let rows = stmt
+            .query_map([limit as i64], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, u32>(1)?,
+                    row.get::<_, u64>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(rows)
+    }
+
+    /// Count unique words in the database.
+    pub fn unique_word_count(&self) -> Result<u64> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(DISTINCT word) FROM occurrences", [], |row| {
+                row.get(0)
+            })?)
     }
 
     // --- Garbage collection ---
@@ -996,5 +1149,89 @@ mod tests {
         let result = store.gc_pass(0).unwrap();
         assert_eq!(result.evicted_occurrences, 0);
         assert_eq!(result.removed_episodes, 0);
+    }
+
+    // --- Inspection query tests ---
+
+    #[test]
+    fn test_list_episodes() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let episodes = store.list_episodes().unwrap();
+        // 1 subconscious + 1 conscious
+        assert_eq!(episodes.len(), 2);
+
+        let conscious: Vec<_> = episodes.iter().filter(|e| e.is_conscious).collect();
+        assert_eq!(conscious.len(), 1);
+        assert!(conscious[0].occurrence_count > 0);
+
+        let sub: Vec<_> = episodes.iter().filter(|e| !e.is_conscious).collect();
+        assert_eq!(sub.len(), 1);
+        assert_eq!(sub[0].name, "episode-1");
+        assert_eq!(sub[0].neighborhood_count, 1);
+        assert_eq!(sub[0].occurrence_count, 3);
+    }
+
+    #[test]
+    fn test_list_conscious_neighborhoods() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let conscious = store.list_conscious_neighborhoods().unwrap();
+        assert_eq!(conscious.len(), 1);
+        assert_eq!(conscious[0].source_text, "conscious thought");
+        assert!(conscious[0].occurrence_count > 0);
+    }
+
+    #[test]
+    fn test_list_neighborhoods() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let all = store.list_neighborhoods().unwrap();
+        // 1 subconscious + 1 conscious neighborhood
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_top_words() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system_with_activations();
+        store.save_system(&sys).unwrap();
+
+        let top = store.top_words(3).unwrap();
+        assert!(!top.is_empty());
+        // "warm" and "active" have activation=5 each, should be at top
+        let first_activation = top[0].1;
+        assert!(first_activation >= 5);
+    }
+
+    #[test]
+    fn test_unique_word_count() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let count = store.unique_word_count().unwrap();
+        // "hello", "world", "test" + conscious words
+        assert!(count >= 3);
+    }
+
+    #[test]
+    fn test_list_episodes_empty() {
+        let store = Store::open_in_memory().unwrap();
+        let episodes = store.list_episodes().unwrap();
+        assert!(episodes.is_empty());
+    }
+
+    #[test]
+    fn test_list_conscious_empty() {
+        let store = Store::open_in_memory().unwrap();
+        let conscious = store.list_conscious_neighborhoods().unwrap();
+        assert!(conscious.is_empty());
     }
 }
