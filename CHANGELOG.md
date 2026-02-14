@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/srobinson/attention-matters/compare/v0.1.2...v0.1.3) (2026-02-14)
+
+
+### Bug Fixes
+
+* idempotent npm publish and remove invalid bin entries ([13509ed](https://github.com/srobinson/attention-matters/commit/13509ed34fd8d3ecec277cce144da9b568438c6e))
+
 ## [0.1.2](https://github.com/srobinson/attention-matters/compare/v0.1.1...v0.1.2) (2026-02-14)
 
 
