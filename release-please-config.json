@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "dca0527",
+  "packages": {
+    ".": {
+      "release-type": "rust",
+      "component": "attention-matters",
+      "include-component-in-tag": false,
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
+      "extra-files": [
+        {
+          "type": "json",
+          "path": "npm/attention-matters/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "npm/@attention-matters/cli/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "npm/@attention-matters/cli/package.json",
+          "jsonpath": "$.dependencies['attention-matters']"
+        },
+        {
+          "type": "json",
+          "path": "npm/@alphab.io/am/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "npm/@alphab.io/am/package.json",
+          "jsonpath": "$.dependencies['attention-matters']"
+        }
+      ],
+      "changelog-sections": [
+        { "type": "feat", "section": "Features" },
+        { "type": "fix", "section": "Bug Fixes" },
+        { "type": "perf", "section": "Performance" },
+        { "type": "refactor", "section": "Refactoring", "hidden": true },
+        { "type": "docs", "section": "Documentation", "hidden": true },
+        { "type": "chore", "section": "Miscellaneous", "hidden": true },
+        { "type": "test", "section": "Tests", "hidden": true },
+        { "type": "ci", "section": "CI", "hidden": true }
+      ]
+    }
+  },
+  "plugins": [
+    "cargo-workspace"
+  ]
+}

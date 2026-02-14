@@ -2,18 +2,32 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
 
 permissions:
   contents: write
+  pull-requests: write
   id-token: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
   build:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
     strategy:
       matrix:
         include:
@@ -59,13 +73,13 @@ jobs:
           name: am-${{ matrix.target }}
           path: am-${{ matrix.target }}.tar.gz
 
-  release:
-    needs: build
+  upload-assets:
+    needs: [release-please, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
-
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -77,16 +91,13 @@ jobs:
           cd artifacts
           sha256sum am-*.tar.gz > sha256sums.txt
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            artifacts/am-*.tar.gz
-            artifacts/sha256sums.txt
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ needs.release-please.outputs.tag_name }}" artifacts/* --repo "${{ github.repository }}"
 
   publish-npm:
-    needs: release
+    needs: [release-please, upload-assets]
     runs-on: ubuntu-latest
     permissions:
       contents: read
