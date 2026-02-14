@@ -294,7 +294,8 @@ fn cmd_stats(cli: &Cli) -> Result<()> {
         system.conscious_episode.neighborhoods.len()
     );
     println!("db_size:    {:.1}MB", db_size as f64 / (1024.0 * 1024.0));
-    println!("activation: mean={:.2}, max={}, zero={}/{}",
+    println!(
+        "activation: mean={:.2}, max={}, zero={}/{}",
         activation.mean_activation,
         activation.max_activation,
         activation.zero_activation,

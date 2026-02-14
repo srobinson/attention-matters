@@ -313,10 +313,7 @@ fn heal_orphaned_databases(projects_dir: &Path, current_project_path: &Path) {
         tracing::info!("found orphaned hash-named DB: {}", path.display());
 
         if let Err(e) = merge_orphan_into(&path, current_project_path) {
-            tracing::warn!(
-                "failed to merge orphan {}: {e}",
-                path.display()
-            );
+            tracing::warn!("failed to merge orphan {}: {e}", path.display());
             continue;
         }
 
@@ -378,10 +375,7 @@ fn merge_orphan_into(orphan_path: &Path, target_path: &Path) -> Result<()> {
     let orphan_system = orphan_store.load_system()?;
 
     if orphan_system.n() == 0 && orphan_system.episodes.is_empty() {
-        tracing::info!(
-            "orphan {} is empty — skipping",
-            orphan_path.display()
-        );
+        tracing::info!("orphan {} is empty — skipping", orphan_path.display());
         return Ok(());
     }
 
@@ -458,8 +452,8 @@ fn startup_gc(store: &Store) {
 
             // Phase 2: if still over limit, aggressively evict coldest
             if result.after_size >= am_core::DB_SOFT_LIMIT_BYTES {
-                let target = (am_core::DB_SOFT_LIMIT_BYTES as f64
-                    * am_core::DB_GC_TARGET_RATIO) as u64;
+                let target =
+                    (am_core::DB_SOFT_LIMIT_BYTES as f64 * am_core::DB_GC_TARGET_RATIO) as u64;
                 match store.gc_to_target_size(target) {
                     Ok(r2) => {
                         tracing::info!(
@@ -1015,10 +1009,7 @@ name = "correct"
         heal_orphaned_databases(&projects_dir, &target_path);
 
         // The human-readable DB should still exist (not migrated)
-        assert!(
-            readable_path.exists(),
-            "non-hash DB should not be touched"
-        );
+        assert!(readable_path.exists(), "non-hash DB should not be touched");
 
         let _ = fs::remove_dir_all(&dir);
     }

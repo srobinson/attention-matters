@@ -14,7 +14,10 @@ pub fn initialize(conn: &Connection) -> Result<()> {
     // Force-checkpoint any stale WAL data into the main DB on startup.
     // Uses TRUNCATE mode to also remove the WAL file afterward.
     // Errors are non-fatal — in-memory DBs and fresh files legitimately fail this.
-    if conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").is_ok() {
+    if conn
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .is_ok()
+    {
         tracing::info!("startup WAL checkpoint complete");
     }
 
