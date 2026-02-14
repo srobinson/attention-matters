@@ -1,5 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::{env, fs};
@@ -21,12 +19,113 @@ fn dirs_home() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
-/// Hash a path to a short hex string for use as a project db filename.
-fn hash_path(path: &Path) -> String {
-    let mut hasher = DefaultHasher::new();
-    path.to_string_lossy().hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
+// ---------------------------------------------------------------------------
+// Pure parsing helpers (no I/O, fully unit-testable)
+// ---------------------------------------------------------------------------
+
+/// Extract the value between the first pair of matching quotes.
+/// Handles both `"value"` and `'value'`.
+fn extract_quoted(s: &str) -> Option<&str> {
+    for quote in ['"', '\''] {
+        if let Some(start) = s.find(quote)
+            && let Some(end) = s[start + 1..].find(quote) {
+                return Some(&s[start + 1..start + 1 + end]);
+            }
+    }
+    None
 }
+
+/// Get the path portion of a `scheme://...` URL (everything after `://host/`).
+fn extract_url_path(url: &str) -> Option<&str> {
+    let after_scheme = url.find("://").map(|i| &url[i + 3..])?;
+    let after_host = after_scheme.find('/').map(|i| &after_scheme[i + 1..])?;
+    if after_host.is_empty() {
+        None
+    } else {
+        Some(after_host)
+    }
+}
+
+/// Parse a git remote URL into a `org_repo` identifier.
+///
+/// Handles:
+/// - `git@github.com:org/repo.git` (SCP-style SSH)
+/// - `https://github.com/org/repo.git` (HTTPS)
+/// - `ssh://git@github.com/org/repo.git` (SSH with scheme)
+/// - GitLab subgroups: uses last two path segments
+/// - Strips `.git` suffix
+fn parse_remote_url(url: &str) -> Option<String> {
+    let path = if let Some(colon_pos) = url.find(':') {
+        // SCP-style: git@host:path — but not scheme://
+        if url[..colon_pos].contains("//") {
+            // Has scheme → extract path after host
+            extract_url_path(url)?
+        } else {
+            &url[colon_pos + 1..]
+        }
+    } else {
+        return None;
+    };
+
+    // Strip .git suffix and leading/trailing slashes
+    let path = path.trim_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+
+    if path.is_empty() {
+        return None;
+    }
+
+    // Take last two segments (handles GitLab subgroups: a/b/c/repo → c_repo)
+    let segments: Vec<&str> = path.split('/').collect();
+    let identity = if segments.len() >= 2 {
+        format!(
+            "{}_{}",
+            segments[segments.len() - 2],
+            segments[segments.len() - 1]
+        )
+    } else {
+        segments[0].to_string()
+    };
+
+    if identity.is_empty() {
+        None
+    } else {
+        Some(identity)
+    }
+}
+
+/// Find `name = "value"` under a `[section]` header in TOML content.
+/// Stops searching at the next section header.
+fn extract_toml_name(content: &str, section: &str) -> Option<String> {
+    let header = format!("[{section}]");
+    let mut in_section = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed == header {
+            in_section = true;
+            continue;
+        }
+        if in_section {
+            if trimmed.starts_with('[') {
+                break; // Hit next section
+            }
+            if let Some(rest) = trimmed.strip_prefix("name") {
+                let rest = rest.trim_start();
+                if let Some(rest) = rest.strip_prefix('=')
+                    && let Some(name) = extract_quoted(rest)
+                        && !name.is_empty() {
+                            return Some(name.to_string());
+                        }
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// I/O wrappers (thin shells around pure logic)
+// ---------------------------------------------------------------------------
 
 /// Detect git root from a directory by running `git rev-parse --show-toplevel`.
 fn detect_git_root(from: &Path) -> Option<PathBuf> {
@@ -49,25 +148,110 @@ fn detect_git_root(from: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Resolve a project identifier to a database filename.
-/// If `project_name` is Some, use it directly as the filename stem.
-/// Otherwise, detect git root and hash it.
-/// Falls back to hashing cwd if not in a git repo.
+/// Shell out to `git remote get-url origin` and parse the result.
+fn detect_git_remote_identity(from: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(from)
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        parse_remote_url(&url)
+    } else {
+        None
+    }
+}
+
+/// Check for Cargo.toml, package.json, or pyproject.toml and extract the project name.
+fn detect_manifest_name(dir: &Path) -> Option<String> {
+    // Cargo.toml → [package] name
+    let cargo = dir.join("Cargo.toml");
+    if let Ok(content) = fs::read_to_string(&cargo)
+        && let Some(name) = extract_toml_name(&content, "package") {
+            return Some(name);
+        }
+
+    // package.json → "name": "value"
+    let pkg = dir.join("package.json");
+    if let Ok(content) = fs::read_to_string(&pkg) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("\"name\"") {
+                let rest = rest.trim_start();
+                if let Some(rest) = rest.strip_prefix(':') {
+                    let rest = rest.trim_start().trim_end_matches(',');
+                    if let Some(name) = extract_quoted(rest)
+                        && !name.is_empty() {
+                            return Some(name.to_string());
+                        }
+                }
+            }
+        }
+    }
+
+    // pyproject.toml → [project] name
+    let pyproject = dir.join("pyproject.toml");
+    if let Ok(content) = fs::read_to_string(&pyproject)
+        && let Some(name) = extract_toml_name(&content, "project") {
+            return Some(name);
+        }
+
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Project identity resolution
+// ---------------------------------------------------------------------------
+
+/// Resolve a project identifier to a human-readable database filename stem.
+///
+/// Priority chain:
+/// 1. Explicit `--project` name
+/// 2. Git remote origin → `org_repo`
+/// 3. Git repo root directory basename
+/// 4. Manifest name (Cargo.toml, package.json, pyproject.toml)
+/// 5. CWD basename (last resort, never hash)
 fn resolve_project_id(project_name: Option<&str>) -> String {
+    // 1. Explicit override
     if let Some(name) = project_name {
         let sanitized = sanitize_name(name);
         if !sanitized.is_empty() {
             return sanitized;
         }
-        // Empty after sanitization — fall through to auto-detection
     }
 
     let cwd = env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
     if let Some(git_root) = detect_git_root(&cwd) {
-        hash_path(&git_root)
-    } else {
-        hash_path(&cwd)
+        // 2. Git remote origin identity
+        if let Some(identity) = detect_git_remote_identity(&git_root) {
+            return sanitize_name(&identity);
+        }
+
+        // 3. Git root basename
+        if let Some(basename) = git_root.file_name() {
+            let name = sanitize_name(&basename.to_string_lossy());
+            if !name.is_empty() {
+                return name;
+            }
+        }
     }
+
+    // 4. Manifest name
+    if let Some(name) = detect_manifest_name(&cwd) {
+        let sanitized = sanitize_name(&name);
+        if !sanitized.is_empty() {
+            return sanitized;
+        }
+    }
+
+    // 5. CWD basename (never hash)
+    cwd.file_name()
+        .map(|n| sanitize_name(&n.to_string_lossy()))
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "unnamed".to_string())
 }
 
 /// Sanitize a project name for use as a filename.
@@ -346,28 +530,155 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_name_falls_through_to_hash() {
-        // Empty string after sanitization should not produce ".db" filename
+    fn test_empty_name_falls_through_to_auto() {
         let id = resolve_project_id(Some(""));
         assert!(
             !id.is_empty(),
-            "empty project name should fall through to hash"
+            "empty project name should fall through to auto-detection"
         );
-        // Should be a hex hash (auto-detected from cwd/git)
-        assert!(id.len() >= 16);
+        // Should be a readable name, not a hex hash
+        assert!(
+            id.chars().any(|c| c.is_alphabetic()),
+            "auto-detected id should contain letters, got: {id}"
+        );
     }
 
     #[test]
-    fn test_hash_deterministic() {
-        let path = Path::new("/home/user/project");
-        assert_eq!(hash_path(path), hash_path(path));
+    fn test_resolve_explicit_wins() {
+        let id = resolve_project_id(Some("my-explicit-project"));
+        assert_eq!(id, "my-explicit-project");
     }
 
     #[test]
-    fn test_hash_different_paths() {
-        let a = hash_path(Path::new("/a/b"));
-        let b = hash_path(Path::new("/c/d"));
-        assert_ne!(a, b);
+    fn test_resolve_sanitizes_explicit() {
+        let id = resolve_project_id(Some("my/project name!"));
+        assert_eq!(id, "my_project_name_");
+    }
+
+    #[test]
+    fn test_resolve_fallback_produces_readable() {
+        // Even without git, should produce a readable basename
+        let id = resolve_project_id(None);
+        assert!(!id.is_empty());
+        assert!(
+            id.chars().any(|c| c.is_alphabetic()),
+            "fallback id should be readable, got: {id}"
+        );
+    }
+
+    // -- parse_remote_url --
+
+    #[test]
+    fn test_parse_remote_ssh_scp() {
+        assert_eq!(
+            parse_remote_url("git@github.com:srobinson/attention-matters.git"),
+            Some("srobinson_attention-matters".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_https() {
+        assert_eq!(
+            parse_remote_url("https://github.com/srobinson/attention-matters.git"),
+            Some("srobinson_attention-matters".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_ssh_scheme() {
+        assert_eq!(
+            parse_remote_url("ssh://git@github.com/srobinson/attention-matters.git"),
+            Some("srobinson_attention-matters".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_no_git_suffix() {
+        assert_eq!(
+            parse_remote_url("https://github.com/org/repo"),
+            Some("org_repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_gitlab_subgroups() {
+        assert_eq!(
+            parse_remote_url("git@gitlab.com:group/subgroup/repo.git"),
+            Some("subgroup_repo".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_garbage() {
+        assert_eq!(parse_remote_url("not-a-url"), None);
+        assert_eq!(parse_remote_url(""), None);
+    }
+
+    // -- extract_toml_name --
+
+    #[test]
+    fn test_extract_toml_cargo() {
+        let content = r#"
+[package]
+name = "attention-matters"
+version = "0.1.0"
+"#;
+        assert_eq!(
+            extract_toml_name(content, "package"),
+            Some("attention-matters".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_toml_single_quotes() {
+        let content = "[package]\nname = 'my-crate'\n";
+        assert_eq!(
+            extract_toml_name(content, "package"),
+            Some("my-crate".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_toml_workspace_no_package() {
+        let content = "[workspace]\nmembers = [\"crates/*\"]\n";
+        assert_eq!(extract_toml_name(content, "package"), None);
+    }
+
+    #[test]
+    fn test_extract_toml_pyproject_ignores_wrong_section() {
+        let content = r#"
+[tool.poetry]
+name = "wrong"
+
+[project]
+name = "correct"
+"#;
+        assert_eq!(
+            extract_toml_name(content, "project"),
+            Some("correct".to_string())
+        );
+    }
+
+    // -- extract_quoted --
+
+    #[test]
+    fn test_extract_quoted_double() {
+        assert_eq!(extract_quoted(r#""hello""#), Some("hello"));
+    }
+
+    #[test]
+    fn test_extract_quoted_single() {
+        assert_eq!(extract_quoted("'world'"), Some("world"));
+    }
+
+    #[test]
+    fn test_extract_quoted_none() {
+        assert_eq!(extract_quoted("bare_value"), None);
+    }
+
+    #[test]
+    fn test_extract_quoted_empty() {
+        assert_eq!(extract_quoted(r#""""#), Some(""));
     }
 
     #[test]
