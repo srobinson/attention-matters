@@ -2,6 +2,8 @@ mod server;
 
 use std::path::PathBuf;
 
+use std::io::Write;
+
 use am_core::{QueryEngine, compose_context, compute_surface, export_json, ingest_text};
 use am_store::ProjectStore;
 use anyhow::{Context, Result};
@@ -102,9 +104,71 @@ async fn main() -> Result<()> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Advisory pidfile for observability
+// ---------------------------------------------------------------------------
+
+fn pidfile_path() -> PathBuf {
+    let base = std::env::var("AM_DATA_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(am_store::default_base_dir);
+    base.join("am-serve.pid")
+}
+
+/// Check for an existing pidfile and log accordingly, then write our own.
+fn acquire_pidfile() -> Option<PathBuf> {
+    let path = pidfile_path();
+    if let Ok(content) = std::fs::read_to_string(&path)
+        && let Ok(pid) = content.trim().parse::<u32>()
+    {
+        if is_process_alive(pid) {
+            tracing::warn!(
+                "another am serve (PID {pid}) is running — coexisting with busy_timeout"
+            );
+        } else {
+            tracing::info!("cleaned up stale pidfile (PID {pid} is dead)");
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match std::fs::File::create(&path) {
+        Ok(mut f) => {
+            let _ = write!(f, "{}", std::process::id());
+            tracing::info!("wrote pidfile: {}", path.display());
+            Some(path)
+        }
+        Err(e) => {
+            tracing::warn!("failed to write pidfile: {e}");
+            None
+        }
+    }
+}
+
+fn release_pidfile(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
+    tracing::info!("removed pidfile: {}", path.display());
+}
+
+#[cfg(unix)]
+fn is_process_alive(pid: u32) -> bool {
+    // kill(pid, 0) checks existence without sending a signal
+    unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+fn is_process_alive(_pid: u32) -> bool {
+    false // conservative: assume dead on non-unix
+}
+
 async fn cmd_serve(cli: &Cli) -> Result<()> {
     let store = open_store(cli)?;
     tracing::info!("starting MCP server for project '{}'", store.project_id());
+
+    let pidfile = acquire_pidfile();
 
     let server = server::AmServer::new(store).map_err(|e| anyhow::anyhow!("{e}"))?;
     let service = server
@@ -112,6 +176,10 @@ async fn cmd_serve(cli: &Cli) -> Result<()> {
         .await
         .context("failed to start MCP server")?;
     service.waiting().await?;
+
+    if let Some(path) = pidfile {
+        release_pidfile(&path);
+    }
     Ok(())
 }
 
@@ -212,12 +280,26 @@ fn cmd_stats(cli: &Cli) -> Result<()> {
         .load_project_system()
         .context("failed to load system")?;
 
-    println!("project:   {}", store.project_id());
-    println!("N:         {}", system.n());
-    println!("episodes:  {}", system.episodes.len());
+    let db_size = store.project_store().db_size();
+    let activation = store
+        .project_store()
+        .activation_distribution()
+        .context("failed to get activation stats")?;
+
+    println!("project:    {}", store.project_id());
+    println!("N:          {}", system.n());
+    println!("episodes:   {}", system.episodes.len());
     println!(
-        "conscious: {}",
+        "conscious:  {}",
         system.conscious_episode.neighborhoods.len()
+    );
+    println!("db_size:    {:.1}MB", db_size as f64 / (1024.0 * 1024.0));
+    println!(
+        "activation: mean={:.2}, max={}, zero={}/{}",
+        activation.mean_activation,
+        activation.max_activation,
+        activation.zero_activation,
+        activation.total,
     );
     Ok(())
 }

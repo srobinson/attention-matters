@@ -18,3 +18,13 @@ pub const EPSILON: f64 = 1e-10;
 
 /// SLERP near-parallel threshold (OpenClaw standard)
 pub const SLERP_THRESHOLD: f64 = 0.9995;
+
+/// GC: minimum activation count to survive eviction.
+/// Occurrences at or below this are candidates for garbage collection.
+pub const ACTIVATION_FLOOR: u32 = 0;
+
+/// GC: per-project DB size soft limit before GC triggers (50MB)
+pub const DB_SOFT_LIMIT_BYTES: u64 = 50 * 1024 * 1024;
+
+/// GC: target ratio of soft limit after aggressive eviction (80%)
+pub const DB_GC_TARGET_RATIO: f64 = 0.8;

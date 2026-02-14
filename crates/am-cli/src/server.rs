@@ -314,7 +314,18 @@ impl AmServer {
     )]
     async fn am_stats(&self) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
-        let stats = Self::stats_json(&mut state.system);
+        let mut stats = Self::stats_json(&mut state.system);
+
+        // Add store-level stats (DB size, activation distribution)
+        let db_size = state.store.project_store().db_size();
+        stats["db_size_bytes"] = serde_json::json!(db_size);
+        if let Ok(activation) = state.store.project_store().activation_distribution() {
+            stats["activation"] = serde_json::json!({
+                "mean": activation.mean_activation,
+                "max": activation.max_activation,
+                "zero_count": activation.zero_activation,
+            });
+        }
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&stats).unwrap_or_default(),

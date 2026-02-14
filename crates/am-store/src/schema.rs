@@ -7,6 +7,19 @@ pub const SCHEMA_VERSION: i64 = 1;
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    conn.pragma_update(None, "busy_timeout", 5000)?;
+    // Checkpoint every ~400KB instead of the default ~4MB — keeps WAL files small
+    conn.pragma_update(None, "wal_autocheckpoint", 100)?;
+
+    // Force-checkpoint any stale WAL data into the main DB on startup.
+    // Uses TRUNCATE mode to also remove the WAL file afterward.
+    // Errors are non-fatal — in-memory DBs and fresh files legitimately fail this.
+    if conn
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .is_ok()
+    {
+        tracing::info!("startup WAL checkpoint complete");
+    }
 
     conn.execute_batch(
         "
@@ -131,5 +144,27 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         initialize(&conn).unwrap();
         initialize(&conn).unwrap(); // should not error
+    }
+
+    #[test]
+    fn test_busy_timeout_set() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize(&conn).unwrap();
+
+        let timeout: i64 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(timeout, 5000, "busy_timeout should be 5000ms");
+    }
+
+    #[test]
+    fn test_wal_autocheckpoint_set() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize(&conn).unwrap();
+
+        let threshold: i64 = conn
+            .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(threshold, 100, "wal_autocheckpoint should be 100 pages");
     }
 }

@@ -19,9 +19,9 @@ fn stats_fresh_db() {
         .args(["stats", "--project", "test-stats"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("N:         0"))
-        .stdout(predicate::str::contains("episodes:  0"))
-        .stdout(predicate::str::contains("conscious: 0"));
+        .stdout(predicate::str::contains("N:          0"))
+        .stdout(predicate::str::contains("episodes:   0"))
+        .stdout(predicate::str::contains("conscious:  0"));
 }
 
 #[test]
@@ -265,12 +265,12 @@ fn project_isolation() {
         .args(["stats", "--project", "isolated-a"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("episodes:  1"));
+        .stdout(predicate::str::contains("episodes:   1"));
 
     // Project B should be empty
     am_cmd(&dir)
         .args(["stats", "--project", "isolated-b"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("episodes:  0"));
+        .stdout(predicate::str::contains("episodes:   0"));
 }
