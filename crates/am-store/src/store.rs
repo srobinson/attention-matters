@@ -29,6 +29,19 @@ impl Store {
         &self.conn
     }
 
+    /// Verify the connection is still usable.
+    pub fn health_check(&self) -> Result<()> {
+        self.conn
+            .execute_batch("SELECT 1")
+            .map_err(StoreError::Sqlite)
+    }
+
+    /// Run a TRUNCATE checkpoint — flushes WAL and removes the file.
+    /// Used during clean shutdown.
+    pub fn checkpoint_truncate(&self) {
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
     // --- Metadata ---
 
     pub fn get_metadata(&self, key: &str) -> Result<Option<String>> {
@@ -83,6 +96,8 @@ impl Store {
         self.save_episode_on(&tx, &system.conscious_episode)?;
 
         tx.commit()?;
+        // PASSIVE checkpoint after bulk write — flushes WAL without blocking readers
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
         Ok(())
     }
 
@@ -315,6 +330,7 @@ impl Store {
             }
         }
         tx.commit()?;
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
         Ok(())
     }
 
@@ -415,6 +431,13 @@ impl Store {
             parse_uuid(&id_str)
         })
         .collect()
+    }
+}
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        // Clean shutdown: flush WAL to main DB
+        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     }
 }
 
@@ -628,5 +651,11 @@ mod tests {
             loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count,
             42
         );
+    }
+
+    #[test]
+    fn test_health_check() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.health_check().is_ok());
     }
 }
