@@ -86,8 +86,10 @@ impl Store {
 
     /// Run a TRUNCATE checkpoint — flushes WAL and removes the file.
     /// Used during clean shutdown.
-    pub fn checkpoint_truncate(&self) {
-        let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    pub fn checkpoint_truncate(&self) -> Result<()> {
+        self.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(())
     }
 
     // --- Metadata ---

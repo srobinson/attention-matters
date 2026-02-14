@@ -433,16 +433,81 @@ async fn cmd_serve(cli: &Cli) -> Result<()> {
     let pidfile = acquire_pidfile();
 
     let server = server::AmServer::new(store).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let service = server
-        .serve(stdio())
-        .await
-        .context("failed to start MCP server")?;
-    service.waiting().await?;
+    let server_handle = server.clone(); // Arc clone — cheap; used for shutdown checkpoint
+    let service = match server.serve(stdio()).await {
+        Ok(s) => s,
+        Err(e) => {
+            // stdin closed before MCP init completed — treat as clean shutdown
+            tracing::info!("MCP server exited during init: {e}");
+            if let Some(path) = pidfile {
+                release_pidfile(&path);
+            }
+            return Ok(());
+        }
+    };
 
-    if let Some(path) = pidfile {
-        release_pidfile(&path);
+    // Race stdin EOF against OS signals — whichever fires first triggers shutdown
+    let shutdown_reason = tokio::select! {
+        result = service.waiting() => {
+            if let Err(e) = result {
+                tracing::warn!("MCP server error: {e}");
+            }
+            "stdin EOF"
+        }
+        _ = shutdown_signal() => {
+            "signal"
+        }
+    };
+    tracing::info!("shutdown triggered by {shutdown_reason}");
+
+    // Clean shutdown with 5s timeout — an orphan is worse than a dirty exit
+    let pidfile_clone = pidfile.clone();
+    let clean = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+        // Explicit WAL checkpoint via the server's store (belt + suspenders with Drop)
+        server_handle.checkpoint_wal().await;
+        // Pidfile cleanup
+        if let Some(path) = pidfile_clone {
+            release_pidfile(&path);
+        }
+    })
+    .await;
+
+    if clean.is_err() {
+        eprintln!("[am] shutdown timeout, forcing exit");
+        // Still try to remove pidfile even on timeout
+        if let Some(path) = pidfile {
+            release_pidfile(&path);
+        }
+        std::process::exit(1);
     }
+
     Ok(())
+}
+
+/// Wait for SIGTERM, SIGINT, or SIGHUP (Unix) / ctrl_c (all platforms)
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler");
+        let mut sighup = signal(SignalKind::hangup()).expect("SIGHUP handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("received SIGINT");
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("received SIGTERM");
+            }
+            _ = sighup.recv() => {
+                tracing::info!("received SIGHUP");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await.expect("ctrl_c handler");
+        tracing::info!("received ctrl_c");
+    }
 }
 
 fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
