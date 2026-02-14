@@ -19,9 +19,6 @@
   "dependencies": {
     "attention-matters": "0.1.2"
   },
-  "bin": {
-    "am": "./node_modules/.bin/am"
-  },
   "publishConfig": {
     "access": "public"
   }

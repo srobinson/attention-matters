@@ -112,14 +112,19 @@ jobs:
       - name: Upgrade npm for OIDC support
         run: npm install -g npm@latest
 
-      - name: Publish attention-matters
-        working-directory: npm/attention-matters
-        run: npm publish --access public --provenance
-
-      - name: Publish @attention-matters/cli
-        working-directory: npm/@attention-matters/cli
-        run: npm publish --access public --provenance
-
-      - name: Publish @alphab.io/am
-        working-directory: npm/@alphab.io/am
-        run: npm publish --access public --provenance
+      - name: Publish npm packages
+        run: |
+          publish() {
+            local dir=$1
+            local name version
+            name=$(node -p "require('./$dir/package.json').name")
+            version=$(node -p "require('./$dir/package.json').version")
+            if npm view "$name@$version" version 2>/dev/null; then
+              echo "::notice::$name@$version already published, skipping"
+            else
+              (cd "$dir" && npm publish --access public --provenance)
+            fi
+          }
+          publish npm/attention-matters
+          publish npm/@attention-matters/cli
+          publish npm/@alphab.io/am
