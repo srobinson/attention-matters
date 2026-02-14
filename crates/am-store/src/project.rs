@@ -3,12 +3,13 @@ use std::process::Command;
 use std::{env, fs};
 
 use am_core::DAESystem;
+use rusqlite::Connection;
 
 use crate::error::{Result, StoreError};
 use crate::store::Store;
 
 /// Default base directory for all am storage.
-fn default_base_dir() -> PathBuf {
+pub fn default_base_dir() -> PathBuf {
     dirs_home().join(".attention-matters")
 }
 
@@ -272,6 +273,159 @@ fn sanitize_name(name: &str) -> String {
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Startup healing — orphaned hash-named database migration
+// ---------------------------------------------------------------------------
+
+/// Returns true if a filename stem looks like a hex hash (8-32 hex chars).
+fn is_hash_name(stem: &str) -> bool {
+    let len = stem.len();
+    (8..=32).contains(&len) && stem.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Scan the projects directory for hash-named `.db` files and merge them
+/// into the current project's human-readable DB.
+///
+/// After a successful merge the hash DB is renamed to `.db.migrated`.
+fn heal_orphaned_databases(projects_dir: &Path, current_project_path: &Path) {
+    let entries = match fs::read_dir(projects_dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("db") {
+            continue;
+        }
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        if !is_hash_name(&stem) {
+            continue;
+        }
+        // Don't merge a file into itself
+        if path == current_project_path {
+            continue;
+        }
+
+        tracing::info!("found orphaned hash-named DB: {}", path.display());
+
+        if let Err(e) = merge_orphan_into(&path, current_project_path) {
+            tracing::warn!(
+                "failed to merge orphan {}: {e}",
+                path.display()
+            );
+            continue;
+        }
+
+        // Rename to .db.migrated (belt and suspenders — don't delete)
+        let migrated = path.with_extension("db.migrated");
+        if let Err(e) = fs::rename(&path, &migrated) {
+            tracing::warn!(
+                "merged orphan but failed to rename {} → {}: {e}",
+                path.display(),
+                migrated.display()
+            );
+        } else {
+            tracing::info!(
+                "migrated orphan {} → {}",
+                path.display(),
+                migrated.display()
+            );
+            // Also rename any companion WAL/SHM files
+            for suffix in &["db-wal", "db-shm"] {
+                let companion = path.with_extension(suffix);
+                if companion.exists() {
+                    let _ = fs::remove_file(&companion);
+                }
+            }
+        }
+    }
+}
+
+/// Open the orphan DB, load its system, and additively merge into the target.
+fn merge_orphan_into(orphan_path: &Path, target_path: &Path) -> Result<()> {
+    // Open orphan read-only with healing pragmas
+    let orphan_conn = Connection::open_with_flags(
+        orphan_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    orphan_conn.pragma_update(None, "busy_timeout", 5000)?;
+    // Checkpoint orphan WAL before reading
+    let _ = orphan_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+
+    // Verify the orphan has our schema tables
+    let has_episodes: bool = orphan_conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='episodes'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !has_episodes {
+        tracing::info!(
+            "orphan {} has no episodes table — skipping",
+            orphan_path.display()
+        );
+        return Ok(());
+    }
+
+    let orphan_store = Store::open(orphan_path)?;
+    let orphan_system = orphan_store.load_system()?;
+
+    if orphan_system.n() == 0 && orphan_system.episodes.is_empty() {
+        tracing::info!(
+            "orphan {} is empty — skipping",
+            orphan_path.display()
+        );
+        return Ok(());
+    }
+
+    // Open target and merge
+    let target_store = Store::open(target_path)?;
+    let mut target_system = target_store.load_system()?;
+
+    let before_n = target_system.n();
+    let before_episodes = target_system.episodes.len();
+
+    // Merge subconscious episodes
+    for episode in orphan_system.episodes {
+        target_system.add_episode(episode);
+    }
+
+    // Merge conscious neighborhoods (deduplicate by ID)
+    let existing_ids: std::collections::HashSet<uuid::Uuid> = target_system
+        .conscious_episode
+        .neighborhoods
+        .iter()
+        .map(|n| n.id)
+        .collect();
+    for nbhd in orphan_system.conscious_episode.neighborhoods {
+        if !existing_ids.contains(&nbhd.id) {
+            target_system.conscious_episode.add_neighborhood(nbhd);
+        }
+    }
+
+    target_system.mark_dirty();
+    target_store.save_system(&target_system)?;
+
+    tracing::info!(
+        "merged orphan: {} episodes ({}→{}), {} occurrences ({}→{})",
+        target_system.episodes.len() - before_episodes,
+        before_episodes,
+        target_system.episodes.len(),
+        target_system.n() - before_n,
+        before_n,
+        target_system.n(),
+    );
+
+    Ok(())
+}
+
 /// Manages per-project storage with a global conscious layer.
 ///
 /// Layout:
@@ -303,6 +457,9 @@ impl ProjectStore {
         let project_id = resolve_project_id(project_name);
         let project_path = projects_dir.join(format!("{project_id}.db"));
         let global_path = base.join("global.db");
+
+        // Startup healing: merge any orphaned hash-named DBs into the current project
+        heal_orphaned_databases(&projects_dir, &project_path);
 
         let project = Store::open(&project_path)?;
         let global = Store::open(&global_path)?;
@@ -708,5 +865,133 @@ name = "correct"
             !global.conscious_episode.neighborhoods.is_empty(),
             "conscious should be replicated to global"
         );
+    }
+
+    // -- Healing tests --
+
+    #[test]
+    fn test_is_hash_name() {
+        assert!(is_hash_name("f9d7b58d57caca64"));
+        assert!(is_hash_name("abcdef0123456789"));
+        assert!(is_hash_name("12345678"));
+        assert!(!is_hash_name("my-project"));
+        assert!(!is_hash_name("srobinson_attention-matters"));
+        assert!(!is_hash_name("abc")); // too short
+        assert!(!is_hash_name("GGGG1234GGGG5678")); // non-hex
+    }
+
+    #[test]
+    fn test_heal_orphaned_databases() {
+        let dir = std::env::temp_dir().join("am-heal-test");
+        let _ = fs::remove_dir_all(&dir);
+        let projects_dir = dir.join("projects");
+        fs::create_dir_all(&projects_dir).unwrap();
+
+        // Create an "orphan" hash-named DB with data
+        let orphan_path = projects_dir.join("f9d7b58d57caca64.db");
+        {
+            let store = Store::open(&orphan_path).unwrap();
+            let sys = make_system();
+            store.save_system(&sys).unwrap();
+            let loaded = store.load_system().unwrap();
+            assert_eq!(loaded.n(), 2);
+        }
+
+        // Create the target (human-readable) DB with different data
+        let target_path = projects_dir.join("my-project.db");
+        {
+            let store = Store::open(&target_path).unwrap();
+            let mut rng = rng();
+            let mut sys = DAESystem::new("test-agent");
+            let mut ep = Episode::new("episode-2");
+            let tokens = to_tokens(&["foo", "bar", "baz"]);
+            ep.add_neighborhood(Neighborhood::from_tokens(
+                &tokens,
+                None,
+                "foo bar baz",
+                &mut rng,
+            ));
+            sys.add_episode(ep);
+            store.save_system(&sys).unwrap();
+        }
+
+        // Run healing
+        heal_orphaned_databases(&projects_dir, &target_path);
+
+        // Orphan should be renamed to .db.migrated
+        assert!(!orphan_path.exists(), "orphan DB should be renamed");
+        assert!(
+            projects_dir.join("f9d7b58d57caca64.db.migrated").exists(),
+            "orphan should be renamed to .db.migrated"
+        );
+
+        // Target should now contain merged data (2 episodes)
+        let target_store = Store::open(&target_path).unwrap();
+        let merged = target_store.load_system().unwrap();
+        assert_eq!(merged.episodes.len(), 2, "should have both episodes");
+        assert_eq!(merged.n(), 5, "should have 2+3=5 occurrences");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_heal_skips_non_hash_names() {
+        let dir = std::env::temp_dir().join("am-heal-skip-test");
+        let _ = fs::remove_dir_all(&dir);
+        let projects_dir = dir.join("projects");
+        fs::create_dir_all(&projects_dir).unwrap();
+
+        // Create a human-readable named DB (should NOT be treated as orphan)
+        let readable_path = projects_dir.join("srobinson_attention-matters.db");
+        {
+            let store = Store::open(&readable_path).unwrap();
+            let sys = make_system();
+            store.save_system(&sys).unwrap();
+        }
+
+        let target_path = projects_dir.join("my-project.db");
+        {
+            let store = Store::open(&target_path).unwrap();
+            let sys = DAESystem::new("test");
+            store.save_system(&sys).unwrap();
+        }
+
+        heal_orphaned_databases(&projects_dir, &target_path);
+
+        // The human-readable DB should still exist (not migrated)
+        assert!(
+            readable_path.exists(),
+            "non-hash DB should not be touched"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_heal_empty_orphan_skipped() {
+        let dir = std::env::temp_dir().join("am-heal-empty-test");
+        let _ = fs::remove_dir_all(&dir);
+        let projects_dir = dir.join("projects");
+        fs::create_dir_all(&projects_dir).unwrap();
+
+        // Create an empty orphan DB
+        let orphan_path = projects_dir.join("abcdef0123456789.db");
+        {
+            let _store = Store::open(&orphan_path).unwrap();
+            // Don't save any data — it's empty
+        }
+
+        let target_path = projects_dir.join("my-project.db");
+
+        heal_orphaned_databases(&projects_dir, &target_path);
+
+        // Empty orphan should still be migrated (renamed) but target shouldn't have extra data
+        // The orphan is empty so merge is a no-op, but the file still gets renamed
+        assert!(
+            !orphan_path.exists() || projects_dir.join("abcdef0123456789.db.migrated").exists(),
+            "empty orphan should be handled"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -5,5 +5,5 @@ pub mod schema;
 pub mod store;
 
 pub use error::{Result, StoreError};
-pub use project::ProjectStore;
+pub use project::{ProjectStore, default_base_dir};
 pub use store::Store;
