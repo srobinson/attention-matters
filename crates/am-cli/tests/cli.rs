@@ -243,6 +243,230 @@ fn missing_required_args() {
 }
 
 #[test]
+fn inspect_overview_fresh_db() {
+    let dir = TempDir::new().unwrap();
+    am_cmd(&dir)
+        .args(["inspect", "--project", "test-inspect"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("MEMORY OVERVIEW"))
+        .stdout(predicate::str::contains("occurrences:"))
+        .stdout(predicate::str::contains("episodes:"))
+        .stdout(predicate::str::contains("conscious:"));
+}
+
+#[test]
+fn inspect_after_ingest() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("inspect.txt");
+    std::fs::write(
+        &input,
+        "Geometric memory models encode information on manifolds. \
+         Quaternion representations enable smooth interpolation. \
+         Phase coupling synchronizes distributed memory traces.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-inspect2"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Overview should show data
+    am_cmd(&dir)
+        .args(["inspect", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RECENT EPISODES"))
+        .stdout(predicate::str::contains("TOP WORDS"));
+
+    // Episodes view
+    am_cmd(&dir)
+        .args(["inspect", "episodes", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("EPISODES"))
+        .stdout(predicate::str::contains("neighborhoods"));
+
+    // Neighborhoods view
+    am_cmd(&dir)
+        .args(["inspect", "neighborhoods", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("NEIGHBORHOODS"));
+
+    // Conscious view (empty after just ingest)
+    am_cmd(&dir)
+        .args(["inspect", "conscious", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("CONSCIOUS MEMORIES"));
+
+    // JSON output
+    am_cmd(&dir)
+        .args(["inspect", "--json", "--project", "test-inspect2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"total_occurrences\""))
+        .stdout(predicate::str::contains("\"episodes\""));
+
+    // Query mode
+    am_cmd(&dir)
+        .args([
+            "inspect",
+            "--query",
+            "geometric memory",
+            "--project",
+            "test-inspect2",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("RECALL"));
+}
+
+#[test]
+fn inspect_json_outputs() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("jsontest.txt");
+    std::fs::write(
+        &input,
+        "Testing JSON output format for inspect command. \
+         Multiple sentences help create neighborhoods. \
+         This third sentence fills the minimum requirement.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-json"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    // Episodes JSON
+    am_cmd(&dir)
+        .args(["inspect", "episodes", "--json", "--project", "test-json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"name\""));
+
+    // Neighborhoods JSON
+    am_cmd(&dir)
+        .args([
+            "inspect",
+            "neighborhoods",
+            "--json",
+            "--project",
+            "test-json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"source_text\""));
+}
+
+#[test]
+fn sync_dry_run() {
+    let dir = TempDir::new().unwrap();
+
+    // Create a fake Claude project directory structure.
+    // sync --dir points at the Claude config dir; inside it needs projects/<encoded-cwd>/
+    let claude_dir = dir.path().join("fake-claude");
+    // Encode the CWD the same way sync.rs does: replace / with -
+    let cwd = std::env::current_dir().unwrap();
+    let encoded = cwd.to_string_lossy().replace('/', "-");
+    let project_dir = claude_dir.join("projects").join(&encoded);
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    // Write a session transcript with substantive content
+    let session_path = project_dir.join("abc-12345678.jsonl");
+    let mut f = std::fs::File::create(&session_path).unwrap();
+    use std::io::Write;
+    writeln!(f, "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"How does the geometric memory system handle quaternion drift on the S3 manifold?\"}}}}").unwrap();
+    writeln!(f, "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"The drift mechanism uses IDF-weighted SLERP to move occurrences closer to query centroids.\"}}]}}}}").unwrap();
+
+    // Dry run should find the session but not ingest
+    am_cmd(&dir)
+        .args(["sync", "--dry-run", "--project", "test-sync", "--dir"])
+        .arg(&claude_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Found 1"))
+        .stdout(predicate::str::contains("sync"))
+        .stdout(predicate::str::contains("Dry run"));
+
+    // Stats should still be empty after dry run
+    am_cmd(&dir)
+        .args(["stats", "--project", "test-sync"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   0"));
+}
+
+#[test]
+fn sync_ingests_sessions() {
+    let dir = TempDir::new().unwrap();
+
+    let claude_dir = dir.path().join("fake-claude2");
+    let cwd = std::env::current_dir().unwrap();
+    let encoded = cwd.to_string_lossy().replace('/', "-");
+    let project_dir = claude_dir.join("projects").join(&encoded);
+    std::fs::create_dir_all(&project_dir).unwrap();
+
+    // Two sessions
+    use std::io::Write;
+    let mut f1 = std::fs::File::create(project_dir.join("sess-aaaaaaaa.jsonl")).unwrap();
+    writeln!(f1, "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"Explain the Kuramoto phase coupling model for memory synchronization.\"}}}}").unwrap();
+    writeln!(f1, "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Kuramoto coupling synchronizes phasor phases across neighborhoods that co-activate frequently.\"}}]}}}}").unwrap();
+
+    let mut f2 = std::fs::File::create(project_dir.join("sess-bbbbbbbb.jsonl")).unwrap();
+    writeln!(f2, "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"What is the golden angle spacing for phasor distribution on the manifold?\"}}}}").unwrap();
+    writeln!(f2, "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Golden angle is approximately 2.399 radians, derived from the golden ratio phi to maximize separation.\"}}]}}}}").unwrap();
+
+    // Real sync
+    am_cmd(&dir)
+        .args(["sync", "--project", "test-sync2", "--dir"])
+        .arg(&claude_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Found 2"))
+        .stdout(predicate::str::contains("synced"))
+        .stdout(predicate::str::contains("Done."));
+
+    // Stats should show 2 episodes
+    am_cmd(&dir)
+        .args(["stats", "--project", "test-sync2"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   2"));
+
+    // Re-sync should say all synced
+    am_cmd(&dir)
+        .args(["sync", "--project", "test-sync2", "--dir"])
+        .arg(&claude_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already synced"));
+}
+
+#[test]
+fn sync_no_project_dir() {
+    let dir = TempDir::new().unwrap();
+
+    // Point at a dir with no projects/ subdirectory
+    let empty_claude = dir.path().join("empty-claude");
+    std::fs::create_dir_all(&empty_claude).unwrap();
+
+    am_cmd(&dir)
+        .args(["sync", "--project", "test-sync-empty", "--dir"])
+        .arg(&empty_claude)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No Claude Code project directory"));
+}
+
+#[test]
 fn project_isolation() {
     let dir = TempDir::new().unwrap();
 
@@ -273,4 +497,124 @@ fn project_isolation() {
         .assert()
         .success()
         .stdout(predicate::str::contains("episodes:   0"));
+}
+
+#[test]
+fn gc_fresh_db() {
+    let dir = TempDir::new().unwrap();
+    am_cmd(&dir)
+        .args(["gc", "--project", "test-gc"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GC complete"))
+        .stdout(predicate::str::contains("evicted occurrences:"));
+}
+
+#[test]
+fn gc_dry_run() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("gc-data.txt");
+    std::fs::write(
+        &input,
+        "Memory garbage collection testing with enough words. \
+         Second sentence provides additional content. \
+         Third sentence completes the paragraph for chunking.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-gc-dry"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    am_cmd(&dir)
+        .args(["gc", "--dry-run", "--project", "test-gc-dry"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GC dry run"))
+        .stdout(predicate::str::contains("eligible for eviction"))
+        .stdout(predicate::str::contains("No changes made"));
+}
+
+#[test]
+fn gc_evicts_cold_occurrences() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("gc-cold.txt");
+    std::fs::write(
+        &input,
+        "Quantum entanglement connects particles across spacetime. \
+         Bell inequality violations confirm nonlocal correlations. \
+         Decoherence destroys quantum superposition in macroscopic systems.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-gc-evict"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    // With floor=99, everything should be evicted (no occurrence has count > 99)
+    am_cmd(&dir)
+        .args(["gc", "--floor", "99", "--project", "test-gc-evict"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GC complete"));
+
+    // Stats should show 0 episodes after evicting everything
+    am_cmd(&dir)
+        .args(["stats", "--project", "test-gc-evict"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   0"));
+}
+
+#[test]
+fn forget_term() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("forget.txt");
+    std::fs::write(
+        &input,
+        "Authentication uses JWT tokens for session management. \
+         Password hashing employs bcrypt with salt rounds. \
+         Token refresh handles expiration transparently.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-forget"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    am_cmd(&dir)
+        .args(["forget", "password", "--project", "test-forget"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Forgot"))
+        .stdout(predicate::str::contains("password"));
+}
+
+#[test]
+fn forget_term_not_found() {
+    let dir = TempDir::new().unwrap();
+    am_cmd(&dir)
+        .args(["forget", "nonexistent", "--project", "test-forget-nf"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No occurrences"));
+}
+
+#[test]
+fn forget_requires_argument() {
+    let dir = TempDir::new().unwrap();
+    // No term, no --episode, no --conscious
+    am_cmd(&dir)
+        .args(["forget", "--project", "test-forget-arg"])
+        .assert()
+        .failure();
 }
