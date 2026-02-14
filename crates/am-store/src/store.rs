@@ -480,9 +480,11 @@ impl Store {
         let before_occs = self.occurrence_count()?;
         let before_size = self.db_size();
 
+        let tx = self.conn.unchecked_transaction()?;
+
         // 1. Delete occurrences at or below the activation floor,
         //    but only from non-conscious episodes
-        let evicted_occs: u64 = self.conn.execute(
+        let evicted_occs: u64 = tx.execute(
             "DELETE FROM occurrences WHERE activation_count <= ?1
              AND neighborhood_id IN (
                  SELECT n.id FROM neighborhoods n
@@ -494,7 +496,7 @@ impl Store {
 
         // 2. Delete neighborhoods that have no remaining occurrences
         //    (only from non-conscious episodes)
-        let removed_neighborhoods: u64 = self.conn.execute(
+        let removed_neighborhoods: u64 = tx.execute(
             "DELETE FROM neighborhoods WHERE id NOT IN (
                  SELECT DISTINCT neighborhood_id FROM occurrences
              ) AND episode_id IN (
@@ -505,7 +507,7 @@ impl Store {
 
         // 3. Delete episodes that have no remaining neighborhoods
         //    (only non-conscious)
-        let removed_episodes: u64 = self.conn.execute(
+        let removed_episodes: u64 = tx.execute(
             "DELETE FROM episodes WHERE is_conscious = 0
              AND id NOT IN (
                  SELECT DISTINCT episode_id FROM neighborhoods
@@ -513,7 +515,9 @@ impl Store {
             [],
         )? as u64;
 
-        // 4. VACUUM to reclaim disk space
+        tx.commit()?;
+
+        // 4. VACUUM to reclaim disk space (must run outside transaction)
         let _ = self.conn.execute_batch("VACUUM;");
 
         let after_size = self.db_size();
@@ -582,7 +586,7 @@ impl Store {
             });
         }
 
-        // Delete the coldest occurrences
+        // Delete the coldest occurrences + clean up empty structures atomically
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut del_stmt = tx.prepare("DELETE FROM occurrences WHERE id = ?1")?;
@@ -590,10 +594,8 @@ impl Store {
                 del_stmt.execute([id])?;
             }
         }
-        tx.commit()?;
 
-        // Clean up empty neighborhoods and episodes
-        let removed_neighborhoods: u64 = self.conn.execute(
+        let removed_neighborhoods: u64 = tx.execute(
             "DELETE FROM neighborhoods WHERE id NOT IN (
                  SELECT DISTINCT neighborhood_id FROM occurrences
              ) AND episode_id IN (
@@ -602,7 +604,7 @@ impl Store {
             [],
         )? as u64;
 
-        let removed_episodes: u64 = self.conn.execute(
+        let removed_episodes: u64 = tx.execute(
             "DELETE FROM episodes WHERE is_conscious = 0
              AND id NOT IN (
                  SELECT DISTINCT episode_id FROM neighborhoods
@@ -610,6 +612,9 @@ impl Store {
             [],
         )? as u64;
 
+        tx.commit()?;
+
+        // VACUUM to reclaim disk space (must run outside transaction)
         let _ = self.conn.execute_batch("VACUUM;");
         let after_size = self.db_size();
 
@@ -633,20 +638,16 @@ impl Store {
             [],
             |row| row.get(0),
         )?;
-        let max_activation: u32 = self
-            .conn
-            .query_row(
-                "SELECT COALESCE(MAX(activation_count), 0) FROM occurrences",
-                [],
-                |row| row.get(0),
-            )?;
-        let sum_activation: u64 = self
-            .conn
-            .query_row(
-                "SELECT COALESCE(SUM(activation_count), 0) FROM occurrences",
-                [],
-                |row| row.get(0),
-            )?;
+        let max_activation: u32 = self.conn.query_row(
+            "SELECT COALESCE(MAX(activation_count), 0) FROM occurrences",
+            [],
+            |row| row.get(0),
+        )?;
+        let sum_activation: u64 = self.conn.query_row(
+            "SELECT COALESCE(SUM(activation_count), 0) FROM occurrences",
+            [],
+            |row| row.get(0),
+        )?;
 
         Ok(ActivationStats {
             total,
@@ -926,7 +927,10 @@ mod tests {
 
         // Evict occurrences with activation_count <= 0
         let result = store.gc_pass(0).unwrap();
-        assert_eq!(result.evicted_occurrences, 3, "should evict 3 cold occurrences");
+        assert_eq!(
+            result.evicted_occurrences, 3,
+            "should evict 3 cold occurrences"
+        );
 
         // After GC: warm + conscious should remain
         let loaded = store.load_system().unwrap();
@@ -949,7 +953,10 @@ mod tests {
         store.save_system(&sys).unwrap();
 
         let result = store.gc_pass(0).unwrap();
-        assert_eq!(result.evicted_occurrences, 0, "conscious should never be evicted");
+        assert_eq!(
+            result.evicted_occurrences, 0,
+            "conscious should never be evicted"
+        );
 
         let loaded = store.load_system().unwrap();
         assert!(
