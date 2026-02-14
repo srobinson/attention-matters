@@ -787,7 +787,7 @@ fn inspect_conscious(store: &ProjectStore, limit: usize, json: bool) -> Result<(
         println!("  {bold}{}. {reset}{text}", i + 1);
         println!(
             "     {dim}id={} · {} words · activation={}{reset}",
-            &nbhd.id[..8],
+            safe_prefix(&nbhd.id, 8),
             nbhd.occurrence_count,
             nbhd.total_activation
         );
@@ -987,13 +987,29 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
     Ok(())
 }
 
+/// Safe prefix slice — returns `&s[..n]` if ASCII-safe, otherwise
+/// falls back to char iteration to avoid panicking on UTF-8 boundaries.
+fn safe_prefix(s: &str, n: usize) -> &str {
+    if s.len() <= n {
+        s
+    } else if s.is_char_boundary(n) {
+        &s[..n]
+    } else {
+        // Fallback: find the last valid char boundary at or before n
+        let end = (0..=n).rev().find(|&i| s.is_char_boundary(i)).unwrap_or(0);
+        &s[..end]
+    }
+}
+
 fn truncate_text(text: &str, max_len: usize) -> String {
-    // Collapse whitespace and truncate
+    // Collapse whitespace and truncate by char count (not bytes) to avoid
+    // panicking on multi-byte UTF-8 boundaries
     let collapsed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.len() <= max_len {
+    if collapsed.chars().count() <= max_len {
         collapsed
     } else {
-        format!("{}...", &collapsed[..max_len.saturating_sub(3)])
+        let truncated: String = collapsed.chars().take(max_len.saturating_sub(3)).collect();
+        format!("{truncated}...")
     }
 }
 
@@ -1079,7 +1095,7 @@ fn cmd_sync(
             if dry_run {
                 println!(
                     "  {dim}skip{reset} {} (no substantive content)",
-                    &session.session_id[..8]
+                    safe_prefix(&session.session_id, 8)
                 );
             }
             newly_synced.push(session.session_id.clone());
@@ -1092,11 +1108,11 @@ fn cmd_sync(
         if dry_run {
             println!(
                 "  {bold}sync{reset} {} ({} chars) {dim}{text_preview}{reset}",
-                &session.session_id[..8],
+                safe_prefix(&session.session_id, 8),
                 text.len()
             );
         } else {
-            let episode_name = format!("session-{}", &session.session_id[..8]);
+            let episode_name = format!("session-{}", safe_prefix(&session.session_id, 8));
             let episode = ingest_text(&text, Some(&episode_name), &mut rng);
             let nbhd_count = episode.neighborhoods.len();
             system.add_episode(episode);
@@ -1104,7 +1120,7 @@ fn cmd_sync(
 
             println!(
                 "  {bold}synced{reset} {} → {} neighborhoods {dim}{text_preview}{reset}",
-                &session.session_id[..8],
+                safe_prefix(&session.session_id, 8),
                 nbhd_count,
             );
 

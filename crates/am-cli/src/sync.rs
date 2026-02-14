@@ -57,15 +57,16 @@ pub fn find_project_dir(claude_dir: &Path) -> Option<PathBuf> {
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(&cwd)
         .output()
-        && output.status.success() {
-            let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !root.is_empty() {
-                let root_path = PathBuf::from(&root);
-                if root_path != cwd {
-                    candidates.push(root_path);
-                }
+        && output.status.success()
+    {
+        let root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !root.is_empty() {
+            let root_path = PathBuf::from(&root);
+            if root_path != cwd {
+                candidates.push(root_path);
             }
         }
+    }
 
     for candidate in &candidates {
         let encoded = encode_path(candidate);
@@ -138,15 +139,18 @@ pub fn extract_session_text(path: &Path) -> Result<String> {
         match msg_type {
             "user" => {
                 if let Some(text) = extract_user_text(&obj)
-                    && text.len() >= 20 && !is_system_prompt(&text) {
-                        parts.push(text);
-                    }
+                    && text.len() >= 20
+                    && !is_system_prompt(&text)
+                {
+                    parts.push(text);
+                }
             }
             "assistant" => {
                 if let Some(text) = extract_assistant_text(&obj)
-                    && text.len() >= 20 {
-                        parts.push(text);
-                    }
+                    && text.len() >= 20
+                {
+                    parts.push(text);
+                }
             }
             _ => continue,
         }
@@ -211,7 +215,8 @@ fn extract_assistant_text(obj: &serde_json::Value) -> Option<String> {
 /// Heuristic: detect system prompts / orchestrator prompts that shouldn't
 /// be ingested as memory (they're boilerplate, not project knowledge).
 fn is_system_prompt(text: &str) -> bool {
-    let start = &text[..text.len().min(200)];
+    // Take up to 200 chars (not bytes) to avoid panicking on multi-byte UTF-8
+    let start: String = text.chars().take(200).collect();
     start.contains("# Orchestrator")
         || start.contains("# Authority")
         || start.contains("# System")
