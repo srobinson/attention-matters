@@ -15,7 +15,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio::sync::Mutex;
 
-const BUFFER_THRESHOLD: usize = 5;
+const BUFFER_THRESHOLD: usize = 3;
 
 #[derive(Clone)]
 pub struct AmServer {
@@ -105,7 +105,26 @@ impl AmServer {
         Parameters(req): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
-        let system = &mut state.system;
+        let ServerState {
+            system, store, rng, ..
+        } = &mut *state;
+
+        // Flush any orphaned buffer from previous sessions into an episode
+        let orphaned = store.project_store().buffer_count().unwrap_or(0);
+        if orphaned > 0
+            && let Ok(exchanges) = store.project_store().drain_buffer()
+        {
+            let combined: String = exchanges
+                .iter()
+                .map(|(u, a)| format!("{u}\n{a}"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let episode = ingest_text(&combined, Some("conversation"), rng);
+            system.add_episode(episode);
+            if let Err(e) = store.save_project_system(system) {
+                tracing::error!("failed to persist flushed buffer episode: {e}");
+            }
+        }
 
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
@@ -201,7 +220,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Buffer a conversation exchange. Call with each substantive user/assistant exchange pair. After 5 exchanges, automatically creates a memory episode on the geometric manifold. This is how conversations become searchable memories in future sessions. Skip trivial exchanges (greetings, confirmations) — buffer the ones with real content."
+        description = "Buffer a conversation exchange. Call with each substantive user/assistant exchange pair. After 3 exchanges, automatically creates a memory episode on the geometric manifold. This is how conversations become searchable memories in future sessions. Skip trivial exchanges (greetings, confirmations) — buffer the ones with real content."
     )]
     async fn am_buffer(
         &self,
@@ -352,8 +371,9 @@ impl ServerHandler for AmServer {
                  1. RECALL: At session start, call am_query with the user's first message or task description. \
                     Use returned context silently — integrate naturally, never announce \"I remember...\".\n\
                  2. ENGAGE: During the session, call am_buffer with substantive exchange pairs. \
-                    Skip trivial exchanges (greetings, yes/no). After 5 buffered exchanges, \
-                    a memory episode is created automatically.\n\
+                    Skip trivial exchanges (greetings, yes/no). After 3 buffered exchanges, \
+                    a memory episode is created automatically. Any leftover buffer is flushed \
+                    into an episode at the start of the next session.\n\
                  3. STRENGTHEN: After giving a meaningful technical response, call am_activate_response \
                     with your response text to consolidate related memories.\n\
                  4. MARK INSIGHTS: When you discover architecture decisions, user preferences, \
@@ -546,8 +566,8 @@ mod tests {
     async fn test_am_buffer() {
         let server = make_server();
 
-        // Buffer exchanges below threshold
-        for i in 0..4 {
+        // Buffer exchanges below threshold (threshold is 3)
+        for i in 0..2 {
             let result = server
                 .am_buffer(Parameters(BufferRequest {
                     user: format!("User message {i}"),
@@ -561,20 +581,20 @@ mod tests {
             assert!(json["episode_created"].is_null());
         }
 
-        // 5th exchange should trigger episode creation
+        // 3rd exchange should trigger episode creation
         let result = server
             .am_buffer(Parameters(BufferRequest {
-                user: "User message 4".to_string(),
-                assistant: "Assistant response 4".to_string(),
+                user: "User message 2".to_string(),
+                assistant: "Assistant response 2".to_string(),
             }))
             .await
             .unwrap();
 
         let json = parse_result(&result);
-        assert_eq!(json["buffer_size"], 5);
+        assert_eq!(json["buffer_size"], 3);
         assert!(
             json["episode_created"].is_string(),
-            "should create episode after 5 exchanges"
+            "should create episode after 3 exchanges"
         );
 
         let stats = parse_result(&server.am_stats().await.unwrap());
@@ -663,6 +683,39 @@ mod tests {
 
         let stats3 = parse_result(&server.am_stats().await.unwrap());
         assert!(stats3["conscious"].as_u64().unwrap() >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_am_query_flushes_orphaned_buffer() {
+        let server = make_server();
+
+        // Buffer 2 exchanges (below threshold — simulates a session that ended early)
+        for i in 0..2 {
+            server
+                .am_buffer(Parameters(BufferRequest {
+                    user: format!("Orphaned user message {i}"),
+                    assistant: format!("Orphaned assistant response {i}"),
+                }))
+                .await
+                .unwrap();
+        }
+
+        // No episode yet
+        let stats = parse_result(&server.am_stats().await.unwrap());
+        assert_eq!(stats["episodes"], 0);
+
+        // Calling am_query (simulating next session start) should flush the orphaned buffer
+        let result = server
+            .am_query(Parameters(QueryRequest {
+                text: "orphaned message".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+        assert!(json.get("stats").is_some());
+        // The orphaned buffer should have been flushed into an episode
+        assert_eq!(json["stats"]["episodes"], 1);
     }
 
     #[test]
