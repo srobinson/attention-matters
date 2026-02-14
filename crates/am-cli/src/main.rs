@@ -238,6 +238,59 @@ enum Commands {
         #[arg(long)]
         dir: Option<PathBuf>,
     },
+
+    /// Garbage collect: prune cold occurrences and compact storage
+    #[command(
+        long_about = "Run garbage collection on the memory database.\n\n\
+            Removes low-activation occurrences (below the activation floor),\n\
+            cleans up empty neighborhoods and episodes, then VACUUMs the\n\
+            SQLite database to reclaim disk space.\n\n\
+            Conscious memories are never auto-evicted.",
+        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+            am gc                     # Default: floor=1 (remove zero-activation)\n  \
+            am gc --floor 2           # Remove occurrences activated ≤2 times\n  \
+            am gc --dry-run           # Preview what would be removed\n  \
+            am gc --target-mb 10      # Shrink DB to ~10 MB"
+    )]
+    Gc {
+        /// Activation floor: remove occurrences with count ≤ this value
+        #[arg(long, default_value_t = 1)]
+        floor: u32,
+
+        /// Target database size in MB (aggressive mode if floor pass isn't enough)
+        #[arg(long)]
+        target_mb: Option<u64>,
+
+        /// Show what would be cleaned without doing it
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Selectively forget memories by term, episode, or conscious ID
+    #[command(
+        long_about = "Remove specific memories from the database.\n\n\
+            Three modes:\n\
+            • By term: removes all occurrences of a word across all episodes\n\
+            • By episode: removes an entire subconscious episode by UUID\n\
+            • By conscious ID: removes a specific conscious memory by UUID\n\n\
+            Use `am inspect` to find IDs before forgetting.",
+        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+            am forget password            # Remove all occurrences of \"password\"\n  \
+            am forget --episode abc123    # Remove episode by ID\n  \
+            am forget --conscious def456  # Remove conscious memory by ID"
+    )]
+    Forget {
+        /// Word/term to forget (removes all occurrences)
+        term: Option<String>,
+
+        /// Episode UUID to remove entirely
+        #[arg(long, conflicts_with = "term", conflicts_with = "conscious")]
+        episode: Option<String>,
+
+        /// Conscious memory (neighborhood) UUID to remove
+        #[arg(long, conflicts_with = "term", conflicts_with = "episode")]
+        conscious: Option<String>,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -295,6 +348,21 @@ async fn main() -> Result<()> {
             json,
         } => cmd_inspect(&cli, mode, query.as_deref(), *limit, *json),
         Commands::Sync { all, dry_run, dir } => cmd_sync(&cli, *all, *dry_run, dir.as_deref()),
+        Commands::Gc {
+            floor,
+            target_mb,
+            dry_run,
+        } => cmd_gc(&cli, *floor, *target_mb, *dry_run),
+        Commands::Forget {
+            term,
+            episode,
+            conscious,
+        } => cmd_forget(
+            &cli,
+            term.as_deref(),
+            episode.as_deref(),
+            conscious.as_deref(),
+        ),
     }
 }
 
@@ -1071,6 +1139,122 @@ fn cmd_sync(
             system.n(),
             system.episodes.len()
         );
+    }
+
+    Ok(())
+}
+
+fn cmd_gc(cli: &Cli, floor: u32, target_mb: Option<u64>, dry_run: bool) -> Result<()> {
+    let store = open_store(cli)?;
+    let db = store.project_store();
+    let bold = "\x1b[1m";
+    let dim = "\x1b[2m";
+    let reset = "\x1b[0m";
+
+    let stats = db
+        .activation_distribution()
+        .context("failed to read stats")?;
+    let db_size = db.db_size();
+
+    if dry_run {
+        // Show what would happen
+        let eligible: u64 = db
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM occurrences o
+                 JOIN neighborhoods n ON o.neighborhood_id = n.id
+                 JOIN episodes e ON n.episode_id = e.id
+                 WHERE e.is_conscious = 0 AND o.activation_count <= ?1",
+                [floor],
+                |row| row.get(0),
+            )
+            .context("failed to query eligible occurrences")?;
+
+        println!("{bold}GC dry run{reset}\n");
+        println!("  total occurrences:   {}", stats.total);
+        println!("  activation floor:    ≤{floor}");
+        println!("  eligible for eviction: {eligible}");
+        println!("  database size:       {:.1} KB", db_size as f64 / 1024.0);
+        if let Some(mb) = target_mb {
+            println!("  target size:         {mb} MB");
+        }
+        println!("\n{dim}No changes made. Remove --dry-run to execute.{reset}");
+        return Ok(());
+    }
+
+    // Run activation-floor GC pass
+    let result = db.gc_pass(floor).context("GC failed")?;
+
+    println!("{bold}GC complete{reset}\n");
+    println!("  evicted occurrences:    {}", result.evicted_occurrences);
+    println!("  removed neighborhoods:  {}", result.removed_neighborhoods);
+    println!("  removed episodes:       {}", result.removed_episodes);
+
+    // If target_mb specified and still over budget, run aggressive pass
+    if let Some(mb) = target_mb {
+        let target_bytes = mb * 1024 * 1024;
+        let current_size = db.db_size();
+        if current_size > target_bytes {
+            let aggressive = db
+                .gc_to_target_size(target_bytes)
+                .context("aggressive GC failed")?;
+            println!(
+                "\n  {bold}aggressive pass:{reset} evicted {} more occurrences",
+                aggressive.evicted_occurrences
+            );
+        }
+    }
+
+    let after_size = db.db_size();
+    println!(
+        "\n  size: {:.1} KB → {:.1} KB",
+        result.before_size as f64 / 1024.0,
+        after_size as f64 / 1024.0,
+    );
+
+    Ok(())
+}
+
+fn cmd_forget(
+    cli: &Cli,
+    term: Option<&str>,
+    episode_id: Option<&str>,
+    conscious_id: Option<&str>,
+) -> Result<()> {
+    let store = open_store(cli)?;
+    let db = store.project_store();
+    let bold = "\x1b[1m";
+    let reset = "\x1b[0m";
+
+    if let Some(id) = episode_id {
+        let removed = db.forget_episode(id).context("failed to forget episode")?;
+        if removed == 0 {
+            println!("Episode not found: {id}");
+        } else {
+            println!("{bold}Forgot{reset} episode {id} ({removed} occurrences removed)");
+        }
+    } else if let Some(id) = conscious_id {
+        let removed = db
+            .forget_conscious(id)
+            .context("failed to forget conscious memory")?;
+        if removed == 0 {
+            println!("Conscious memory not found: {id}");
+        } else {
+            println!("{bold}Forgot{reset} conscious memory {id} ({removed} occurrences removed)");
+        }
+    } else if let Some(word) = term {
+        let (removed_occs, removed_nbhds, removed_eps) =
+            db.forget_term(word).context("failed to forget term")?;
+        if removed_occs == 0 {
+            println!("No occurrences of \"{word}\" found.");
+        } else {
+            println!(
+                "{bold}Forgot{reset} \"{word}\": {removed_occs} occurrences, \
+                 {removed_nbhds} neighborhoods, {removed_eps} episodes removed"
+            );
+        }
+    } else {
+        anyhow::bail!("specify a term, --episode <id>, or --conscious <id> to forget");
     }
 
     Ok(())

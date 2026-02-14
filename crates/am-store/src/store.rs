@@ -781,6 +781,125 @@ impl Store {
         })
     }
 
+    // --- Forget (targeted removal) ---
+
+    /// Delete a specific subconscious episode and all its contents.
+    /// Returns the number of occurrences removed, or 0 if not found.
+    pub fn forget_episode(&self, episode_id: &str) -> Result<u64> {
+        let uuid = parse_uuid(episode_id)?;
+        let id_str = uuid.to_string();
+
+        // Verify it exists and is not conscious
+        let is_conscious: Option<bool> = self
+            .conn
+            .query_row(
+                "SELECT is_conscious FROM episodes WHERE id = ?1",
+                [&id_str],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match is_conscious {
+            None => return Ok(0),
+            Some(true) => {
+                return Err(StoreError::InvalidData(
+                    "use forget_conscious to remove conscious memories".into(),
+                ));
+            }
+            Some(false) => {}
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+
+        let removed: u64 = tx.execute(
+            "DELETE FROM occurrences WHERE neighborhood_id IN (
+                 SELECT id FROM neighborhoods WHERE episode_id = ?1
+             )",
+            [&id_str],
+        )? as u64;
+
+        tx.execute("DELETE FROM neighborhoods WHERE episode_id = ?1", [&id_str])?;
+
+        tx.execute("DELETE FROM episodes WHERE id = ?1", [&id_str])?;
+
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    /// Delete a specific conscious neighborhood by UUID.
+    /// Returns the number of occurrences removed, or 0 if not found.
+    pub fn forget_conscious(&self, neighborhood_id: &str) -> Result<u64> {
+        let uuid = parse_uuid(neighborhood_id)?;
+        let id_str = uuid.to_string();
+
+        // Verify it's a conscious neighborhood
+        let is_conscious: Option<bool> = self
+            .conn
+            .query_row(
+                "SELECT e.is_conscious FROM neighborhoods n
+                 JOIN episodes e ON n.episode_id = e.id
+                 WHERE n.id = ?1",
+                [&id_str],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match is_conscious {
+            None => return Ok(0),
+            Some(false) => {
+                return Err(StoreError::InvalidData(
+                    "neighborhood is not conscious — use forget_episode instead".into(),
+                ));
+            }
+            Some(true) => {}
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+
+        let removed: u64 = tx.execute(
+            "DELETE FROM occurrences WHERE neighborhood_id = ?1",
+            [&id_str],
+        )? as u64;
+
+        tx.execute("DELETE FROM neighborhoods WHERE id = ?1", [&id_str])?;
+
+        tx.commit()?;
+        Ok(removed)
+    }
+
+    /// Delete all occurrences matching a word (case-insensitive), clean empty structures.
+    /// Returns (removed_occurrences, removed_neighborhoods, removed_episodes).
+    pub fn forget_term(&self, term: &str) -> Result<(u64, u64, u64)> {
+        let word_lower = term.to_lowercase();
+
+        let tx = self.conn.unchecked_transaction()?;
+
+        let removed_occs: u64 = tx.execute(
+            "DELETE FROM occurrences WHERE LOWER(word) = ?1",
+            [&word_lower],
+        )? as u64;
+
+        // Clean empty neighborhoods (both conscious and subconscious)
+        let removed_neighborhoods: u64 = tx.execute(
+            "DELETE FROM neighborhoods WHERE id NOT IN (
+                 SELECT DISTINCT neighborhood_id FROM occurrences
+             )",
+            [],
+        )? as u64;
+
+        // Clean empty non-conscious episodes
+        let removed_episodes: u64 = tx.execute(
+            "DELETE FROM episodes WHERE is_conscious = 0
+             AND id NOT IN (
+                 SELECT DISTINCT episode_id FROM neighborhoods
+             )",
+            [],
+        )? as u64;
+
+        tx.commit()?;
+        Ok((removed_occs, removed_neighborhoods, removed_episodes))
+    }
+
     /// Get activation count distribution for stats.
     pub fn activation_distribution(&self) -> Result<ActivationStats> {
         let total: u64 = self
@@ -1233,5 +1352,95 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let conscious = store.list_conscious_neighborhoods().unwrap();
         assert!(conscious.is_empty());
+    }
+
+    #[test]
+    fn test_forget_episode() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let episodes = store.list_episodes().unwrap();
+        // 2 episodes: 1 subconscious + 1 conscious
+        assert_eq!(episodes.len(), 2);
+
+        let sub_ep = episodes.iter().find(|e| !e.is_conscious).unwrap();
+        let before = store.occurrence_count().unwrap();
+        let removed = store.forget_episode(&sub_ep.id).unwrap();
+        assert!(removed > 0);
+        assert_eq!(store.occurrence_count().unwrap(), before - removed);
+
+        // Only conscious episode should remain
+        let after = store.list_episodes().unwrap();
+        assert_eq!(after.len(), 1);
+        assert!(after[0].is_conscious);
+    }
+
+    #[test]
+    fn test_forget_episode_not_found() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let removed = store
+            .forget_episode("00000000-0000-0000-0000-000000000000")
+            .unwrap();
+        assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn test_forget_conscious() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let conscious = store.list_conscious_neighborhoods().unwrap();
+        assert!(!conscious.is_empty());
+
+        let removed = store.forget_conscious(&conscious[0].id).unwrap();
+        assert!(removed > 0);
+
+        let after = store.list_conscious_neighborhoods().unwrap();
+        assert!(after.is_empty());
+    }
+
+    #[test]
+    fn test_forget_conscious_rejects_subconscious() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let _episodes = store.list_episodes().unwrap();
+        // Get a neighborhood from a subconscious episode
+        let neighborhoods = store.list_neighborhoods().unwrap();
+        let sub_nbhd = neighborhoods
+            .iter()
+            .find(|n| n.episode_name != "conscious")
+            .unwrap();
+
+        let result = store.forget_conscious(&sub_nbhd.id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_forget_term() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let before = store.occurrence_count().unwrap();
+        let (removed_occs, _, _) = store.forget_term("hello").unwrap();
+        assert!(removed_occs > 0);
+        assert!(store.occurrence_count().unwrap() < before);
+    }
+
+    #[test]
+    fn test_forget_term_not_found() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let (removed, _, _) = store.forget_term("nonexistent").unwrap();
+        assert_eq!(removed, 0);
     }
 }

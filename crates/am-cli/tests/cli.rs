@@ -388,13 +388,7 @@ fn sync_dry_run() {
 
     // Dry run should find the session but not ingest
     am_cmd(&dir)
-        .args([
-            "sync",
-            "--dry-run",
-            "--project",
-            "test-sync",
-            "--dir",
-        ])
+        .args(["sync", "--dry-run", "--project", "test-sync", "--dir"])
         .arg(&claude_dir)
         .assert()
         .success()
@@ -503,4 +497,124 @@ fn project_isolation() {
         .assert()
         .success()
         .stdout(predicate::str::contains("episodes:   0"));
+}
+
+#[test]
+fn gc_fresh_db() {
+    let dir = TempDir::new().unwrap();
+    am_cmd(&dir)
+        .args(["gc", "--project", "test-gc"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GC complete"))
+        .stdout(predicate::str::contains("evicted occurrences:"));
+}
+
+#[test]
+fn gc_dry_run() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("gc-data.txt");
+    std::fs::write(
+        &input,
+        "Memory garbage collection testing with enough words. \
+         Second sentence provides additional content. \
+         Third sentence completes the paragraph for chunking.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-gc-dry"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    am_cmd(&dir)
+        .args(["gc", "--dry-run", "--project", "test-gc-dry"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GC dry run"))
+        .stdout(predicate::str::contains("eligible for eviction"))
+        .stdout(predicate::str::contains("No changes made"));
+}
+
+#[test]
+fn gc_evicts_cold_occurrences() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("gc-cold.txt");
+    std::fs::write(
+        &input,
+        "Quantum entanglement connects particles across spacetime. \
+         Bell inequality violations confirm nonlocal correlations. \
+         Decoherence destroys quantum superposition in macroscopic systems.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-gc-evict"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    // With floor=99, everything should be evicted (no occurrence has count > 99)
+    am_cmd(&dir)
+        .args(["gc", "--floor", "99", "--project", "test-gc-evict"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GC complete"));
+
+    // Stats should show 0 episodes after evicting everything
+    am_cmd(&dir)
+        .args(["stats", "--project", "test-gc-evict"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   0"));
+}
+
+#[test]
+fn forget_term() {
+    let dir = TempDir::new().unwrap();
+
+    let input = dir.path().join("forget.txt");
+    std::fs::write(
+        &input,
+        "Authentication uses JWT tokens for session management. \
+         Password hashing employs bcrypt with salt rounds. \
+         Token refresh handles expiration transparently.",
+    )
+    .unwrap();
+
+    am_cmd(&dir)
+        .args(["ingest", "--project", "test-forget"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    am_cmd(&dir)
+        .args(["forget", "password", "--project", "test-forget"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Forgot"))
+        .stdout(predicate::str::contains("password"));
+}
+
+#[test]
+fn forget_term_not_found() {
+    let dir = TempDir::new().unwrap();
+    am_cmd(&dir)
+        .args(["forget", "nonexistent", "--project", "test-forget-nf"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("No occurrences"));
+}
+
+#[test]
+fn forget_requires_argument() {
+    let dir = TempDir::new().unwrap();
+    // No term, no --episode, no --conscious
+    am_cmd(&dir)
+        .args(["forget", "--project", "test-forget-arg"])
+        .assert()
+        .failure();
 }
