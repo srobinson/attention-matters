@@ -50,6 +50,21 @@ impl Store {
     // --- Save ---
 
     pub fn save_system(&self, system: &DAESystem) -> Result<()> {
+        // Guard: refuse to overwrite existing data with an empty system.
+        // This prevents data destruction when the server fails to load state
+        // and then saves its empty in-memory system over the real data.
+        if system.n() == 0 && system.episodes.is_empty() {
+            let existing: i64 =
+                self.conn
+                    .query_row("SELECT COUNT(*) FROM occurrences", [], |r| r.get(0))?;
+            if existing > 0 {
+                return Err(StoreError::InvalidData(format!(
+                    "refusing to overwrite {existing} existing occurrences with empty system \
+                     (possible failed load)"
+                )));
+            }
+        }
+
         let tx = self.conn.unchecked_transaction()?;
 
         // Clear existing data

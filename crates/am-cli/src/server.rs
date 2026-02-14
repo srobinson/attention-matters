@@ -30,15 +30,15 @@ struct ServerState {
 }
 
 impl AmServer {
-    pub fn new(store: ProjectStore) -> Self {
+    pub fn new(store: ProjectStore) -> std::result::Result<Self, String> {
         let system = store
             .load_project_system()
-            .unwrap_or_else(|_| DAESystem::new("am"));
+            .map_err(|e| format!("failed to load project system: {e}"))?;
         let rng = SmallRng::from_os_rng();
-        Self {
+        Ok(Self {
             state: Arc::new(Mutex::new(ServerState { system, store, rng })),
             tool_router: Self::tool_router(),
-        }
+        })
     }
 
     fn stats_json(system: &mut DAESystem) -> serde_json::Value {
@@ -398,7 +398,7 @@ mod tests {
 
     fn make_server() -> AmServer {
         let store = ProjectStore::open_in_memory().unwrap();
-        AmServer::new(store)
+        AmServer::new(store).unwrap()
     }
 
     fn text_from_result(result: &CallToolResult) -> String {

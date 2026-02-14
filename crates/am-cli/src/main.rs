@@ -106,7 +106,7 @@ async fn cmd_serve(cli: &Cli) -> Result<()> {
     let store = open_store(cli)?;
     tracing::info!("starting MCP server for project '{}'", store.project_id());
 
-    let server = server::AmServer::new(store);
+    let server = server::AmServer::new(store).map_err(|e| anyhow::anyhow!("{e}"))?;
     let service = server
         .serve(stdio())
         .await
