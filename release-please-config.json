@@ -47,7 +47,5 @@
       ]
     }
   },
-  "plugins": [
-    "cargo-workspace"
-  ]
+  "plugins": []
 }
