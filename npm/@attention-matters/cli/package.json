@@ -1,0 +1,28 @@
+{
+  "name": "@attention-matters/cli",
+  "version": "0.1.0",
+  "description": "Geometric memory for AI coding agents. Installs the 'attention-matters' package.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/srobinson/attention-matters"
+  },
+  "homepage": "https://github.com/srobinson/attention-matters",
+  "keywords": [
+    "mcp",
+    "memory",
+    "ai",
+    "claude",
+    "agent",
+    "mcp-server"
+  ],
+  "dependencies": {
+    "attention-matters": "0.1.0"
+  },
+  "bin": {
+    "am": "./node_modules/.bin/am"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -28,9 +28,10 @@ fn dirs_home() -> PathBuf {
 fn extract_quoted(s: &str) -> Option<&str> {
     for quote in ['"', '\''] {
         if let Some(start) = s.find(quote)
-            && let Some(end) = s[start + 1..].find(quote) {
-                return Some(&s[start + 1..start + 1 + end]);
-            }
+            && let Some(end) = s[start + 1..].find(quote)
+        {
+            return Some(&s[start + 1..start + 1 + end]);
+        }
     }
     None
 }
@@ -114,9 +115,10 @@ fn extract_toml_name(content: &str, section: &str) -> Option<String> {
                 let rest = rest.trim_start();
                 if let Some(rest) = rest.strip_prefix('=')
                     && let Some(name) = extract_quoted(rest)
-                        && !name.is_empty() {
-                            return Some(name.to_string());
-                        }
+                    && !name.is_empty()
+                {
+                    return Some(name.to_string());
+                }
             }
         }
     }
@@ -169,9 +171,10 @@ fn detect_manifest_name(dir: &Path) -> Option<String> {
     // Cargo.toml → [package] name
     let cargo = dir.join("Cargo.toml");
     if let Ok(content) = fs::read_to_string(&cargo)
-        && let Some(name) = extract_toml_name(&content, "package") {
-            return Some(name);
-        }
+        && let Some(name) = extract_toml_name(&content, "package")
+    {
+        return Some(name);
+    }
 
     // package.json → "name": "value"
     let pkg = dir.join("package.json");
@@ -183,9 +186,10 @@ fn detect_manifest_name(dir: &Path) -> Option<String> {
                 if let Some(rest) = rest.strip_prefix(':') {
                     let rest = rest.trim_start().trim_end_matches(',');
                     if let Some(name) = extract_quoted(rest)
-                        && !name.is_empty() {
-                            return Some(name.to_string());
-                        }
+                        && !name.is_empty()
+                    {
+                        return Some(name.to_string());
+                    }
                 }
             }
         }
@@ -194,9 +198,10 @@ fn detect_manifest_name(dir: &Path) -> Option<String> {
     // pyproject.toml → [project] name
     let pyproject = dir.join("pyproject.toml");
     if let Ok(content) = fs::read_to_string(&pyproject)
-        && let Some(name) = extract_toml_name(&content, "project") {
-            return Some(name);
-        }
+        && let Some(name) = extract_toml_name(&content, "project")
+    {
+        return Some(name);
+    }
 
     None
 }

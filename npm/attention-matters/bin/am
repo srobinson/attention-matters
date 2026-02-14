@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+
+"use strict";
+
+const { execFileSync } = require("child_process");
+const path = require("path");
+const fs = require("fs");
+
+const binPath = path.join(__dirname, "am");
+const nativeBin = binPath + (process.platform === "win32" ? ".exe" : "");
+
+// Check for the downloaded native binary next to this script
+// The install.js postinstall script extracts it here
+const candidates = [
+  nativeBin,
+  // Fallback: maybe it's on PATH (cargo install, brew, etc.)
+  "am",
+];
+
+for (const candidate of candidates) {
+  try {
+    if (candidate === "am" || fs.existsSync(candidate)) {
+      execFileSync(candidate, process.argv.slice(2), { stdio: "inherit" });
+      process.exit(0);
+    }
+  } catch (err) {
+    if (err.status !== undefined) {
+      process.exit(err.status);
+    }
+    // Try next candidate
+  }
+}
+
+console.error(
+  "attention-matters: native binary not found.\n\n" +
+    "The postinstall script may have failed. Install manually:\n" +
+    "  cargo install am-cli\n" +
+    "  brew install srobinson/tap/am\n"
+);
+process.exit(1);
