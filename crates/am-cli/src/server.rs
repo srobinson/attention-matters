@@ -4,7 +4,7 @@ use am_core::{
     DAESystem, QueryEngine, compose_context, compute_surface, export_json, extract_salient,
     import_json, ingest_text,
 };
-use am_store::ProjectStore;
+use am_store::BrainStore;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -25,15 +25,15 @@ pub struct AmServer {
 
 struct ServerState {
     system: DAESystem,
-    store: ProjectStore,
+    store: BrainStore,
     rng: SmallRng,
 }
 
 impl AmServer {
-    pub fn new(store: ProjectStore) -> std::result::Result<Self, String> {
+    pub fn new(store: BrainStore) -> std::result::Result<Self, String> {
         let system = store
-            .load_project_system()
-            .map_err(|e| format!("failed to load project system: {e}"))?;
+            .load_system()
+            .map_err(|e| format!("failed to load system: {e}"))?;
         let rng = SmallRng::from_os_rng();
         Ok(Self {
             state: Arc::new(Mutex::new(ServerState { system, store, rng })),
@@ -41,18 +41,15 @@ impl AmServer {
         })
     }
 
-    /// Explicitly flush WAL on both project and global stores.
+    /// Explicitly flush WAL on the brain store.
     /// Belt-and-suspenders with Store::Drop, but ensures checkpoint runs
     /// even when the tokio runtime is shutting down.
     pub async fn checkpoint_wal(&self) {
         let state = self.state.lock().await;
-        if let Err(e) = state.store.project_store().checkpoint_truncate() {
-            tracing::warn!("project WAL checkpoint failed: {e}");
+        if let Err(e) = state.store.store().checkpoint_truncate() {
+            tracing::warn!("WAL checkpoint failed: {e}");
         }
-        if let Err(e) = state.store.global_store().checkpoint_truncate() {
-            tracing::warn!("global WAL checkpoint failed: {e}");
-        }
-        tracing::info!("WAL checkpoint complete (project + global)");
+        tracing::info!("WAL checkpoint complete");
     }
 
     fn stats_json(system: &mut DAESystem) -> serde_json::Value {
@@ -124,18 +121,18 @@ impl AmServer {
         } = &mut *state;
 
         // Flush any orphaned buffer from previous sessions into an episode
-        let orphaned = store.project_store().buffer_count().unwrap_or(0);
+        let orphaned = store.store().buffer_count().unwrap_or(0);
         if orphaned > 0
-            && let Ok(exchanges) = store.project_store().drain_buffer()
+            && let Ok(exchanges) = store.store().drain_buffer()
         {
             let combined: String = exchanges
                 .iter()
-                .map(|(u, a)| format!("{u}\n{a}"))
+                .map(|(u, a, _pid)| format!("{u}\n{a}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
             let episode = ingest_text(&combined, Some("conversation"), rng);
             system.add_episode(episode);
-            if let Err(e) = store.save_project_system(system) {
+            if let Err(e) = store.save_system(system) {
                 tracing::error!("failed to persist flushed buffer episode: {e}");
             }
         }
@@ -184,7 +181,7 @@ impl AmServer {
         );
         QueryEngine::apply_kuramoto_coupling(system, &word_groups);
 
-        if let Err(e) = store.save_project_system(system) {
+        if let Err(e) = store.save_system(system) {
             tracing::error!("failed to persist after activate_response: {e}");
         }
 
@@ -199,7 +196,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Mark an insight as conscious memory — something worth remembering across sessions and across projects. Use for: architecture decisions, user preferences, recurring patterns, hard-won debugging insights, project conventions. These surface as CONSCIOUS RECALL in future queries. Be selective — mark only genuinely reusable insights, not routine facts. Writes to both project-local and global (cross-project) memory."
+        description = "Mark an insight as conscious memory — something worth remembering across sessions and across projects. Use for: architecture decisions, user preferences, recurring patterns, hard-won debugging insights, project conventions. These surface as CONSCIOUS RECALL in future queries. Be selective — mark only genuinely reusable insights, not routine facts. Writes to brain-wide memory, queryable from any project."
     )]
     async fn am_salient(
         &self,
@@ -217,7 +214,7 @@ impl AmServer {
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
             1u32
         } else {
-            if let Err(e) = store.save_project_system(system) {
+            if let Err(e) = store.save_system(system) {
                 tracing::error!("failed to persist after salient: {e}");
             }
             stored
@@ -246,21 +243,21 @@ impl AmServer {
         } = &mut *state;
 
         let buffer_size = store
-            .project_store()
-            .append_buffer(&req.user, &req.assistant)
+            .store()
+            .append_buffer(&req.user, &req.assistant, store.project_id())
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let mut episode_created: Option<String> = None;
 
         if buffer_size >= BUFFER_THRESHOLD {
             let exchanges = store
-                .project_store()
+                .store()
                 .drain_buffer()
                 .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
             let combined: String = exchanges
                 .iter()
-                .map(|(u, a)| format!("{u}\n{a}"))
+                .map(|(u, a, _pid)| format!("{u}\n{a}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
 
@@ -268,7 +265,7 @@ impl AmServer {
             let name = episode.name.clone();
             system.add_episode(episode);
 
-            if let Err(e) = store.save_project_system(system) {
+            if let Err(e) = store.save_system(system) {
                 tracing::error!("failed to persist after buffer episode: {e}");
             }
 
@@ -308,7 +305,7 @@ impl AmServer {
 
         system.add_episode(episode);
 
-        if let Err(e) = store.save_project_system(system) {
+        if let Err(e) = store.save_system(system) {
             tracing::error!("failed to persist after ingest: {e}");
         }
 
@@ -331,9 +328,9 @@ impl AmServer {
         let mut stats = Self::stats_json(&mut state.system);
 
         // Add store-level stats (DB size, activation distribution)
-        let db_size = state.store.project_store().db_size();
+        let db_size = state.store.store().db_size();
         stats["db_size_bytes"] = serde_json::json!(db_size);
-        if let Ok(activation) = state.store.project_store().activation_distribution() {
+        if let Ok(activation) = state.store.store().activation_distribution() {
             stats["activation"] = serde_json::json!({
                 "mean": activation.mean_activation,
                 "max": activation.max_activation,
@@ -371,7 +368,7 @@ impl AmServer {
 
         state.system = imported;
 
-        if let Err(e) = state.store.save_project_system(&state.system) {
+        if let Err(e) = state.store.save_system(&state.system) {
             tracing::error!("failed to persist after import: {e}");
         }
 
@@ -422,7 +419,7 @@ mod tests {
     use super::*;
 
     fn make_server() -> AmServer {
-        let store = ProjectStore::open_in_memory().unwrap();
+        let store = BrainStore::open_in_memory().unwrap();
         AmServer::new(store).unwrap()
     }
 

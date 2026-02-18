@@ -491,12 +491,12 @@ fn project_isolation() {
         .success()
         .stdout(predicate::str::contains("episodes:   1"));
 
-    // Project B should be empty
+    // Project B sees the same brain — unified brain.db, no isolation
     am_cmd(&dir)
         .args(["stats", "--project", "isolated-b"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("episodes:   0"));
+        .stdout(predicate::str::contains("episodes:   1"));
 }
 
 #[test]

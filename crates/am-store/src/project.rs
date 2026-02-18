@@ -3,7 +3,6 @@ use std::process::Command;
 use std::{env, fs};
 
 use am_core::DAESystem;
-use rusqlite::Connection;
 
 use crate::error::{Result, StoreError};
 use crate::store::Store;
@@ -274,153 +273,6 @@ fn sanitize_name(name: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Startup healing — orphaned hash-named database migration
-// ---------------------------------------------------------------------------
-
-/// Returns true if a filename stem looks like a hex hash (8-32 hex chars).
-fn is_hash_name(stem: &str) -> bool {
-    let len = stem.len();
-    (8..=32).contains(&len) && stem.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-/// Scan the projects directory for hash-named `.db` files and merge them
-/// into the current project's human-readable DB.
-///
-/// After a successful merge the hash DB is renamed to `.db.migrated`.
-fn heal_orphaned_databases(projects_dir: &Path, current_project_path: &Path) {
-    let entries = match fs::read_dir(projects_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("db") {
-            continue;
-        }
-        let stem = match path.file_stem().and_then(|s| s.to_str()) {
-            Some(s) => s.to_string(),
-            None => continue,
-        };
-        if !is_hash_name(&stem) {
-            continue;
-        }
-        // Don't merge a file into itself
-        if path == current_project_path {
-            continue;
-        }
-
-        tracing::info!("found orphaned hash-named DB: {}", path.display());
-
-        if let Err(e) = merge_orphan_into(&path, current_project_path) {
-            tracing::warn!("failed to merge orphan {}: {e}", path.display());
-            continue;
-        }
-
-        // Rename to .db.migrated (belt and suspenders — don't delete)
-        let migrated = path.with_extension("db.migrated");
-        if let Err(e) = fs::rename(&path, &migrated) {
-            tracing::warn!(
-                "merged orphan but failed to rename {} → {}: {e}",
-                path.display(),
-                migrated.display()
-            );
-        } else {
-            tracing::info!(
-                "migrated orphan {} → {}",
-                path.display(),
-                migrated.display()
-            );
-            // Also rename any companion WAL/SHM files
-            for suffix in &["db-wal", "db-shm"] {
-                let companion = path.with_extension(suffix);
-                if companion.exists() {
-                    let _ = fs::remove_file(&companion);
-                }
-            }
-        }
-    }
-}
-
-/// Open the orphan DB, load its system, and additively merge into the target.
-fn merge_orphan_into(orphan_path: &Path, target_path: &Path) -> Result<()> {
-    // Open orphan read-only with healing pragmas
-    let orphan_conn = Connection::open_with_flags(
-        orphan_path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    orphan_conn.pragma_update(None, "busy_timeout", 5000)?;
-    // Checkpoint orphan WAL before reading
-    let _ = orphan_conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
-
-    // Verify the orphan has our schema tables
-    let has_episodes: bool = orphan_conn
-        .query_row(
-            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='episodes'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !has_episodes {
-        tracing::info!(
-            "orphan {} has no episodes table — skipping",
-            orphan_path.display()
-        );
-        return Ok(());
-    }
-
-    let orphan_store = Store::open(orphan_path)?;
-    let orphan_system = orphan_store.load_system()?;
-
-    if orphan_system.n() == 0 && orphan_system.episodes.is_empty() {
-        tracing::info!("orphan {} is empty — skipping", orphan_path.display());
-        return Ok(());
-    }
-
-    // Open target and merge
-    let target_store = Store::open(target_path)?;
-    let mut target_system = target_store.load_system()?;
-
-    let before_n = target_system.n();
-    let before_episodes = target_system.episodes.len();
-
-    // Merge subconscious episodes
-    for episode in orphan_system.episodes {
-        target_system.add_episode(episode);
-    }
-
-    // Merge conscious neighborhoods (deduplicate by ID)
-    let existing_ids: std::collections::HashSet<uuid::Uuid> = target_system
-        .conscious_episode
-        .neighborhoods
-        .iter()
-        .map(|n| n.id)
-        .collect();
-    for nbhd in orphan_system.conscious_episode.neighborhoods {
-        if !existing_ids.contains(&nbhd.id) {
-            target_system.conscious_episode.add_neighborhood(nbhd);
-        }
-    }
-
-    target_system.mark_dirty();
-    target_store.save_system(&target_system)?;
-
-    tracing::info!(
-        "merged orphan: {} episodes ({}→{}), {} occurrences ({}→{})",
-        target_system.episodes.len() - before_episodes,
-        before_episodes,
-        target_system.episodes.len(),
-        target_system.n() - before_n,
-        before_n,
-        target_system.n(),
-    );
-
-    Ok(())
-}
-
-// ---------------------------------------------------------------------------
 // Startup GC — automatic size management
 // ---------------------------------------------------------------------------
 
@@ -473,59 +325,174 @@ fn startup_gc(store: &Store) {
     }
 }
 
-/// Manages per-project storage with a global conscious layer.
+// ---------------------------------------------------------------------------
+// Migration — one-time merge from old multi-DB layout to single brain.db
+// ---------------------------------------------------------------------------
+
+/// Migrate the old `projects/*.db` + `global.db` layout into a single `brain.db`.
+///
+/// Only runs when `projects/` exists and `brain.db` does not. After merging,
+/// renames `projects/` to `projects.migrated/` and `global.db` to
+/// `global.db.migrated` (belt and suspenders — never deletes).
+fn migrate_old_layout(base: &Path, brain_path: &Path, _current_project_id: &str) {
+    let projects_dir = base.join("projects");
+    let global_path = base.join("global.db");
+
+    // Only migrate if brain.db doesn't exist yet
+    if brain_path.exists() {
+        return;
+    }
+
+    tracing::info!("migrating old layout to brain.db");
+
+    let brain_store = match Store::open(brain_path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("failed to open brain.db for migration: {e}");
+            return;
+        }
+    };
+
+    let mut brain_system = brain_store
+        .load_system()
+        .unwrap_or_else(|_| DAESystem::new("am"));
+
+    // Merge all project DBs
+    if let Ok(entries) = fs::read_dir(&projects_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("db") {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            match Store::open(&path) {
+                Ok(project_store) => match project_store.load_system() {
+                    Ok(project_system) => {
+                        let ep_count = project_system.episodes.len();
+                        for mut episode in project_system.episodes {
+                            if episode.project_id.is_empty() {
+                                episode.project_id = stem.clone();
+                            }
+                            brain_system.add_episode(episode);
+                        }
+                        // Merge conscious (deduplicate by ID)
+                        let existing_ids: std::collections::HashSet<uuid::Uuid> = brain_system
+                            .conscious_episode
+                            .neighborhoods
+                            .iter()
+                            .map(|n| n.id)
+                            .collect();
+                        for nbhd in project_system.conscious_episode.neighborhoods {
+                            if !existing_ids.contains(&nbhd.id) {
+                                brain_system.conscious_episode.add_neighborhood(nbhd);
+                            }
+                        }
+                        tracing::info!("merged {} episodes from {}", ep_count, stem);
+                    }
+                    Err(e) => tracing::warn!("failed to load {}: {e}", path.display()),
+                },
+                Err(e) => tracing::warn!("failed to open {}: {e}", path.display()),
+            }
+        }
+    }
+
+    // Also merge global.db conscious memories
+    if global_path.exists() {
+        if let Ok(global_store) = Store::open(&global_path) {
+            if let Ok(global_system) = global_store.load_system() {
+                let existing_ids: std::collections::HashSet<uuid::Uuid> = brain_system
+                    .conscious_episode
+                    .neighborhoods
+                    .iter()
+                    .map(|n| n.id)
+                    .collect();
+                let mut merged = 0;
+                for nbhd in global_system.conscious_episode.neighborhoods {
+                    if !existing_ids.contains(&nbhd.id) {
+                        brain_system.conscious_episode.add_neighborhood(nbhd);
+                        merged += 1;
+                    }
+                }
+                tracing::info!("merged {} conscious neighborhoods from global.db", merged);
+            }
+        }
+    }
+
+    brain_system.mark_dirty();
+    if let Err(e) = brain_store.save_system(&brain_system) {
+        tracing::warn!("failed to save brain.db during migration: {e}");
+        return;
+    }
+
+    // Rename old dirs to .migrated (don't delete — belt and suspenders)
+    let migrated_dir = base.join("projects.migrated");
+    if let Err(e) = fs::rename(&projects_dir, &migrated_dir) {
+        tracing::warn!("failed to rename projects/ → projects.migrated/: {e}");
+    }
+    if global_path.exists() {
+        let migrated_global = base.join("global.db.migrated");
+        if let Err(e) = fs::rename(&global_path, &migrated_global) {
+            tracing::warn!("failed to rename global.db → global.db.migrated: {e}");
+        }
+    }
+
+    tracing::info!(
+        "migration complete: {} episodes, {} conscious in brain.db",
+        brain_system.episodes.len(),
+        brain_system.conscious_episode.neighborhoods.len()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// BrainStore — single brain.db, project_id as a tag
+// ---------------------------------------------------------------------------
+
+/// Single-database store for all developer memory.
 ///
 /// Layout:
 /// ```text
 /// ~/.attention-matters/
-/// ├── global.db
-/// └── projects/
-///     ├── <project-hash>.db
-///     └── ...
+/// └── brain.db          # all projects, project_id as tag
 /// ```
-pub struct ProjectStore {
-    project: Store,
-    global: Store,
+pub struct BrainStore {
+    store: Store,
     project_id: String,
 }
 
-impl ProjectStore {
-    /// Open project and global stores, creating directories as needed.
+impl BrainStore {
+    /// Open the brain store, creating directories as needed.
     /// `project_name`: explicit project name (overrides auto-detection).
     /// `base_dir`: override the base directory (for testing).
     pub fn open(project_name: Option<&str>, base_dir: Option<&Path>) -> Result<Self> {
         let base = base_dir.map(PathBuf::from).unwrap_or_else(default_base_dir);
-        let projects_dir = base.join("projects");
-
-        fs::create_dir_all(&projects_dir).map_err(|e| {
-            StoreError::InvalidData(format!("failed to create {}: {e}", projects_dir.display()))
+        fs::create_dir_all(&base).map_err(|e| {
+            StoreError::InvalidData(format!("failed to create {}: {e}", base.display()))
         })?;
 
         let project_id = resolve_project_id(project_name);
-        let project_path = projects_dir.join(format!("{project_id}.db"));
-        let global_path = base.join("global.db");
+        let brain_path = base.join("brain.db");
 
-        // Startup healing: merge any orphaned hash-named DBs into the current project
-        heal_orphaned_databases(&projects_dir, &project_path);
+        // Startup migration: if old layout exists, merge into brain.db
+        let projects_dir = base.join("projects");
+        if projects_dir.exists() {
+            migrate_old_layout(&base, &brain_path, &project_id);
+        }
 
-        let project = Store::open(&project_path)?;
-        let global = Store::open(&global_path)?;
+        let store = Store::open(&brain_path)?;
+        startup_gc(&store);
 
-        // Startup GC: if project DB exceeds soft limit, evict cold occurrences
-        startup_gc(&project);
-
-        Ok(Self {
-            project,
-            global,
-            project_id,
-        })
+        Ok(Self { store, project_id })
     }
 
-    /// Open with in-memory stores (for testing).
+    /// Open with an in-memory store (for testing).
     pub fn open_in_memory() -> Result<Self> {
         Ok(Self {
-            project: Store::open_in_memory()?,
-            global: Store::open_in_memory()?,
+            store: Store::open_in_memory()?,
             project_id: "test".to_string(),
         })
     }
@@ -534,26 +501,21 @@ impl ProjectStore {
         &self.project_id
     }
 
-    pub fn project_store(&self) -> &Store {
-        &self.project
+    pub fn store(&self) -> &Store {
+        &self.store
     }
 
-    pub fn global_store(&self) -> &Store {
-        &self.global
+    /// Load the full DAESystem from brain.db.
+    pub fn load_system(&self) -> Result<DAESystem> {
+        self.store.load_system()
     }
 
-    /// Load the project's full DAESystem.
-    pub fn load_project_system(&self) -> Result<DAESystem> {
-        self.project.load_system()
+    /// Save a full DAESystem to brain.db.
+    pub fn save_system(&self, system: &DAESystem) -> Result<()> {
+        self.store.save_system(system)
     }
 
-    /// Save a full DAESystem to the project store.
-    pub fn save_project_system(&self, system: &DAESystem) -> Result<()> {
-        self.project.save_system(system)
-    }
-
-    /// Mark text as salient (conscious). Writes to BOTH project and global stores.
-    /// Returns the neighborhood ID.
+    /// Mark text as salient (conscious). Returns the neighborhood ID.
     pub fn mark_salient(
         &self,
         system: &mut DAESystem,
@@ -561,54 +523,18 @@ impl ProjectStore {
         rng: &mut impl rand::Rng,
     ) -> Result<uuid::Uuid> {
         let nbhd_id = system.add_to_conscious(text, rng);
-
-        // Save full project state (includes the new conscious neighborhood)
-        self.project.save_system(system)?;
-
-        // Replicate conscious neighborhood to global store
-        self.replicate_conscious_to_global(system)?;
-
+        self.store.save_system(system)?;
         Ok(nbhd_id)
     }
 
-    /// Write the conscious episode from the project system to the global store.
-    /// Creates or updates the conscious episode in global.
-    fn replicate_conscious_to_global(&self, system: &DAESystem) -> Result<()> {
-        // Load current global state
-        let mut global_system = self.global.load_system()?;
-
-        // Copy conscious neighborhoods from project that aren't already in global
-        let existing_ids: std::collections::HashSet<uuid::Uuid> = global_system
-            .conscious_episode
-            .neighborhoods
-            .iter()
-            .map(|n| n.id)
-            .collect();
-
-        for nbhd in &system.conscious_episode.neighborhoods {
-            if !existing_ids.contains(&nbhd.id) {
-                global_system
-                    .conscious_episode
-                    .add_neighborhood(nbhd.clone());
-            }
-        }
-
-        global_system.agent_name = system.agent_name.clone();
-        self.global.save_system(&global_system)
-    }
-
-    /// Import a v0.7.2 JSON file into the project store.
+    /// Import a v0.7.2 JSON file into the brain store.
     pub fn import_json_file(&self, path: &Path) -> Result<()> {
-        self.project.import_json_file(path)?;
-
-        // Also replicate conscious memories to global
-        let system = self.project.load_system()?;
-        self.replicate_conscious_to_global(&system)
+        self.store.import_json_file(path)
     }
 
-    /// Export the project store to a v0.7.2 JSON file.
+    /// Export the brain store to a v0.7.2 JSON file.
     pub fn export_json_file(&self, path: &Path) -> Result<()> {
-        self.project.export_json_file(path)
+        self.store.export_json_file(path)
     }
 }
 
@@ -645,91 +571,49 @@ mod tests {
     }
 
     #[test]
-    fn test_project_isolation() {
-        let ps_a = ProjectStore::open_in_memory().unwrap();
-        let ps_b = ProjectStore::open_in_memory().unwrap();
-
-        let sys_a = make_system();
-        ps_a.save_project_system(&sys_a).unwrap();
-
-        // Project B should have empty state
-        let sys_b = ps_b.load_project_system().unwrap();
-        assert!(sys_b.episodes.is_empty());
-        assert_eq!(sys_b.n(), 0);
-
-        // Project A should have data
-        let loaded_a = ps_a.load_project_system().unwrap();
-        assert_eq!(loaded_a.episodes.len(), 1);
-    }
-
-    #[test]
-    fn test_salient_writes_to_both() {
-        let ps = ProjectStore::open_in_memory().unwrap();
+    fn test_brain_salient_queryable() {
+        let bs = BrainStore::open_in_memory().unwrap();
         let mut sys = make_system();
         let mut rng = rng();
 
-        ps.mark_salient(&mut sys, "important insight", &mut rng)
+        bs.mark_salient(&mut sys, "important insight", &mut rng)
             .unwrap();
 
-        // Project should have conscious neighborhoods
-        let project_sys = ps.load_project_system().unwrap();
-        assert_eq!(project_sys.conscious_episode.neighborhoods.len(), 1);
-
-        // Global should also have conscious neighborhoods
-        let global_sys = ps.global_store().load_system().unwrap();
-        assert_eq!(global_sys.conscious_episode.neighborhoods.len(), 1);
+        let loaded = bs.load_system().unwrap();
+        assert_eq!(loaded.conscious_episode.neighborhoods.len(), 1);
     }
 
     #[test]
-    fn test_salient_deduplication() {
-        let ps = ProjectStore::open_in_memory().unwrap();
-        let mut sys = make_system();
-        let mut rng = rng();
-
-        ps.mark_salient(&mut sys, "first insight", &mut rng)
-            .unwrap();
-        ps.mark_salient(&mut sys, "second insight", &mut rng)
-            .unwrap();
-
-        let global_sys = ps.global_store().load_system().unwrap();
-        assert_eq!(global_sys.conscious_episode.neighborhoods.len(), 2);
-    }
-
-    #[test]
-    fn test_subconscious_not_in_global() {
-        let ps = ProjectStore::open_in_memory().unwrap();
+    fn test_brain_roundtrip() {
+        let bs = BrainStore::open_in_memory().unwrap();
         let sys = make_system();
-        ps.save_project_system(&sys).unwrap();
+        bs.save_system(&sys).unwrap();
 
-        let global_sys = ps.global_store().load_system().unwrap();
-        assert!(
-            global_sys.episodes.is_empty(),
-            "subconscious should not leak to global"
-        );
+        let loaded = bs.load_system().unwrap();
+        assert_eq!(loaded.episodes.len(), 1);
+        assert_eq!(loaded.n(), sys.n());
     }
 
     #[test]
     fn test_directory_creation() {
-        let dir = std::env::temp_dir().join("am-store-test-dirs");
+        let dir = std::env::temp_dir().join("am-brain-store-test-dirs");
         let _ = fs::remove_dir_all(&dir);
 
-        let ps = ProjectStore::open(Some("test-project"), Some(&dir)).unwrap();
-        assert_eq!(ps.project_id(), "test-project");
+        let bs = BrainStore::open(Some("test-project"), Some(&dir)).unwrap();
+        assert_eq!(bs.project_id(), "test-project");
 
-        assert!(dir.join("global.db").exists());
-        assert!(dir.join("projects").exists());
-        assert!(dir.join("projects/test-project.db").exists());
+        assert!(dir.join("brain.db").exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_project_name_override() {
-        let dir = std::env::temp_dir().join("am-store-test-override");
+        let dir = std::env::temp_dir().join("am-brain-store-test-override");
         let _ = fs::remove_dir_all(&dir);
 
-        let ps = ProjectStore::open(Some("my-project"), Some(&dir)).unwrap();
-        assert_eq!(ps.project_id(), "my-project");
+        let bs = BrainStore::open(Some("my-project"), Some(&dir)).unwrap();
+        assert_eq!(bs.project_id(), "my-project");
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -891,154 +775,5 @@ name = "correct"
     #[test]
     fn test_extract_quoted_empty() {
         assert_eq!(extract_quoted(r#""""#), Some(""));
-    }
-
-    #[test]
-    fn test_import_replicates_conscious() {
-        let ps = ProjectStore::open_in_memory().unwrap();
-        let mut rng = rng();
-
-        // Build a system with conscious data
-        let mut sys = make_system();
-        sys.add_to_conscious("conscious memory", &mut rng);
-        let json = am_core::export_json(&sys).unwrap();
-
-        // Import via ProjectStore
-        ps.project_store().import_json_str(&json).unwrap();
-        let loaded = ps.project_store().load_system().unwrap();
-
-        // Manually replicate (import_json_file would do this)
-        ps.replicate_conscious_to_global(&loaded).unwrap();
-
-        let global = ps.global_store().load_system().unwrap();
-        assert!(
-            !global.conscious_episode.neighborhoods.is_empty(),
-            "conscious should be replicated to global"
-        );
-    }
-
-    // -- Healing tests --
-
-    #[test]
-    fn test_is_hash_name() {
-        assert!(is_hash_name("f9d7b58d57caca64"));
-        assert!(is_hash_name("abcdef0123456789"));
-        assert!(is_hash_name("12345678"));
-        assert!(!is_hash_name("my-project"));
-        assert!(!is_hash_name("srobinson_attention-matters"));
-        assert!(!is_hash_name("abc")); // too short
-        assert!(!is_hash_name("GGGG1234GGGG5678")); // non-hex
-    }
-
-    #[test]
-    fn test_heal_orphaned_databases() {
-        let dir = std::env::temp_dir().join("am-heal-test");
-        let _ = fs::remove_dir_all(&dir);
-        let projects_dir = dir.join("projects");
-        fs::create_dir_all(&projects_dir).unwrap();
-
-        // Create an "orphan" hash-named DB with data
-        let orphan_path = projects_dir.join("f9d7b58d57caca64.db");
-        {
-            let store = Store::open(&orphan_path).unwrap();
-            let sys = make_system();
-            store.save_system(&sys).unwrap();
-            let loaded = store.load_system().unwrap();
-            assert_eq!(loaded.n(), 2);
-        }
-
-        // Create the target (human-readable) DB with different data
-        let target_path = projects_dir.join("my-project.db");
-        {
-            let store = Store::open(&target_path).unwrap();
-            let mut rng = rng();
-            let mut sys = DAESystem::new("test-agent");
-            let mut ep = Episode::new("episode-2");
-            let tokens = to_tokens(&["foo", "bar", "baz"]);
-            ep.add_neighborhood(Neighborhood::from_tokens(
-                &tokens,
-                None,
-                "foo bar baz",
-                &mut rng,
-            ));
-            sys.add_episode(ep);
-            store.save_system(&sys).unwrap();
-        }
-
-        // Run healing
-        heal_orphaned_databases(&projects_dir, &target_path);
-
-        // Orphan should be renamed to .db.migrated
-        assert!(!orphan_path.exists(), "orphan DB should be renamed");
-        assert!(
-            projects_dir.join("f9d7b58d57caca64.db.migrated").exists(),
-            "orphan should be renamed to .db.migrated"
-        );
-
-        // Target should now contain merged data (2 episodes)
-        let target_store = Store::open(&target_path).unwrap();
-        let merged = target_store.load_system().unwrap();
-        assert_eq!(merged.episodes.len(), 2, "should have both episodes");
-        assert_eq!(merged.n(), 5, "should have 2+3=5 occurrences");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_heal_skips_non_hash_names() {
-        let dir = std::env::temp_dir().join("am-heal-skip-test");
-        let _ = fs::remove_dir_all(&dir);
-        let projects_dir = dir.join("projects");
-        fs::create_dir_all(&projects_dir).unwrap();
-
-        // Create a human-readable named DB (should NOT be treated as orphan)
-        let readable_path = projects_dir.join("srobinson_attention-matters.db");
-        {
-            let store = Store::open(&readable_path).unwrap();
-            let sys = make_system();
-            store.save_system(&sys).unwrap();
-        }
-
-        let target_path = projects_dir.join("my-project.db");
-        {
-            let store = Store::open(&target_path).unwrap();
-            let sys = DAESystem::new("test");
-            store.save_system(&sys).unwrap();
-        }
-
-        heal_orphaned_databases(&projects_dir, &target_path);
-
-        // The human-readable DB should still exist (not migrated)
-        assert!(readable_path.exists(), "non-hash DB should not be touched");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_heal_empty_orphan_skipped() {
-        let dir = std::env::temp_dir().join("am-heal-empty-test");
-        let _ = fs::remove_dir_all(&dir);
-        let projects_dir = dir.join("projects");
-        fs::create_dir_all(&projects_dir).unwrap();
-
-        // Create an empty orphan DB
-        let orphan_path = projects_dir.join("abcdef0123456789.db");
-        {
-            let _store = Store::open(&orphan_path).unwrap();
-            // Don't save any data — it's empty
-        }
-
-        let target_path = projects_dir.join("my-project.db");
-
-        heal_orphaned_databases(&projects_dir, &target_path);
-
-        // Empty orphan should still be migrated (renamed) but target shouldn't have extra data
-        // The orphan is empty so merge is a no-op, but the file still gets renamed
-        assert!(
-            !orphan_path.exists() || projects_dir.join("abcdef0123456789.db.migrated").exists(),
-            "empty orphan should be handled"
-        );
-
-        let _ = fs::remove_dir_all(&dir);
     }
 }

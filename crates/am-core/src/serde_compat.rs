@@ -55,6 +55,8 @@ pub struct WireEpisode {
     pub id: String,
     #[serde(default)]
     pub timestamp: String,
+    #[serde(rename = "projectId", default)]
+    pub project_id: String,
     pub neighborhoods: Vec<WireNeighborhood>,
 }
 
@@ -134,6 +136,7 @@ fn wire_episode_to_domain(wire: WireEpisode) -> Episode {
     ep.id = Uuid::parse_str(&wire.id).unwrap_or_else(|_| Uuid::new_v4());
     ep.is_conscious = wire.is_conscious;
     ep.timestamp = wire.timestamp;
+    ep.project_id = wire.project_id;
 
     for wire_nbhd in wire.neighborhoods {
         ep.add_neighborhood(wire_neighborhood_to_domain(wire_nbhd));
@@ -170,6 +173,7 @@ fn domain_episode_to_wire(ep: &Episode) -> WireEpisode {
         is_conscious: ep.is_conscious,
         id: ep.id.to_string(),
         timestamp: ep.timestamp.clone(),
+        project_id: ep.project_id.clone(),
         neighborhoods: ep
             .neighborhoods
             .iter()

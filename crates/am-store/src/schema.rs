@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -32,7 +32,8 @@ pub fn initialize(conn: &Connection) -> Result<()> {
             id           TEXT PRIMARY KEY,
             name         TEXT NOT NULL,
             is_conscious INTEGER NOT NULL DEFAULT 0,
-            timestamp    TEXT NOT NULL DEFAULT ''
+            timestamp    TEXT NOT NULL DEFAULT '',
+            project_id   TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS neighborhoods (
@@ -61,12 +62,14 @@ pub fn initialize(conn: &Connection) -> Result<()> {
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             user_text      TEXT NOT NULL,
             assistant_text TEXT NOT NULL,
-            created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+            project_id     TEXT NOT NULL DEFAULT ''
         );
 
         CREATE INDEX IF NOT EXISTS idx_occ_word ON occurrences(word);
         CREATE INDEX IF NOT EXISTS idx_occ_neighborhood ON occurrences(neighborhood_id);
         CREATE INDEX IF NOT EXISTS idx_nbhd_episode ON neighborhoods(episode_id);
+        CREATE INDEX IF NOT EXISTS idx_ep_project ON episodes(project_id);
         ",
     )?;
 

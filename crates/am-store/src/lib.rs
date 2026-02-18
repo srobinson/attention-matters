@@ -5,7 +5,7 @@ pub mod schema;
 pub mod store;
 
 pub use error::{Result, StoreError};
-pub use project::{ProjectStore, default_base_dir};
+pub use project::{BrainStore, default_base_dir};
 pub use store::{
     ActivationStats, EpisodeInfo, GcResult, NeighborhoodDetail, NeighborhoodInfo, Store,
 };

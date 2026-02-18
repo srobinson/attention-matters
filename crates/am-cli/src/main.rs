@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::io::Write;
 
 use am_core::{QueryEngine, compose_context, compute_surface, export_json, ingest_text};
-use am_store::ProjectStore;
+use am_store::BrainStore;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use rand::SeedableRng;
@@ -58,8 +58,8 @@ concepts naturally cluster through physics-inspired dynamics.
   or manifest (Cargo.toml, package.json, pyproject.toml). Override
   with --project <name> for explicit control.
 
-\x1b[1mData location:\x1b[0m  ~/.attention-matters/
-  Set AM_DATA_DIR to override.
+\x1b[1mData location:\x1b[0m  ~/.attention-matters/brain.db
+  Single database for all projects. Set AM_DATA_DIR to override.
 
 \x1b[2mhttps://github.com/srobinson/attention-matters\x1b[0m",
     version
@@ -161,9 +161,8 @@ enum Commands {
     /// Import memory state from JSON
     #[command(
         long_about = "Import a previously exported memory state.\n\n\
-            Replaces the current project's memory with the imported\n\
-            state. Conscious memories are also replicated to the\n\
-            global cross-project store.",
+            Replaces the current memory with the imported state.\n\
+            All memories are stored in the unified brain database.",
         after_help = "\x1b[1mExample:\x1b[0m\n  \
             am import backup.json\n  \
             am import --project my-app state.json"
@@ -305,12 +304,12 @@ enum InspectMode {
     Neighborhoods,
 }
 
-fn open_store(cli: &Cli) -> Result<ProjectStore> {
+fn open_store(cli: &Cli) -> Result<BrainStore> {
     let base_dir = std::env::var("AM_DATA_DIR")
         .ok()
         .map(std::path::PathBuf::from);
-    ProjectStore::open(cli.project.as_deref(), base_dir.as_deref())
-        .context("failed to open project store")
+    BrainStore::open(cli.project.as_deref(), base_dir.as_deref())
+        .context("failed to open brain store")
 }
 
 fn init_tracing(verbose: bool) {
@@ -513,7 +512,7 @@ async fn shutdown_signal() {
 fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
     let store = open_store(cli)?;
     let mut system = store
-        .load_project_system()
+        .load_system()
         .context("failed to load system")?;
 
     let query_result = QueryEngine::process_query(&mut system, text);
@@ -550,7 +549,7 @@ fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
 fn cmd_ingest(cli: &Cli, files: &[PathBuf], dir: Option<&std::path::Path>) -> Result<()> {
     let store = open_store(cli)?;
     let mut system = store
-        .load_project_system()
+        .load_system()
         .context("failed to load system")?;
     let mut rng = SmallRng::from_os_rng();
 
@@ -594,7 +593,7 @@ fn cmd_ingest(cli: &Cli, files: &[PathBuf], dir: Option<&std::path::Path>) -> Re
     }
 
     store
-        .save_project_system(&system)
+        .save_system(&system)
         .context("failed to save system")?;
 
     println!("done. N={}, episodes={}", system.n(), system.episodes.len());
@@ -604,12 +603,12 @@ fn cmd_ingest(cli: &Cli, files: &[PathBuf], dir: Option<&std::path::Path>) -> Re
 fn cmd_stats(cli: &Cli) -> Result<()> {
     let store = open_store(cli)?;
     let system = store
-        .load_project_system()
+        .load_system()
         .context("failed to load system")?;
 
-    let db_size = store.project_store().db_size();
+    let db_size = store.store().db_size();
     let activation = store
-        .project_store()
+        .store()
         .activation_distribution()
         .context("failed to get activation stats")?;
 
@@ -653,26 +652,26 @@ fn cmd_inspect(
     }
 }
 
-fn inspect_overview(store: &ProjectStore, limit: usize, json: bool) -> Result<()> {
+fn inspect_overview(store: &BrainStore, limit: usize, json: bool) -> Result<()> {
     let episodes = store
-        .project_store()
+        .store()
         .list_episodes()
         .context("failed to list episodes")?;
     let activation = store
-        .project_store()
+        .store()
         .activation_distribution()
         .context("failed to get activation stats")?;
-    let db_size = store.project_store().db_size();
+    let db_size = store.store().db_size();
     let unique_words = store
-        .project_store()
+        .store()
         .unique_word_count()
         .context("failed to count words")?;
     let top_words = store
-        .project_store()
+        .store()
         .top_words(limit)
         .context("failed to get top words")?;
     let conscious = store
-        .project_store()
+        .store()
         .list_conscious_neighborhoods()
         .context("failed to list conscious")?;
 
@@ -803,9 +802,9 @@ fn inspect_overview(store: &ProjectStore, limit: usize, json: bool) -> Result<()
     Ok(())
 }
 
-fn inspect_conscious(store: &ProjectStore, limit: usize, json: bool) -> Result<()> {
+fn inspect_conscious(store: &BrainStore, limit: usize, json: bool) -> Result<()> {
     let conscious = store
-        .project_store()
+        .store()
         .list_conscious_neighborhoods()
         .context("failed to list conscious memories")?;
 
@@ -868,9 +867,9 @@ fn inspect_conscious(store: &ProjectStore, limit: usize, json: bool) -> Result<(
     Ok(())
 }
 
-fn inspect_episodes(store: &ProjectStore, limit: usize, json: bool) -> Result<()> {
+fn inspect_episodes(store: &BrainStore, limit: usize, json: bool) -> Result<()> {
     let episodes = store
-        .project_store()
+        .store()
         .list_episodes()
         .context("failed to list episodes")?;
 
@@ -940,9 +939,9 @@ fn inspect_episodes(store: &ProjectStore, limit: usize, json: bool) -> Result<()
     Ok(())
 }
 
-fn inspect_neighborhoods(store: &ProjectStore, limit: usize, json: bool) -> Result<()> {
+fn inspect_neighborhoods(store: &BrainStore, limit: usize, json: bool) -> Result<()> {
     let neighborhoods = store
-        .project_store()
+        .store()
         .list_neighborhoods()
         .context("failed to list neighborhoods")?;
 
@@ -1010,7 +1009,7 @@ fn inspect_neighborhoods(store: &ProjectStore, limit: usize, json: bool) -> Resu
 fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
     let store = open_store(cli)?;
     let mut system = store
-        .load_project_system()
+        .load_system()
         .context("failed to load system")?;
 
     let query_result = QueryEngine::process_query(&mut system, text);
@@ -1086,7 +1085,7 @@ fn cmd_sync(
 ) -> Result<()> {
     let store = open_store(cli)?;
     let mut system = store
-        .load_project_system()
+        .load_system()
         .context("failed to load system")?;
     let mut rng = SmallRng::from_os_rng();
 
@@ -1110,7 +1109,7 @@ fn cmd_sync(
         std::collections::HashSet::new()
     } else {
         store
-            .project_store()
+            .store()
             .get_metadata("synced_sessions")
             .ok()
             .flatten()
@@ -1202,7 +1201,7 @@ fn cmd_sync(
     } else {
         if total_episodes > 0 {
             store
-                .save_project_system(&system)
+                .save_system(&system)
                 .context("failed to save system")?;
         }
 
@@ -1211,7 +1210,7 @@ fn cmd_sync(
         newly_synced.dedup();
         let synced_str = newly_synced.join(",");
         store
-            .project_store()
+            .store()
             .set_metadata("synced_sessions", &synced_str)
             .context("failed to save sync state")?;
 
@@ -1227,7 +1226,7 @@ fn cmd_sync(
 
 fn cmd_gc(cli: &Cli, floor: u32, target_mb: Option<u64>, dry_run: bool) -> Result<()> {
     let store = open_store(cli)?;
-    let db = store.project_store();
+    let db = store.store();
     let bold = "\x1b[1m";
     let dim = "\x1b[2m";
     let reset = "\x1b[0m";
@@ -1303,7 +1302,7 @@ fn cmd_forget(
     conscious_id: Option<&str>,
 ) -> Result<()> {
     let store = open_store(cli)?;
-    let db = store.project_store();
+    let db = store.store();
     let bold = "\x1b[1m";
     let reset = "\x1b[0m";
 
@@ -1344,7 +1343,7 @@ fn cmd_forget(
 fn cmd_export(cli: &Cli, path: &std::path::Path) -> Result<()> {
     let store = open_store(cli)?;
     let system = store
-        .load_project_system()
+        .load_system()
         .context("failed to load system")?;
 
     let json = export_json(&system).context("failed to serialize state")?;
@@ -1361,7 +1360,7 @@ fn cmd_import(cli: &Cli, path: &std::path::Path) -> Result<()> {
         .context("failed to import JSON")?;
 
     let system = store
-        .load_project_system()
+        .load_system()
         .context("failed to load system after import")?;
 
     println!(
