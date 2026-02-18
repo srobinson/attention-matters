@@ -20,7 +20,10 @@ pub mod surface;
 pub mod system;
 pub mod tokenizer;
 
-pub use compose::{ContextMetrics, ContextResult, compose_context, extract_salient};
+pub use compose::{
+    BudgetConfig, BudgetedContextResult, ContextMetrics, ContextResult, IncludedFragment,
+    RecallCategory, compose_context, compose_context_budgeted, extract_salient,
+};
 pub use constants::{
     ACTIVATION_FLOOR, DB_GC_TARGET_RATIO, DB_SOFT_LIMIT_BYTES, EPSILON, GOLDEN_ANGLE, M,
     NEIGHBORHOOD_RADIUS, PHI, SLERP_THRESHOLD, THRESHOLD,
@@ -34,4 +37,4 @@ pub use query::{QueryEngine, QueryResult};
 pub use serde_compat::{CURRENT_VERSION, export_json, import_json};
 pub use surface::{SurfaceResult, compute_surface};
 pub use system::{DAESystem, NeighborhoodRef, OccurrenceRef};
-pub use tokenizer::{ingest_text, tokenize};
+pub use tokenizer::{ingest_text, token_count, tokenize};

@@ -22,6 +22,12 @@ pub fn tokenize(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Count tokens in text without allocating the full token vector.
+/// Used for budget estimation in context composition.
+pub fn token_count(text: &str) -> usize {
+    tokenize(text).len()
+}
+
 /// Split text into sentences at sentence-ending punctuation followed by whitespace.
 fn split_sentences(text: &str) -> Vec<String> {
     let mut sentences = Vec::new();
@@ -146,5 +152,13 @@ mod tests {
     fn test_no_stop_word_removal() {
         let tokens = tokenize("the a an is are was");
         assert_eq!(tokens, vec!["the", "a", "an", "is", "are", "was"]);
+    }
+
+    #[test]
+    fn test_token_count() {
+        assert_eq!(token_count("Hello, world!"), 2);
+        assert_eq!(token_count("one two three four five"), 5);
+        assert_eq!(token_count(""), 0);
+        assert_eq!(token_count("   "), 0);
     }
 }
