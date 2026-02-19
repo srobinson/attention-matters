@@ -3,7 +3,7 @@ use std::path::Path;
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
-use am_core::{DAESystem, DaemonPhasor, Episode, Neighborhood, Occurrence, Quaternion};
+use am_core::{DAESystem, DaemonPhasor, Episode, Neighborhood, NeighborhoodType, Occurrence, Quaternion};
 
 use crate::error::{Result, StoreError};
 use crate::schema;
@@ -185,8 +185,8 @@ impl Store {
         episode_id: Uuid,
     ) -> Result<()> {
         conn.execute(
-            "INSERT INTO neighborhoods (id, episode_id, seed_w, seed_x, seed_y, seed_z, source_text)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO neighborhoods (id, episode_id, seed_w, seed_x, seed_y, seed_z, source_text, neighborhood_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 neighborhood.id.to_string(),
                 episode_id.to_string(),
@@ -195,6 +195,7 @@ impl Store {
                 neighborhood.seed.y,
                 neighborhood.seed.z,
                 neighborhood.source_text,
+                neighborhood.neighborhood_type.as_str(),
             ],
         )?;
 
@@ -275,11 +276,11 @@ impl Store {
 
     fn load_neighborhoods(&self, episode_id: &str) -> Result<Vec<Neighborhood>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, seed_w, seed_x, seed_y, seed_z, source_text
+            "SELECT id, seed_w, seed_x, seed_y, seed_z, source_text, COALESCE(neighborhood_type, 'memory')
              FROM neighborhoods WHERE episode_id = ?1 ORDER BY rowid",
         )?;
 
-        let rows: Vec<(String, f64, f64, f64, f64, String)> = stmt
+        let rows: Vec<(String, f64, f64, f64, f64, String, String)> = stmt
             .query_map([episode_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -288,12 +289,13 @@ impl Store {
                     row.get::<_, f64>(3)?,
                     row.get::<_, f64>(4)?,
                     row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
                 ))
             })?
             .collect::<std::result::Result<_, _>>()?;
 
         let mut neighborhoods = Vec::with_capacity(rows.len());
-        for (id_str, w, x, y, z, source_text) in rows {
+        for (id_str, w, x, y, z, source_text, nbhd_type_str) in rows {
             let id = parse_uuid(&id_str)?;
             let occurrences = self.load_occurrences(&id_str)?;
 
@@ -302,6 +304,7 @@ impl Store {
                 seed: Quaternion::new(w, x, y, z),
                 occurrences,
                 source_text,
+                neighborhood_type: NeighborhoodType::from_str_lossy(&nbhd_type_str),
             });
         }
 
@@ -628,6 +631,13 @@ impl Store {
         Ok(self
             .conn
             .query_row("SELECT COUNT(*) FROM occurrences", [], |row| row.get(0))?)
+    }
+
+    /// Total neighborhood count in the database.
+    pub fn neighborhood_count(&self) -> Result<u64> {
+        Ok(self
+            .conn
+            .query_row("SELECT COUNT(*) FROM neighborhoods", [], |row| row.get(0))?)
     }
 
     /// Run a GC pass: evict cold occurrences, clean empty structures, VACUUM.

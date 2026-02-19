@@ -515,6 +515,7 @@ fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
         .load_system()
         .context("failed to load system")?;
 
+    let project_id = store.project_id().to_string();
     let query_result = QueryEngine::process_query(&mut system, text);
     let surface = compute_surface(&system, &query_result);
     let composed = compose_context(
@@ -522,6 +523,8 @@ fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
         &surface,
         &query_result,
         &query_result.interference,
+        Some(&project_id),
+        None,
     );
 
     if composed.context.is_empty() {
@@ -1012,6 +1015,7 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
         .load_system()
         .context("failed to load system")?;
 
+    let project_id = store.project_id().to_string();
     let query_result = QueryEngine::process_query(&mut system, text);
     let surface = compute_surface(&system, &query_result);
     let composed = compose_context(
@@ -1019,6 +1023,8 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
         &surface,
         &query_result,
         &query_result.interference,
+        Some(&project_id),
+        None,
     );
 
     let bold = "\x1b[1m";

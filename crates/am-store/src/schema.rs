@@ -2,7 +2,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -21,6 +21,9 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         tracing::info!("startup WAL checkpoint complete");
     }
 
+    // Create tables — for fresh databases this includes project_id.
+    // For existing v1 databases, CREATE TABLE IF NOT EXISTS is a no-op,
+    // so we ALTER TABLE below to add the missing columns.
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS metadata (
@@ -37,13 +40,14 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         );
 
         CREATE TABLE IF NOT EXISTS neighborhoods (
-            id          TEXT PRIMARY KEY,
-            episode_id  TEXT NOT NULL REFERENCES episodes(id),
-            seed_w      REAL NOT NULL,
-            seed_x      REAL NOT NULL,
-            seed_y      REAL NOT NULL,
-            seed_z      REAL NOT NULL,
-            source_text TEXT NOT NULL DEFAULT ''
+            id                 TEXT PRIMARY KEY,
+            episode_id         TEXT NOT NULL REFERENCES episodes(id),
+            seed_w             REAL NOT NULL,
+            seed_x             REAL NOT NULL,
+            seed_y             REAL NOT NULL,
+            seed_z             REAL NOT NULL,
+            source_text        TEXT NOT NULL DEFAULT '',
+            neighborhood_type  TEXT NOT NULL DEFAULT 'memory'
         );
 
         CREATE TABLE IF NOT EXISTS occurrences (
@@ -69,13 +73,44 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_occ_word ON occurrences(word);
         CREATE INDEX IF NOT EXISTS idx_occ_neighborhood ON occurrences(neighborhood_id);
         CREATE INDEX IF NOT EXISTS idx_nbhd_episode ON neighborhoods(episode_id);
-        CREATE INDEX IF NOT EXISTS idx_ep_project ON episodes(project_id);
         ",
     )?;
 
-    // Set schema version if not present
+    // Add project_id to v1 databases that lack it
+    if conn
+        .prepare("SELECT project_id FROM episodes LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch(
+            "ALTER TABLE episodes ADD COLUMN project_id TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+    if conn
+        .prepare("SELECT project_id FROM conversation_buffer LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch(
+            "ALTER TABLE conversation_buffer ADD COLUMN project_id TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+
+    // Add neighborhood_type to v2 databases that lack it
+    if conn
+        .prepare("SELECT neighborhood_type FROM neighborhoods LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch(
+            "ALTER TABLE neighborhoods ADD COLUMN neighborhood_type TEXT NOT NULL DEFAULT 'memory';",
+        )?;
+    }
+
+    // Index on project_id (safe to run after ALTER TABLE or on fresh db)
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_ep_project ON episodes(project_id);",
+    )?;
+
     conn.execute(
-        "INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', ?1)",
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
         [SCHEMA_VERSION.to_string()],
     )?;
 
@@ -169,5 +204,88 @@ mod tests {
             .query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))
             .unwrap();
         assert_eq!(threshold, 100, "wal_autocheckpoint should be 100 pages");
+    }
+
+    #[test]
+    fn test_upgrade_v1_to_v3_adds_project_id_and_neighborhood_type() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Simulate v1 schema: no project_id columns, no neighborhood_type
+        conn.execute_batch(
+            "
+            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO metadata (key, value) VALUES ('schema_version', '1');
+
+            CREATE TABLE episodes (
+                id           TEXT PRIMARY KEY,
+                name         TEXT NOT NULL,
+                is_conscious INTEGER NOT NULL DEFAULT 0,
+                timestamp    TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE neighborhoods (
+                id          TEXT PRIMARY KEY,
+                episode_id  TEXT NOT NULL REFERENCES episodes(id),
+                seed_w REAL NOT NULL, seed_x REAL NOT NULL,
+                seed_y REAL NOT NULL, seed_z REAL NOT NULL,
+                source_text TEXT NOT NULL DEFAULT ''
+            );
+            CREATE TABLE occurrences (
+                id TEXT PRIMARY KEY,
+                neighborhood_id TEXT NOT NULL REFERENCES neighborhoods(id),
+                word TEXT NOT NULL,
+                pos_w REAL NOT NULL, pos_x REAL NOT NULL,
+                pos_y REAL NOT NULL, pos_z REAL NOT NULL,
+                phasor_theta REAL NOT NULL,
+                activation_count INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE conversation_buffer (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_text TEXT NOT NULL,
+                assistant_text TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            INSERT INTO episodes (id, name, is_conscious) VALUES ('ep1', 'test', 0);
+            ",
+        )
+        .unwrap();
+
+        // Run initialize — should upgrade v1 → v2
+        initialize(&conn).unwrap();
+
+        // project_id column should exist and default to ''
+        let pid: String = conn
+            .query_row(
+                "SELECT COALESCE(project_id, '') FROM episodes WHERE id = 'ep1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(pid, "");
+
+        // conversation_buffer should also have project_id
+        conn.execute(
+            "INSERT INTO conversation_buffer (user_text, assistant_text, project_id) VALUES ('u', 'a', 'test')",
+            [],
+        )
+        .unwrap();
+
+        let version = get_schema_version(&conn).unwrap();
+        assert_eq!(version, Some(3));
+
+        // neighborhood_type column should exist after v2→v3 migration
+        conn.execute_batch(
+            "INSERT INTO neighborhoods (id, episode_id, source_text, seed_w, seed_x, seed_y, seed_z, neighborhood_type) \
+             VALUES ('n1', 'ep1', 'test', 1.0, 0.0, 0.0, 0.0, 'decision');",
+        )
+        .unwrap();
+        let nbhd_type: String = conn
+            .query_row(
+                "SELECT neighborhood_type FROM neighborhoods WHERE id = 'n1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(nbhd_type, "decision");
     }
 }

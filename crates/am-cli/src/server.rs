@@ -1,9 +1,12 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use am_core::{
-    DAESystem, QueryEngine, compose_context, compute_surface, export_json, extract_salient,
-    import_json, ingest_text,
+    BatchQueryEngine, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine,
+    apply_feedback, compose_context, compose_context_budgeted, compute_surface, export_json,
+    extract_salient, import_json, ingest_text, mark_salient_typed,
 };
+use uuid::Uuid;
 use am_store::BrainStore;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -27,6 +30,9 @@ struct ServerState {
     system: DAESystem,
     store: BrainStore,
     rng: SmallRng,
+    /// Neighborhood IDs already returned in this session (process lifetime).
+    /// Used to deduplicate non-decision neighborhoods across am_query calls.
+    session_recalled: HashSet<Uuid>,
 }
 
 impl AmServer {
@@ -36,7 +42,12 @@ impl AmServer {
             .map_err(|e| format!("failed to load system: {e}"))?;
         let rng = SmallRng::from_os_rng();
         Ok(Self {
-            state: Arc::new(Mutex::new(ServerState { system, store, rng })),
+            state: Arc::new(Mutex::new(ServerState {
+                system,
+                store,
+                rng,
+                session_recalled: HashSet::new(),
+            })),
             tool_router: Self::tool_router(),
         })
     }
@@ -70,6 +81,11 @@ impl AmServer {
 struct QueryRequest {
     /// The text to query the memory system with
     text: String,
+    /// Optional maximum token budget for composed context. When provided,
+    /// uses budget-aware composition that fits the best-scoring fragments
+    /// within the token limit. Nancy's prompt compiler uses this to say
+    /// "give me the best context that fits in N tokens".
+    max_tokens: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -106,6 +122,32 @@ struct ImportRequest {
     state: serde_json::Value,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct FeedbackRequest {
+    /// The original query text that produced the recall
+    query: String,
+    /// UUIDs of the neighborhoods that were recalled and shown to the user
+    neighborhood_ids: Vec<String>,
+    /// Feedback signal: "boost" if the recall was helpful, "demote" if not
+    signal: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct BatchQueryItem {
+    /// The query text
+    query: String,
+    /// Optional token budget for this query's context
+    max_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct McpBatchQueryRequest {
+    /// List of queries to process in a single batch. IDF computation
+    /// is amortized across all queries — much more efficient than
+    /// querying one at a time when dispatching to multiple workers.
+    queries: Vec<BatchQueryItem>,
+}
+
 #[tool_router]
 impl AmServer {
     #[tool(
@@ -116,6 +158,8 @@ impl AmServer {
         Parameters(req): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
+        // Snapshot session_recalled before destructuring (avoids borrow conflict)
+        let session_recalled_snapshot = state.session_recalled.clone();
         let ServerState {
             system, store, rng, ..
         } = &mut *state;
@@ -137,19 +181,62 @@ impl AmServer {
             }
         }
 
+        let project_id = store.project_id().to_string();
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
-        let composed = compose_context(system, &surface, &query_result, &query_result.interference);
 
-        let result = serde_json::json!({
-            "context": composed.context,
-            "metrics": {
-                "conscious": composed.metrics.conscious,
-                "subconscious": composed.metrics.subconscious,
-                "novel": composed.metrics.novel,
-            },
-            "stats": Self::stats_json(system),
-        });
+        let (result, new_ids) = if let Some(max_tokens) = req.max_tokens {
+            // Budgeted query: Nancy's prompt compiler uses this
+            let budget = BudgetConfig {
+                max_tokens,
+                min_conscious: 1,
+                min_subconscious: 1,
+                min_novel: 0,
+            };
+            let composed = compose_context_budgeted(
+                system, &surface, &query_result, &query_result.interference,
+                &budget, Some(&project_id), Some(&session_recalled_snapshot),
+            );
+            let ids: Vec<Uuid> = composed.included.iter().map(|f| f.neighborhood_id).collect();
+            let json = serde_json::json!({
+                "context": composed.context,
+                "metrics": {
+                    "conscious": composed.metrics.conscious,
+                    "subconscious": composed.metrics.subconscious,
+                    "novel": composed.metrics.novel,
+                },
+                "budget": {
+                    "tokens_used": composed.tokens_used,
+                    "tokens_budget": composed.tokens_budget,
+                    "included_count": composed.included.len(),
+                    "excluded_count": composed.excluded_count,
+                },
+                "stats": Self::stats_json(system),
+            });
+            (json, ids)
+        } else {
+            // Default: fixed-size composition
+            let composed = compose_context(
+                system, &surface, &query_result, &query_result.interference,
+                Some(&project_id), Some(&session_recalled_snapshot),
+            );
+            let ids = composed.included_ids.clone();
+            let json = serde_json::json!({
+                "context": composed.context,
+                "metrics": {
+                    "conscious": composed.metrics.conscious,
+                    "subconscious": composed.metrics.subconscious,
+                    "novel": composed.metrics.novel,
+                },
+                "stats": Self::stats_json(system),
+            });
+            (json, ids)
+        };
+
+        // Record returned neighborhood IDs for session dedup
+        for id in new_ids {
+            state.session_recalled.insert(id);
+        }
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_default(),
@@ -209,9 +296,12 @@ impl AmServer {
 
         let stored = extract_salient(system, &req.text, rng);
         let stored = if stored == 0 {
-            store
-                .mark_salient(system, &req.text, rng)
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            // No <salient> tags found — mark the whole text as salient
+            // with automatic type detection from DECISION:/PREFERENCE: prefix
+            mark_salient_typed(system, &req.text, rng);
+            if let Err(e) = store.save_system(system) {
+                tracing::error!("failed to persist after salient: {e}");
+            }
             1u32
         } else {
             if let Err(e) = store.save_system(system) {
@@ -381,6 +471,138 @@ impl AmServer {
             serde_json::to_string_pretty(&result).unwrap_or_default(),
         )]))
     }
+
+    #[tool(
+        description = "Provide relevance feedback on recalled memories. Call this when you know whether a recalled memory was actually helpful (boost) or unhelpful (demote). Boost drifts the memory's occurrences closer to where they were needed on the manifold and increases activation. Demote decays activation, making the memory less prominent in future queries. This is how the memory system learns what works."
+    )]
+    async fn am_feedback(
+        &self,
+        Parameters(req): Parameters<FeedbackRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut state = self.state.lock().await;
+        let ServerState { system, store, .. } = &mut *state;
+
+        let signal = match req.signal.to_lowercase().as_str() {
+            "boost" => FeedbackSignal::Boost,
+            "demote" => FeedbackSignal::Demote,
+            other => {
+                return Err(McpError::invalid_params(
+                    format!("signal must be 'boost' or 'demote', got '{other}'"),
+                    None,
+                ));
+            }
+        };
+
+        let neighborhood_ids: Vec<Uuid> = req
+            .neighborhood_ids
+            .iter()
+            .filter_map(|s| Uuid::parse_str(s).ok())
+            .collect();
+
+        if neighborhood_ids.is_empty() {
+            return Err(McpError::invalid_params(
+                "no valid neighborhood UUIDs provided".to_string(),
+                None,
+            ));
+        }
+
+        let feedback = apply_feedback(system, &req.query, &neighborhood_ids, signal);
+
+        if let Err(e) = store.save_system(system) {
+            tracing::error!("failed to persist after feedback: {e}");
+        }
+
+        let result = serde_json::json!({
+            "boosted": feedback.boosted,
+            "demoted": feedback.demoted,
+            "centroid": feedback.centroid.map(|c| serde_json::json!({
+                "w": c.w, "x": c.x, "y": c.y, "z": c.z
+            })),
+            "stats": Self::stats_json(system),
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(
+        description = "Batch query: process multiple queries in a single pass with amortized IDF computation. Use when dispatching context to multiple workers simultaneously — activates the union of all query tokens once, drifts once, then partitions results per query. Much more efficient than N separate am_query calls. Each query can have its own token budget."
+    )]
+    async fn am_batch_query(
+        &self,
+        Parameters(req): Parameters<McpBatchQueryRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut state = self.state.lock().await;
+        let ServerState {
+            system, store, ..
+        } = &mut *state;
+
+        // Flush orphaned buffer (same as am_query)
+        let orphaned = store.store().buffer_count().unwrap_or(0);
+        if orphaned > 0 {
+            if let Ok(exchanges) = store.store().drain_buffer() {
+                let combined: String = exchanges
+                    .iter()
+                    .map(|(u, a, _pid)| format!("{u}\n{a}"))
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let rng = &mut SmallRng::from_os_rng();
+                let episode = ingest_text(&combined, Some("conversation"), rng);
+                system.add_episode(episode);
+            }
+        }
+
+        let project_id = store.project_id().to_string();
+
+        let requests: Vec<am_core::batch::BatchQueryRequest> = req
+            .queries
+            .iter()
+            .map(|q| am_core::batch::BatchQueryRequest {
+                query: q.query.clone(),
+                max_tokens: q.max_tokens,
+                project_id: Some(project_id.clone()),
+            })
+            .collect();
+
+        let results = BatchQueryEngine::batch_query(system, &requests);
+
+        if let Err(e) = store.save_system(system) {
+            tracing::error!("failed to persist after batch query: {e}");
+        }
+
+        let results_json: Vec<serde_json::Value> = results
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "query": r.query,
+                    "context": r.context.context,
+                    "metrics": {
+                        "conscious": r.context.metrics.conscious,
+                        "subconscious": r.context.metrics.subconscious,
+                        "novel": r.context.metrics.novel,
+                    },
+                    "budget": {
+                        "tokens_used": r.context.tokens_used,
+                        "tokens_budget": r.context.tokens_budget,
+                        "included_count": r.context.included.len(),
+                        "excluded_count": r.context.excluded_count,
+                    },
+                    "activated_count": r.activated_count,
+                })
+            })
+            .collect();
+
+        let result = serde_json::json!({
+            "results": results_json,
+            "batch_size": results_json.len(),
+            "stats": Self::stats_json(system),
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
 }
 
 #[tool_handler]
@@ -402,6 +624,10 @@ impl ServerHandler for AmServer {
                     recurring patterns, or hard-won insights, call am_salient to store them as \
                     conscious memory. These persist globally across all projects.\n\n\
                  PRINCIPLES:\n\
+                 - CRITICAL: Always call am_query BEFORE exploring the filesystem. When asked contextual questions \
+                   (\"where are we?\", \"what do you know about X?\"), query memory first. Only fall back to file \
+                   exploration if memory returns nothing relevant. If the first query returns stale results, \
+                   retry with more specific terms.\n\
                  - Memory should be invisible to the user. Don't mention the memory system unless asked.\n\
                  - Be selective with am_salient — mark genuinely reusable insights, not routine facts.\n\
                  - If am_query returns empty, that's fine — the project is new. Don't mention it.\n\
@@ -499,6 +725,7 @@ mod tests {
         let result = server
             .am_query(Parameters(QueryRequest {
                 text: "quantum particles".to_string(),
+                max_tokens: None,
             }))
             .await
             .unwrap();
@@ -730,6 +957,7 @@ mod tests {
         let result = server
             .am_query(Parameters(QueryRequest {
                 text: "orphaned message".to_string(),
+                max_tokens: None,
             }))
             .await
             .unwrap();

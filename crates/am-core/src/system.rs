@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::episode::Episode;
-use crate::neighborhood::Neighborhood;
+use crate::neighborhood::{Neighborhood, NeighborhoodType};
 use crate::tokenizer::tokenize;
 
 /// Reference to an occurrence by its location in the hierarchy.
@@ -212,8 +212,20 @@ impl DAESystem {
     /// Add text to the conscious episode. Tokenizes, creates neighborhood,
     /// pre-activates all occurrences once.
     pub fn add_to_conscious(&mut self, text: &str, rng: &mut impl Rng) -> Uuid {
+        self.add_to_conscious_typed(text, NeighborhoodType::Insight, rng)
+    }
+
+    /// Add typed text to the conscious episode. Like `add_to_conscious` but
+    /// sets the neighborhood type (Decision, Preference, Insight, etc.).
+    pub fn add_to_conscious_typed(
+        &mut self,
+        text: &str,
+        nbhd_type: NeighborhoodType,
+        rng: &mut impl Rng,
+    ) -> Uuid {
         let tokens = tokenize(text);
         let mut neighborhood = Neighborhood::from_tokens(&tokens, None, text, rng);
+        neighborhood.neighborhood_type = nbhd_type;
 
         for occ in &mut neighborhood.occurrences {
             occ.activate();

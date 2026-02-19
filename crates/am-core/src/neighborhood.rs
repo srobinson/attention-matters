@@ -7,6 +7,42 @@ use crate::occurrence::Occurrence;
 use crate::phasor::DaemonPhasor;
 use crate::quaternion::Quaternion;
 
+/// Classification of a neighborhood's content.
+/// Decisions and preferences get special treatment in scoring and composition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum NeighborhoodType {
+    /// Default: ordinary memory from conversations or documents.
+    #[default]
+    Memory,
+    /// A settled decision that should not be re-litigated.
+    Decision,
+    /// A user preference that should be respected.
+    Preference,
+    /// A marked insight (default for am_salient without prefix).
+    Insight,
+}
+
+impl NeighborhoodType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Memory => "memory",
+            Self::Decision => "decision",
+            Self::Preference => "preference",
+            Self::Insight => "insight",
+        }
+    }
+
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s {
+            "decision" => Self::Decision,
+            "preference" => Self::Preference,
+            "insight" => Self::Insight,
+            _ => Self::Memory,
+        }
+    }
+}
+
 /// A cluster of word occurrences around a seed position on S³.
 /// Represents a chunk of text (typically 3 sentences).
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -15,6 +51,8 @@ pub struct Neighborhood {
     pub seed: Quaternion,
     pub occurrences: Vec<Occurrence>,
     pub source_text: String,
+    #[serde(default)]
+    pub neighborhood_type: NeighborhoodType,
 }
 
 impl Neighborhood {
@@ -24,6 +62,7 @@ impl Neighborhood {
             seed,
             occurrences: Vec::new(),
             source_text,
+            neighborhood_type: NeighborhoodType::default(),
         }
     }
 

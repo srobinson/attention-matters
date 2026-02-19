@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::episode::Episode;
-use crate::neighborhood::Neighborhood;
+use crate::neighborhood::{Neighborhood, NeighborhoodType};
 use crate::occurrence::Occurrence;
 use crate::phasor::DaemonPhasor;
 use crate::quaternion::Quaternion;
@@ -66,6 +66,8 @@ pub struct WireNeighborhood {
     pub id: String,
     #[serde(rename = "sourceText", default)]
     pub source_text: String,
+    #[serde(rename = "neighborhoodType", default)]
+    pub neighborhood_type: String,
     pub occurrences: Vec<WireOccurrence>,
 }
 
@@ -149,6 +151,7 @@ fn wire_neighborhood_to_domain(wire: WireNeighborhood) -> Neighborhood {
     let seed = Quaternion::from_array(wire.seed);
     let mut nbhd = Neighborhood::new(seed, wire.source_text);
     nbhd.id = Uuid::parse_str(&wire.id).unwrap_or_else(|_| Uuid::new_v4());
+    nbhd.neighborhood_type = NeighborhoodType::from_str_lossy(&wire.neighborhood_type);
 
     for wire_occ in wire.occurrences {
         let mut occ = Occurrence::new(
@@ -187,6 +190,7 @@ fn domain_neighborhood_to_wire(nbhd: &Neighborhood) -> WireNeighborhood {
         seed: nbhd.seed.to_array(),
         id: nbhd.id.to_string(),
         source_text: nbhd.source_text.clone(),
+        neighborhood_type: nbhd.neighborhood_type.as_str().to_string(),
         occurrences: nbhd
             .occurrences
             .iter()

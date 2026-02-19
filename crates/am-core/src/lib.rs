@@ -7,9 +7,11 @@
 //!
 //! Zero I/O — pure math engine with no opinions about transport or persistence.
 
+pub mod batch;
 pub mod compose;
 pub mod constants;
 pub mod episode;
+pub mod feedback;
 pub mod neighborhood;
 pub mod occurrence;
 pub mod phasor;
@@ -20,16 +22,19 @@ pub mod surface;
 pub mod system;
 pub mod tokenizer;
 
+pub use batch::{BatchQueryEngine, BatchQueryRequest, BatchQueryResult};
 pub use compose::{
     BudgetConfig, BudgetedContextResult, ContextMetrics, ContextResult, IncludedFragment,
-    RecallCategory, compose_context, compose_context_budgeted, extract_salient,
+    RecallCategory, compose_context, compose_context_budgeted, detect_neighborhood_type,
+    extract_salient, mark_salient_typed,
 };
+pub use feedback::{FeedbackResult, FeedbackSignal, apply_feedback};
 pub use constants::{
     ACTIVATION_FLOOR, DB_GC_TARGET_RATIO, DB_SOFT_LIMIT_BYTES, EPSILON, GOLDEN_ANGLE, M,
     NEIGHBORHOOD_RADIUS, PHI, SLERP_THRESHOLD, THRESHOLD,
 };
 pub use episode::Episode;
-pub use neighborhood::Neighborhood;
+pub use neighborhood::{Neighborhood, NeighborhoodType};
 pub use occurrence::Occurrence;
 pub use phasor::DaemonPhasor;
 pub use quaternion::Quaternion;
