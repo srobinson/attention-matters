@@ -622,7 +622,12 @@ impl ServerHandler for AmServer {
                     with your response text to consolidate related memories.\n\
                  4. MARK INSIGHTS: When you discover architecture decisions, user preferences, \
                     recurring patterns, or hard-won insights, call am_salient to store them as \
-                    conscious memory. These persist globally across all projects.\n\n\
+                    conscious memory. These persist globally across all projects.\n\
+                 5. FEEDBACK: When you know a recalled memory was helpful (led to a correct solution) \
+                    or unhelpful (was irrelevant or misleading), call am_feedback with the original \
+                    query, the neighborhood IDs from the recall, and signal 'boost' or 'demote'. \
+                    This reshapes the manifold — helpful memories drift toward where they were needed, \
+                    unhelpful ones fade. The system literally learns from outcomes.\n\n\
                  PRINCIPLES:\n\
                  - CRITICAL: Always call am_query BEFORE exploring the filesystem. When asked contextual questions \
                    (\"where are we?\", \"what do you know about X?\"), query memory first. Only fall back to file \
