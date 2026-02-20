@@ -1,3 +1,4 @@
+use am_core::unix_to_iso8601;
 use rusqlite::Connection;
 
 use crate::error::Result;
@@ -109,11 +110,66 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_ep_project ON episodes(project_id);",
     )?;
 
+    // Backfill empty timestamps on existing episodes using rowid order.
+    // Episodes are inserted chronologically, so rowid gives relative ordering.
+    // We distribute timestamps from 2026-02-01 to now, spaced evenly.
+    backfill_empty_timestamps(conn)?;
+
     conn.execute(
         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
         [SCHEMA_VERSION.to_string()],
     )?;
 
+    Ok(())
+}
+
+/// Backfill empty timestamps on episodes using rowid ordering.
+/// Only runs once — skips if no episodes have empty timestamps.
+fn backfill_empty_timestamps(conn: &Connection) -> Result<()> {
+    let empty_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM episodes WHERE timestamp = '' OR timestamp IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+
+    if empty_count == 0 {
+        return Ok(());
+    }
+
+    // Get all episodes with empty timestamps, ordered by rowid (insertion order)
+    let mut stmt = conn.prepare(
+        "SELECT id, rowid FROM episodes WHERE timestamp = '' OR timestamp IS NULL ORDER BY rowid",
+    )?;
+    let rows: Vec<(String, i64)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<std::result::Result<_, _>>()?;
+
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    // Distribute timestamps from 2026-02-01T00:00:00Z to now, evenly spaced
+    let now_secs = am_core::now_unix_secs();
+    // 2026-02-01T00:00:00Z = 1769904000 Unix seconds
+    let start_secs: u64 = 1769904000;
+    let end_secs = now_secs.max(start_secs + 1);
+    let count = rows.len() as u64;
+    let step = (end_secs - start_secs) / count.max(1);
+
+    let tx = conn.unchecked_transaction()?;
+    {
+        let mut update = tx.prepare(
+            "UPDATE episodes SET timestamp = ?1 WHERE id = ?2",
+        )?;
+        for (i, (id, _rowid)) in rows.iter().enumerate() {
+            let ts_secs = start_secs + (i as u64) * step;
+            let ts = unix_to_iso8601(ts_secs);
+            update.execute(rusqlite::params![ts, id])?;
+        }
+    }
+    tx.commit()?;
+
+    tracing::info!("backfilled timestamps on {count} episodes");
     Ok(())
 }
 

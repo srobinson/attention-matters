@@ -20,6 +20,7 @@ pub mod query;
 pub mod serde_compat;
 pub mod surface;
 pub mod system;
+pub mod time;
 pub mod tokenizer;
 
 pub use batch::{BatchQueryEngine, BatchQueryRequest, BatchQueryResult};
@@ -42,4 +43,5 @@ pub use query::{QueryEngine, QueryResult};
 pub use serde_compat::{CURRENT_VERSION, export_json, import_json};
 pub use surface::{SurfaceResult, compute_surface};
 pub use system::{DAESystem, NeighborhoodRef, OccurrenceRef};
+pub use time::{now_iso8601, now_unix_secs, unix_to_iso8601};
 pub use tokenizer::{ingest_text, token_count, tokenize};

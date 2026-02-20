@@ -594,14 +594,7 @@ fn parse_days_ago(timestamp: &str) -> f64 {
         day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045
     };
 
-    // Current date: use a fixed reference that's approximately "now"
-    // In production this would use real system time, but we use the same
-    // approach as the rest of the codebase (no chrono dependency).
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let now_days = (now / 86400) as i64;
+    let now_days = (crate::time::now_unix_secs() / 86400) as i64;
     // Unix epoch is JDN 2440588
     let now_jdn = now_days + 2440588;
     let ep_jdn = jdn(y, m, d);
@@ -677,6 +670,23 @@ fn score_neighborhoods(
         })
         .collect();
 
+    // For conscious neighborhoods, compute recency boost based on position.
+    // Later neighborhoods (higher index) were added more recently.
+    let conscious_count = if data.iter().any(|(_, ep_idx, _, _, _, _)| *ep_idx == usize::MAX) {
+        system.conscious_episode.neighborhoods.len() as f64
+    } else {
+        1.0
+    };
+    let conscious_recency: HashMap<Uuid, f64> = if conscious_count > 1.0 {
+        system.conscious_episode.neighborhoods.iter().enumerate().map(|(i, nbhd)| {
+            // Newest neighborhood (last) gets boost 2.0, oldest gets 1.0
+            let recency = 1.0 + (i as f64 / conscious_count);
+            (nbhd.id, recency)
+        }).collect()
+    } else {
+        HashMap::new()
+    };
+
     for (nbhd_id, ep_idx, word, activation_count, plasticity, nbhd_type) in &data {
         let weight = system.get_word_weight(word);
         let affinity = affinity_cache.get(ep_idx).copied().unwrap_or(1.0);
@@ -714,6 +724,11 @@ fn score_neighborhoods(
             _ => {
                 let decay = recency_cache.get(&sn.episode_idx).copied().unwrap_or(1.0);
                 sn.score *= decay;
+                // For conscious neighborhoods, apply recency boost (newer = higher score)
+                if sn.episode_idx == usize::MAX {
+                    let boost = conscious_recency.get(&sn.neighborhood_id).copied().unwrap_or(1.0);
+                    sn.score *= boost;
+                }
             }
         }
     }

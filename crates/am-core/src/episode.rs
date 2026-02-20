@@ -3,6 +3,7 @@ use uuid::Uuid;
 
 use crate::constants::M;
 use crate::neighborhood::Neighborhood;
+use crate::time::now_iso8601;
 
 /// A collection of neighborhoods representing one document or conversation segment.
 /// The system has multiple subconscious episodes plus one conscious episode.
@@ -22,7 +23,7 @@ impl Episode {
             id: Uuid::new_v4(),
             name: name.to_string(),
             is_conscious: false,
-            timestamp: String::new(),
+            timestamp: now_iso8601(),
             project_id: String::new(),
             neighborhoods: Vec::new(),
         }
@@ -33,7 +34,7 @@ impl Episode {
             id: Uuid::new_v4(),
             name: "conscious".to_string(),
             is_conscious: true,
-            timestamp: String::new(),
+            timestamp: now_iso8601(),
             project_id: String::new(),
             neighborhoods: Vec::new(),
         }
