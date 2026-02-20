@@ -70,25 +70,23 @@ async function install() {
   const artifact = `am-${target}.tar.gz`;
   const url = `https://github.com/${REPO}/releases/download/v${version}/${artifact}`;
 
-  const binDir = path.join(__dirname, "..", "bin");
-  fs.mkdirSync(binDir, { recursive: true });
+  const binPath = path.join(__dirname, BIN_NAME);
 
-  const binPath = path.join(binDir, BIN_NAME);
-
-  // Skip download if binary already exists (e.g. CI caching)
-  if (fs.existsSync(binPath)) {
-    return;
-  }
+  // Skip if native binary already exists (e.g. CI caching)
+  // Check size to distinguish from a stale or zero-byte file
+  try {
+    const stat = fs.statSync(binPath);
+    if (stat.size > 10000) return;
+  } catch {}
 
   console.log(`Downloading ${BIN_NAME} v${version} for ${target}...`);
 
   try {
     const tarball = await fetch(url);
 
-    // Write tarball to temp file, extract with tar
-    const tmpTar = path.join(binDir, `${BIN_NAME}.tar.gz`);
+    const tmpTar = path.join(__dirname, `${BIN_NAME}.tar.gz`);
     fs.writeFileSync(tmpTar, tarball);
-    execSync(`tar xzf "${tmpTar}" -C "${binDir}"`, { stdio: "pipe" });
+    execSync(`tar xzf "${tmpTar}" -C "${__dirname}"`, { stdio: "pipe" });
     fs.unlinkSync(tmpTar);
 
     // Ensure the binary is executable

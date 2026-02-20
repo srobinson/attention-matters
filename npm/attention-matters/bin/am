@@ -6,14 +6,10 @@ const { execFileSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
-const binPath = path.join(__dirname, "am");
-const nativeBin = binPath + (process.platform === "win32" ? ".exe" : "");
+const nativeBin = path.join(__dirname, "..", "scripts", "am" + (process.platform === "win32" ? ".exe" : ""));
 
-// Check for the downloaded native binary next to this script
-// The install.js postinstall script extracts it here
 const candidates = [
   nativeBin,
-  // Fallback: maybe it's on PATH (cargo install, brew, etc.)
   "am",
 ];
 
@@ -27,7 +23,6 @@ for (const candidate of candidates) {
     if (err.status !== undefined) {
       process.exit(err.status);
     }
-    // Try next candidate
   }
 }
 
