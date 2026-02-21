@@ -163,13 +163,12 @@ impl Store {
 
     fn save_episode_on(&self, conn: &Connection, episode: &Episode) -> Result<()> {
         conn.execute(
-            "INSERT INTO episodes (id, name, is_conscious, timestamp, project_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO episodes (id, name, is_conscious, timestamp) VALUES (?1, ?2, ?3, ?4)",
             params![
                 episode.id.to_string(),
                 episode.name,
                 episode.is_conscious as i32,
                 episode.timestamp,
-                episode.project_id,
             ],
         )?;
 
@@ -238,21 +237,20 @@ impl Store {
 
         let mut ep_stmt = self
             .conn
-            .prepare("SELECT id, name, is_conscious, timestamp, COALESCE(project_id, '') FROM episodes ORDER BY rowid")?;
+            .prepare("SELECT id, name, is_conscious, timestamp FROM episodes ORDER BY rowid")?;
 
-        let episodes: Vec<(String, String, bool, String, String)> = ep_stmt
+        let episodes: Vec<(String, String, bool, String)> = ep_stmt
             .query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, i32>(2)? != 0,
                     row.get::<_, String>(3)?,
-                    row.get::<_, String>(4)?,
                 ))
             })?
             .collect::<std::result::Result<_, _>>()?;
 
-        for (ep_id_str, name, is_conscious, timestamp, project_id) in episodes {
+        for (ep_id_str, name, is_conscious, timestamp) in episodes {
             let ep_id = parse_uuid(&ep_id_str)?;
             let neighborhoods = self.load_neighborhoods(&ep_id_str)?;
 
@@ -261,7 +259,6 @@ impl Store {
                 name,
                 is_conscious,
                 timestamp,
-                project_id,
                 neighborhoods,
             };
 
@@ -393,15 +390,10 @@ impl Store {
 
     // --- Conversation buffer ---
 
-    pub fn append_buffer(
-        &self,
-        user_text: &str,
-        assistant_text: &str,
-        project_id: &str,
-    ) -> Result<usize> {
+    pub fn append_buffer(&self, user_text: &str, assistant_text: &str) -> Result<usize> {
         self.conn.execute(
-            "INSERT INTO conversation_buffer (user_text, assistant_text, project_id) VALUES (?1, ?2, ?3)",
-            params![user_text, assistant_text, project_id],
+            "INSERT INTO conversation_buffer (user_text, assistant_text) VALUES (?1, ?2)",
+            params![user_text, assistant_text],
         )?;
         let count: usize =
             self.conn
@@ -411,12 +403,12 @@ impl Store {
         Ok(count)
     }
 
-    pub fn drain_buffer(&self) -> Result<Vec<(String, String, String)>> {
+    pub fn drain_buffer(&self) -> Result<Vec<(String, String)>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT user_text, assistant_text, COALESCE(project_id, '') FROM conversation_buffer ORDER BY id")?;
-        let rows: Vec<(String, String, String)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .prepare("SELECT user_text, assistant_text FROM conversation_buffer ORDER BY id")?;
+        let rows: Vec<(String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<std::result::Result<_, _>>()?;
         self.conn.execute_batch("DELETE FROM conversation_buffer")?;
         Ok(rows)

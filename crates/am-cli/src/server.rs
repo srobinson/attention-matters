@@ -171,7 +171,7 @@ impl AmServer {
         {
             let combined: String = exchanges
                 .iter()
-                .map(|(u, a, _pid)| format!("{u}\n{a}"))
+                .map(|(u, a)| format!("{u}\n{a}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
             let episode = ingest_text(&combined, Some("conversation"), rng);
@@ -181,7 +181,6 @@ impl AmServer {
             }
         }
 
-        let project_id = store.project_id().to_string();
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
 
@@ -199,7 +198,6 @@ impl AmServer {
                 &query_result,
                 &query_result.interference,
                 &budget,
-                Some(&project_id),
                 Some(&session_recalled_snapshot),
             );
             let ids: Vec<Uuid> = composed
@@ -246,7 +244,6 @@ impl AmServer {
                 &surface,
                 &query_result,
                 &query_result.interference,
-                Some(&project_id),
                 Some(&session_recalled_snapshot),
             );
             let ids = composed.included_ids.clone();
@@ -369,7 +366,7 @@ impl AmServer {
 
         let buffer_size = store
             .store()
-            .append_buffer(&req.user, &req.assistant, store.project_id())
+            .append_buffer(&req.user, &req.assistant)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
 
         let mut episode_created: Option<String> = None;
@@ -382,7 +379,7 @@ impl AmServer {
 
             let combined: String = exchanges
                 .iter()
-                .map(|(u, a, _pid)| format!("{u}\n{a}"))
+                .map(|(u, a)| format!("{u}\n{a}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
 
@@ -578,7 +575,7 @@ impl AmServer {
         {
             let combined: String = exchanges
                 .iter()
-                .map(|(u, a, _pid)| format!("{u}\n{a}"))
+                .map(|(u, a)| format!("{u}\n{a}"))
                 .collect::<Vec<_>>()
                 .join("\n\n");
             let rng = &mut SmallRng::from_os_rng();
@@ -586,15 +583,12 @@ impl AmServer {
             system.add_episode(episode);
         }
 
-        let project_id = store.project_id().to_string();
-
         let requests: Vec<am_core::batch::BatchQueryRequest> = req
             .queries
             .iter()
             .map(|q| am_core::batch::BatchQueryRequest {
                 query: q.query.clone(),
                 max_tokens: q.max_tokens,
-                project_id: Some(project_id.clone()),
             })
             .collect();
 

@@ -66,7 +66,6 @@ fn ingest_query_roundtrip() {
         &query_result,
         &query_result.interference,
         None,
-        None,
     );
 
     // Should have non-empty context since query terms overlap with ingested text
@@ -117,7 +116,6 @@ fn conscious_memory_flow() {
         &query_result,
         &query_result.interference,
         None,
-        None,
     );
 
     assert!(
@@ -153,7 +151,6 @@ fn multi_episode_recall() {
         &surface,
         &query_result,
         &query_result.interference,
-        None,
         None,
     );
 
@@ -252,14 +249,12 @@ fn serde_roundtrip_with_query() {
         &result1,
         &result1.interference,
         None,
-        None,
     );
     let composed2 = compose_context(
         &mut system2,
         &surface2,
         &result2,
         &result2.interference,
-        None,
         None,
     );
 
@@ -323,7 +318,6 @@ fn empty_system_query() {
         &surface,
         &query_result,
         &query_result.interference,
-        None,
         None,
     );
 

@@ -24,8 +24,6 @@ pub struct BatchQueryRequest {
     pub query: String,
     /// Optional token budget for this query's context. If None, uses default.
     pub max_tokens: Option<usize>,
-    /// Optional project ID for affinity scoring.
-    pub project_id: Option<String>,
 }
 
 /// Result for a single query within a batch.
@@ -156,7 +154,6 @@ impl BatchQueryEngine {
                 &query_result,
                 &query_result.interference,
                 &budget,
-                req.project_id.as_deref(),
                 None,
             );
 
@@ -243,12 +240,10 @@ mod tests {
             BatchQueryRequest {
                 query: "quantum physics".to_string(),
                 max_tokens: Some(4096),
-                project_id: None,
             },
             BatchQueryRequest {
                 query: "rust compiler".to_string(),
                 max_tokens: Some(4096),
-                project_id: None,
             },
         ];
 
@@ -267,12 +262,10 @@ mod tests {
             BatchQueryRequest {
                 query: "quantum physics".to_string(),
                 max_tokens: Some(4096),
-                project_id: None,
             },
             BatchQueryRequest {
                 query: "neural network".to_string(),
                 max_tokens: Some(4096),
-                project_id: None,
             },
         ];
 
@@ -297,12 +290,10 @@ mod tests {
             BatchQueryRequest {
                 query: "quantum physics neural".to_string(),
                 max_tokens: Some(50), // Tight budget
-                project_id: None,
             },
             BatchQueryRequest {
                 query: "quantum physics neural".to_string(),
                 max_tokens: Some(100000), // Huge budget
-                project_id: None,
             },
         ];
 
@@ -339,7 +330,6 @@ mod tests {
             &[BatchQueryRequest {
                 query: "quantum physics".to_string(),
                 max_tokens: Some(4096),
-                project_id: None,
             }],
         );
 
@@ -358,7 +348,6 @@ mod tests {
             &query_result,
             &query_result.interference,
             &budget,
-            None,
             None,
         );
 
@@ -380,12 +369,10 @@ mod tests {
             BatchQueryRequest {
                 query: "quantum physics".to_string(),
                 max_tokens: Some(4096),
-                project_id: None,
             },
             BatchQueryRequest {
                 query: "quantum computing".to_string(),
                 max_tokens: Some(4096),
-                project_id: None,
             },
         ];
 
@@ -407,49 +394,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_batch_with_project_affinity() {
-        let mut rng = rng();
-        let mut sys = DAESystem::new("test");
-
-        // Episode with project_id
-        let mut ep = Episode::new("project-specific");
-        ep.project_id = "my-project".to_string();
-        ep.add_neighborhood(Neighborhood::from_tokens(
-            &to_tokens(&["alpha", "beta", "gamma"]),
-            None,
-            "alpha beta gamma",
-            &mut rng,
-        ));
-        sys.add_episode(ep);
-
-        // Episode without project_id
-        let mut ep2 = Episode::new("generic");
-        ep2.add_neighborhood(Neighborhood::from_tokens(
-            &to_tokens(&["alpha", "delta", "epsilon"]),
-            None,
-            "alpha delta epsilon",
-            &mut rng,
-        ));
-        sys.add_episode(ep2);
-
-        sys.add_to_conscious("alpha research", &mut rng);
-
-        let requests = vec![
-            BatchQueryRequest {
-                query: "alpha".to_string(),
-                max_tokens: Some(4096),
-                project_id: Some("my-project".to_string()),
-            },
-            BatchQueryRequest {
-                query: "alpha".to_string(),
-                max_tokens: Some(4096),
-                project_id: None,
-            },
-        ];
-
-        let results = BatchQueryEngine::batch_query(&mut sys, &requests);
-        assert_eq!(results.len(), 2);
-        // Both should return context — project affinity affects scoring, not filtering
-    }
 }

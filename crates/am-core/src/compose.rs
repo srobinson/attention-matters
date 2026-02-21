@@ -101,13 +101,12 @@ struct RankedCandidate {
 
 /// Score and categorize all activated neighborhoods into ranked candidates.
 /// Conscious neighborhoods scored by IDF-weighted activation.
-/// Subconscious neighborhoods scored by IDF-weighted activation with project affinity.
+/// Subconscious neighborhoods scored by IDF-weighted activation.
 /// Novel candidates: subconscious with activated_count <= 2, no words in common
 /// with conscious, scored by max_word_weight * max_plasticity / activated_count.
 fn rank_candidates(
     system: &mut DAESystem,
     query_result: &QueryResult,
-    project_id: Option<&str>,
 ) -> Vec<RankedCandidate> {
     let conscious_words: HashSet<String> = query_result
         .activation
@@ -116,13 +115,8 @@ fn rank_candidates(
         .map(|r| system.get_occurrence(*r).word.to_lowercase())
         .collect();
 
-    let con_scored = score_neighborhoods(system, &query_result.activation.conscious, true, None);
-    let sub_scored = score_neighborhoods(
-        system,
-        &query_result.activation.subconscious,
-        false,
-        project_id,
-    );
+    let con_scored = score_neighborhoods(system, &query_result.activation.conscious, true);
+    let sub_scored = score_neighborhoods(system, &query_result.activation.subconscious, false);
 
     let mut candidates = Vec::new();
     let mut selected_for_novel: HashSet<Uuid> = HashSet::new();
@@ -224,9 +218,6 @@ const ENTRY_HEADER_OVERHEAD_TOKENS: usize = 20;
 
 /// Compose human-readable context from surface and activation results.
 ///
-/// `project_id` scopes subconscious recall to the current project (boosted)
-/// while keeping conscious recall global. Pass `None` to disable scoping.
-///
 /// `session_recalled` tracks neighborhood IDs already returned this session.
 /// Non-decision neighborhoods in this set are skipped (dedup). Decision
 /// neighborhoods are always included but marked with `[DECIDED]` prefix.
@@ -238,10 +229,9 @@ pub fn compose_context(
     _surface: &SurfaceResult,
     query_result: &QueryResult,
     _interference: &[InterferenceResult],
-    project_id: Option<&str>,
     session_recalled: Option<&HashSet<Uuid>>,
 ) -> ContextResult {
-    let candidates = rank_candidates(system, query_result, project_id);
+    let candidates = rank_candidates(system, query_result);
 
     let empty_set = HashSet::new();
     let recalled = session_recalled.unwrap_or(&empty_set);
@@ -364,9 +354,6 @@ pub fn compose_context(
 /// Fills guaranteed minimums first (highest-scored per category), then greedily
 /// fills remaining budget by score across all categories.
 ///
-/// `project_id` scopes subconscious recall to the current project (boosted)
-/// while keeping conscious recall global. Pass `None` to disable scoping.
-///
 /// `session_recalled` tracks neighborhood IDs already returned this session.
 /// Non-decision neighborhoods in this set are skipped (dedup). Decision
 /// neighborhoods are always included but marked with `[DECIDED]` prefix.
@@ -379,10 +366,9 @@ pub fn compose_context_budgeted(
     query_result: &QueryResult,
     _interference: &[InterferenceResult],
     budget: &BudgetConfig,
-    project_id: Option<&str>,
     session_recalled: Option<&HashSet<Uuid>>,
 ) -> BudgetedContextResult {
-    let candidates = rank_candidates(system, query_result, project_id);
+    let candidates = rank_candidates(system, query_result);
 
     let empty_set = HashSet::new();
     let recalled = session_recalled.unwrap_or(&empty_set);
@@ -686,7 +672,6 @@ fn score_neighborhoods(
     system: &mut DAESystem,
     refs: &[OccurrenceRef],
     _is_conscious: bool,
-    project_id: Option<&str>,
 ) -> HashMap<Uuid, ScoredNeighborhood> {
     let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
 
@@ -708,32 +693,6 @@ fn score_neighborhoods(
                 occ.plasticity(),
                 nbhd.neighborhood_type,
             )
-        })
-        .collect();
-
-    // Pre-collect project affinity per episode_idx to avoid repeated lookups
-    let affinity_cache: HashMap<usize, f64> = data
-        .iter()
-        .map(|(_, ep_idx, _, _, _, _)| *ep_idx)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .map(|ep_idx| {
-            let affinity = if ep_idx == usize::MAX {
-                // Conscious — always full weight
-                1.0
-            } else if let Some(pid) = project_id {
-                let ep_pid = &system.episodes[ep_idx].project_id;
-                if ep_pid == pid {
-                    2.0 // Current project: strong boost
-                } else if ep_pid.is_empty() {
-                    1.0 // No project tag: neutral
-                } else {
-                    0.3 // Different project: suppressed
-                }
-            } else {
-                1.0 // No project context: neutral
-            };
-            (ep_idx, affinity)
         })
         .collect();
 
@@ -778,7 +737,6 @@ fn score_neighborhoods(
 
     for (nbhd_id, ep_idx, word, activation_count, plasticity, nbhd_type) in &data {
         let weight = system.get_word_weight(word);
-        let affinity = affinity_cache.get(ep_idx).copied().unwrap_or(1.0);
 
         let entry = scored
             .entry(*nbhd_id)
@@ -793,7 +751,7 @@ fn score_neighborhoods(
                 neighborhood_type: *nbhd_type,
             });
 
-        entry.score += weight * *activation_count as f64 * affinity;
+        entry.score += weight * *activation_count as f64;
         entry.words.insert(word.clone());
         entry.activated_count += 1;
         if weight > entry.max_word_weight {
@@ -965,7 +923,6 @@ mod tests {
             &result,
             &result.interference,
             None,
-            None,
         );
 
         assert!(ctx.context.contains("CONSCIOUS RECALL:"));
@@ -995,7 +952,6 @@ mod tests {
             &result,
             &result.interference,
             None,
-            None,
         );
 
         // No conscious recall since no conscious content matches
@@ -1012,7 +968,6 @@ mod tests {
             &surface,
             &result,
             &result.interference,
-            None,
             None,
         );
 
@@ -1070,7 +1025,6 @@ mod tests {
             &result1,
             &result1.interference,
             None,
-            None,
         );
 
         let mut sys2 = make_full_system();
@@ -1081,7 +1035,6 @@ mod tests {
             &surface2,
             &result2,
             &result2.interference,
-            None,
             None,
         );
 
@@ -1108,7 +1061,6 @@ mod tests {
             &result,
             &result.interference,
             &budget,
-            None,
             None,
         );
 
@@ -1138,7 +1090,6 @@ mod tests {
             &result,
             &result.interference,
             &budget,
-            None,
             None,
         );
 
@@ -1174,7 +1125,6 @@ mod tests {
             &result.interference,
             &budget,
             None,
-            None,
         );
 
         assert!(
@@ -1202,7 +1152,6 @@ mod tests {
             &result.interference,
             &budget,
             None,
-            None,
         );
 
         // With huge budget, everything should be included
@@ -1224,7 +1173,6 @@ mod tests {
             &surface,
             &result,
             &result.interference,
-            None,
             None,
         );
 
@@ -1248,7 +1196,6 @@ mod tests {
             &surface2,
             &result2,
             &result2.interference,
-            None,
             None,
         );
         assert_eq!(ctx.context, ctx2.context);
@@ -1359,7 +1306,6 @@ mod tests {
             &result,
             &result.interference,
             None,
-            None,
         );
 
         // The decision should appear in conscious recall with [DECIDED] prefix
@@ -1397,7 +1343,6 @@ mod tests {
             &result,
             &result.interference,
             None,
-            None,
         );
 
         assert!(ctx1.metrics.conscious > 0 || ctx1.metrics.subconscious > 0);
@@ -1414,7 +1359,6 @@ mod tests {
             &surface2,
             &result2,
             &result2.interference,
-            None,
             Some(&recalled),
         );
 
@@ -1457,7 +1401,6 @@ mod tests {
             &surface,
             &result,
             &result.interference,
-            None,
             Some(&recalled),
         );
 
@@ -1507,7 +1450,6 @@ mod tests {
             &result,
             &result.interference,
             None,
-            None,
         );
 
         // Should have subconscious recall from at least one episode
@@ -1541,7 +1483,6 @@ mod tests {
             &surface,
             &result,
             &result.interference,
-            None,
             None,
         );
 
@@ -1586,7 +1527,6 @@ mod tests {
             &surface,
             &result,
             &result.interference,
-            None,
             None,
         );
 

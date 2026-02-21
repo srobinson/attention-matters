@@ -13,7 +13,6 @@ pub struct Episode {
     pub name: String,
     pub is_conscious: bool,
     pub timestamp: String,
-    pub project_id: String,
     pub neighborhoods: Vec<Neighborhood>,
 }
 
@@ -24,7 +23,6 @@ impl Episode {
             name: name.to_string(),
             is_conscious: false,
             timestamp: now_iso8601(),
-            project_id: String::new(),
             neighborhoods: Vec::new(),
         }
     }
@@ -35,7 +33,6 @@ impl Episode {
             name: "conscious".to_string(),
             is_conscious: true,
             timestamp: now_iso8601(),
-            project_id: String::new(),
             neighborhoods: Vec::new(),
         }
     }

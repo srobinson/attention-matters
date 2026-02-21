@@ -16,7 +16,7 @@ fn am_cmd(data_dir: &TempDir) -> Command {
 fn stats_fresh_db() {
     let dir = TempDir::new().unwrap();
     am_cmd(&dir)
-        .args(["stats", "--project", "test-stats"])
+        .args(["stats"])
         .assert()
         .success()
         .stdout(predicate::str::contains("N:          0"))
@@ -40,7 +40,7 @@ fn ingest_file_then_stats() {
 
     // Ingest
     am_cmd(&dir)
-        .args(["ingest", "--project", "test-ingest"])
+        .args(["ingest"])
         .arg(&input)
         .assert()
         .success()
@@ -48,10 +48,7 @@ fn ingest_file_then_stats() {
         .stdout(predicate::str::contains("done. N="));
 
     // Stats should show data
-    let output = am_cmd(&dir)
-        .args(["stats", "--project", "test-ingest"])
-        .output()
-        .unwrap();
+    let output = am_cmd(&dir).args(["stats"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let n = extract_stat_value(&stdout, "N:");
@@ -73,15 +70,11 @@ fn query_after_ingest() {
     .unwrap();
 
     // Ingest
-    am_cmd(&dir)
-        .args(["ingest", "--project", "test-query"])
-        .arg(&input)
-        .assert()
-        .success();
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
 
     // Query should succeed and produce output (not crash or hang)
     am_cmd(&dir)
-        .args(["query", "--project", "test-query", "quantum particles"])
+        .args(["query", "quantum particles"])
         .assert()
         .success()
         .stdout(predicate::str::is_empty().not());
@@ -100,24 +93,17 @@ fn export_import_roundtrip() {
     )
     .unwrap();
 
-    // Ingest into project A
-    am_cmd(&dir)
-        .args(["ingest", "--project", "proj-export"])
-        .arg(&input)
-        .assert()
-        .success();
+    // Ingest
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
 
-    // Get stats from project A
-    let stats_a = am_cmd(&dir)
-        .args(["stats", "--project", "proj-export"])
-        .output()
-        .unwrap();
-    let stats_a_str = String::from_utf8_lossy(&stats_a.stdout);
+    // Get stats before export
+    let stats_before = am_cmd(&dir).args(["stats"]).output().unwrap();
+    let stats_before_str = String::from_utf8_lossy(&stats_before.stdout);
 
-    // Export from project A
+    // Export
     let export_path = dir.path().join("export.json");
     am_cmd(&dir)
-        .args(["export", "--project", "proj-export"])
+        .args(["export"])
         .arg(&export_path)
         .assert()
         .success()
@@ -125,28 +111,25 @@ fn export_import_roundtrip() {
 
     assert!(export_path.exists(), "export file should exist");
 
-    // Import into project B
+    // Import (overwrites the same brain.db)
     am_cmd(&dir)
-        .args(["import", "--project", "proj-import"])
+        .args(["import"])
         .arg(&export_path)
         .assert()
         .success()
         .stdout(predicate::str::contains("imported from"));
 
-    // Stats from project B should match
-    let stats_b = am_cmd(&dir)
-        .args(["stats", "--project", "proj-import"])
-        .output()
-        .unwrap();
-    let stats_b_str = String::from_utf8_lossy(&stats_b.stdout);
+    // Stats after import should match
+    let stats_after = am_cmd(&dir).args(["stats"]).output().unwrap();
+    let stats_after_str = String::from_utf8_lossy(&stats_after.stdout);
 
     // Extract N values
-    let n_a = extract_stat_value(&stats_a_str, "N:");
-    let n_b = extract_stat_value(&stats_b_str, "N:");
+    let n_a = extract_stat_value(&stats_before_str, "N:");
+    let n_b = extract_stat_value(&stats_after_str, "N:");
     assert_eq!(n_a, n_b, "N should match after import");
 
-    let ep_a = extract_stat_value(&stats_a_str, "episodes:");
-    let ep_b = extract_stat_value(&stats_b_str, "episodes:");
+    let ep_a = extract_stat_value(&stats_before_str, "episodes:");
+    let ep_b = extract_stat_value(&stats_after_str, "episodes:");
     assert_eq!(ep_a, ep_b, "episode count should match after import");
 }
 
@@ -185,17 +168,14 @@ fn ingest_dir() {
     // then --dir scans for additional .md/.txt files (second.md).
     // first.md appears both as positional and from dir scan → 3 episodes.
     am_cmd(&dir)
-        .args(["ingest", "--project", "test-dir", "--dir"])
+        .args(["ingest", "--dir"])
         .arg(&docs_dir)
         .arg(docs_dir.join("first.md"))
         .assert()
         .success()
         .stdout(predicate::str::contains("ingested"));
 
-    let output = am_cmd(&dir)
-        .args(["stats", "--project", "test-dir"])
-        .output()
-        .unwrap();
+    let output = am_cmd(&dir).args(["stats"]).output().unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     let episodes: usize = extract_stat_value(&stdout, "episodes:")
@@ -246,7 +226,7 @@ fn missing_required_args() {
 fn inspect_overview_fresh_db() {
     let dir = TempDir::new().unwrap();
     am_cmd(&dir)
-        .args(["inspect", "--project", "test-inspect"])
+        .args(["inspect"])
         .assert()
         .success()
         .stdout(predicate::str::contains("MEMORY OVERVIEW"))
@@ -268,15 +248,11 @@ fn inspect_after_ingest() {
     )
     .unwrap();
 
-    am_cmd(&dir)
-        .args(["ingest", "--project", "test-inspect2"])
-        .arg(&input)
-        .assert()
-        .success();
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
 
     // Overview should show data
     am_cmd(&dir)
-        .args(["inspect", "--project", "test-inspect2"])
+        .args(["inspect"])
         .assert()
         .success()
         .stdout(predicate::str::contains("RECENT EPISODES"))
@@ -284,7 +260,7 @@ fn inspect_after_ingest() {
 
     // Episodes view
     am_cmd(&dir)
-        .args(["inspect", "episodes", "--project", "test-inspect2"])
+        .args(["inspect", "episodes"])
         .assert()
         .success()
         .stdout(predicate::str::contains("EPISODES"))
@@ -292,21 +268,21 @@ fn inspect_after_ingest() {
 
     // Neighborhoods view
     am_cmd(&dir)
-        .args(["inspect", "neighborhoods", "--project", "test-inspect2"])
+        .args(["inspect", "neighborhoods"])
         .assert()
         .success()
         .stdout(predicate::str::contains("NEIGHBORHOODS"));
 
     // Conscious view (empty after just ingest)
     am_cmd(&dir)
-        .args(["inspect", "conscious", "--project", "test-inspect2"])
+        .args(["inspect", "conscious"])
         .assert()
         .success()
         .stdout(predicate::str::contains("CONSCIOUS MEMORIES"));
 
     // JSON output
     am_cmd(&dir)
-        .args(["inspect", "--json", "--project", "test-inspect2"])
+        .args(["inspect", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"total_occurrences\""))
@@ -314,13 +290,7 @@ fn inspect_after_ingest() {
 
     // Query mode
     am_cmd(&dir)
-        .args([
-            "inspect",
-            "--query",
-            "geometric memory",
-            "--project",
-            "test-inspect2",
-        ])
+        .args(["inspect", "--query", "geometric memory"])
         .assert()
         .success()
         .stdout(predicate::str::contains("RECALL"));
@@ -339,28 +309,18 @@ fn inspect_json_outputs() {
     )
     .unwrap();
 
-    am_cmd(&dir)
-        .args(["ingest", "--project", "test-json"])
-        .arg(&input)
-        .assert()
-        .success();
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
 
     // Episodes JSON
     am_cmd(&dir)
-        .args(["inspect", "episodes", "--json", "--project", "test-json"])
+        .args(["inspect", "episodes", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"name\""));
 
     // Neighborhoods JSON
     am_cmd(&dir)
-        .args([
-            "inspect",
-            "neighborhoods",
-            "--json",
-            "--project",
-            "test-json",
-        ])
+        .args(["inspect", "neighborhoods", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"source_text\""));
@@ -388,7 +348,7 @@ fn sync_dry_run() {
 
     // Dry run should find the session but not ingest
     am_cmd(&dir)
-        .args(["sync", "--dry-run", "--project", "test-sync", "--dir"])
+        .args(["sync", "--dry-run", "--dir"])
         .arg(&claude_dir)
         .assert()
         .success()
@@ -398,7 +358,7 @@ fn sync_dry_run() {
 
     // Stats should still be empty after dry run
     am_cmd(&dir)
-        .args(["stats", "--project", "test-sync"])
+        .args(["stats"])
         .assert()
         .success()
         .stdout(predicate::str::contains("episodes:   0"));
@@ -426,7 +386,7 @@ fn sync_ingests_sessions() {
 
     // Real sync
     am_cmd(&dir)
-        .args(["sync", "--project", "test-sync2", "--dir"])
+        .args(["sync", "--dir"])
         .arg(&claude_dir)
         .assert()
         .success()
@@ -436,14 +396,14 @@ fn sync_ingests_sessions() {
 
     // Stats should show 2 episodes
     am_cmd(&dir)
-        .args(["stats", "--project", "test-sync2"])
+        .args(["stats"])
         .assert()
         .success()
         .stdout(predicate::str::contains("episodes:   2"));
 
     // Re-sync should say all synced
     am_cmd(&dir)
-        .args(["sync", "--project", "test-sync2", "--dir"])
+        .args(["sync", "--dir"])
         .arg(&claude_dir)
         .assert()
         .success()
@@ -459,7 +419,7 @@ fn sync_no_project_dir() {
     std::fs::create_dir_all(&empty_claude).unwrap();
 
     am_cmd(&dir)
-        .args(["sync", "--project", "test-sync-empty", "--dir"])
+        .args(["sync", "--dir"])
         .arg(&empty_claude)
         .assert()
         .success()
@@ -467,33 +427,23 @@ fn sync_no_project_dir() {
 }
 
 #[test]
-fn project_isolation() {
+fn unified_brain() {
+    // All data goes to the same brain.db regardless of where you run from
     let dir = TempDir::new().unwrap();
 
-    let input = dir.path().join("isolated.txt");
+    let input = dir.path().join("unified.txt");
     std::fs::write(
         &input,
-        "Unique content for project isolation testing. More sentences needed. And a third one.",
+        "Unique content for unified brain testing. More sentences needed. And a third one.",
     )
     .unwrap();
 
-    // Ingest into project A
-    am_cmd(&dir)
-        .args(["ingest", "--project", "isolated-a"])
-        .arg(&input)
-        .assert()
-        .success();
+    // Ingest
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
 
-    // Project A has data
+    // Stats shows the data
     am_cmd(&dir)
-        .args(["stats", "--project", "isolated-a"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("episodes:   1"));
-
-    // Project B sees the same brain — unified brain.db, no isolation
-    am_cmd(&dir)
-        .args(["stats", "--project", "isolated-b"])
+        .args(["stats"])
         .assert()
         .success()
         .stdout(predicate::str::contains("episodes:   1"));
@@ -503,7 +453,7 @@ fn project_isolation() {
 fn gc_fresh_db() {
     let dir = TempDir::new().unwrap();
     am_cmd(&dir)
-        .args(["gc", "--project", "test-gc"])
+        .args(["gc"])
         .assert()
         .success()
         .stdout(predicate::str::contains("GC complete"))
@@ -523,14 +473,10 @@ fn gc_dry_run() {
     )
     .unwrap();
 
-    am_cmd(&dir)
-        .args(["ingest", "--project", "test-gc-dry"])
-        .arg(&input)
-        .assert()
-        .success();
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
 
     am_cmd(&dir)
-        .args(["gc", "--dry-run", "--project", "test-gc-dry"])
+        .args(["gc", "--dry-run"])
         .assert()
         .success()
         .stdout(predicate::str::contains("GC dry run"))
@@ -551,22 +497,18 @@ fn gc_evicts_cold_occurrences() {
     )
     .unwrap();
 
-    am_cmd(&dir)
-        .args(["ingest", "--project", "test-gc-evict"])
-        .arg(&input)
-        .assert()
-        .success();
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
 
     // With floor=99, everything should be evicted (no occurrence has count > 99)
     am_cmd(&dir)
-        .args(["gc", "--floor", "99", "--project", "test-gc-evict"])
+        .args(["gc", "--floor", "99"])
         .assert()
         .success()
         .stdout(predicate::str::contains("GC complete"));
 
     // Stats should show 0 episodes after evicting everything
     am_cmd(&dir)
-        .args(["stats", "--project", "test-gc-evict"])
+        .args(["stats"])
         .assert()
         .success()
         .stdout(predicate::str::contains("episodes:   0"));
@@ -585,14 +527,10 @@ fn forget_term() {
     )
     .unwrap();
 
-    am_cmd(&dir)
-        .args(["ingest", "--project", "test-forget"])
-        .arg(&input)
-        .assert()
-        .success();
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
 
     am_cmd(&dir)
-        .args(["forget", "password", "--project", "test-forget"])
+        .args(["forget", "password"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Forgot"))
@@ -603,7 +541,7 @@ fn forget_term() {
 fn forget_term_not_found() {
     let dir = TempDir::new().unwrap();
     am_cmd(&dir)
-        .args(["forget", "nonexistent", "--project", "test-forget-nf"])
+        .args(["forget", "nonexistent"])
         .assert()
         .success()
         .stdout(predicate::str::contains("No occurrences"));
@@ -613,8 +551,5 @@ fn forget_term_not_found() {
 fn forget_requires_argument() {
     let dir = TempDir::new().unwrap();
     // No term, no --episode, no --conscious
-    am_cmd(&dir)
-        .args(["forget", "--project", "test-forget-arg"])
-        .assert()
-        .failure();
+    am_cmd(&dir).args(["forget"]).assert().failure();
 }

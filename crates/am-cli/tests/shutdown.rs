@@ -12,7 +12,7 @@ fn am_binary() -> std::path::PathBuf {
 
 fn spawn_serve(data_dir: &TempDir) -> std::process::Child {
     Command::new(am_binary())
-        .args(["serve", "--project", "test-shutdown"])
+        .args(["serve"])
         .env("AM_DATA_DIR", data_dir.path())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

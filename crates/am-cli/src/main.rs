@@ -53,22 +53,13 @@ concepts naturally cluster through physics-inspired dynamics.
   am inspect conscious             # Browse conscious memories
   am stats                         # System diagnostics
 
-\x1b[1mProject detection:\x1b[0m
-  am auto-detects the current project from git remote, repo root,
-  or manifest (Cargo.toml, package.json, pyproject.toml). Override
-  with --project <name> for explicit control.
-
 \x1b[1mData location:\x1b[0m  ~/.attention-matters/brain.db
-  Single database for all projects. Set AM_DATA_DIR to override.
+  Single unified brain — one product, one memory. Set AM_DATA_DIR to override.
 
 \x1b[2mhttps://github.com/srobinson/attention-matters\x1b[0m",
     version
 )]
 struct Cli {
-    /// Override project auto-detection (e.g., --project my-app)
-    #[arg(long, global = true)]
-    project: Option<String>,
-
     /// Enable verbose debug output
     #[arg(long, global = true)]
     verbose: bool,
@@ -119,8 +110,7 @@ enum Commands {
             with golden-angle phasor spacing. Supports .txt, .md, .html.",
         after_help = "\x1b[1mExamples:\x1b[0m\n  \
             am ingest README.md ARCHITECTURE.md\n  \
-            am ingest --dir ./docs notes.txt\n  \
-            am ingest --project my-app spec.md"
+            am ingest --dir ./docs notes.txt"
     )]
     Ingest {
         /// File path(s) to ingest
@@ -134,12 +124,11 @@ enum Commands {
 
     /// Show memory system statistics
     #[command(
-        long_about = "Display statistics about the current project's memory.\n\n\
+        long_about = "Display memory statistics.\n\n\
             Shows total occurrences (N), episode count, conscious memory\n\
             count, database size, and activation distribution.",
         after_help = "\x1b[1mExample:\x1b[0m\n  \
-            am stats\n  \
-            am stats --project openclaw"
+            am stats"
     )]
     Stats,
 
@@ -150,8 +139,7 @@ enum Commands {
             occurrences, and conscious memories. Can be imported on\n\
             another machine or into a different project.",
         after_help = "\x1b[1mExample:\x1b[0m\n  \
-            am export backup.json\n  \
-            am export --project my-app state.json"
+            am export backup.json"
     )]
     Export {
         /// Output file path
@@ -164,8 +152,7 @@ enum Commands {
             Replaces the current memory with the imported state.\n\
             All memories are stored in the unified brain database.",
         after_help = "\x1b[1mExample:\x1b[0m\n  \
-            am import backup.json\n  \
-            am import --project my-app state.json"
+            am import backup.json"
     )]
     Import {
         /// Input file path
@@ -304,11 +291,11 @@ enum InspectMode {
     Neighborhoods,
 }
 
-fn open_store(cli: &Cli) -> Result<BrainStore> {
+fn open_store(_cli: &Cli) -> Result<BrainStore> {
     let base_dir = std::env::var("AM_DATA_DIR")
         .ok()
         .map(std::path::PathBuf::from);
-    BrainStore::open(cli.project.as_deref(), base_dir.as_deref())
+    BrainStore::open(base_dir.as_deref())
         .context("failed to open brain store")
 }
 
@@ -427,7 +414,7 @@ fn is_process_alive(_pid: u32) -> bool {
 
 async fn cmd_serve(cli: &Cli) -> Result<()> {
     let store = open_store(cli)?;
-    tracing::info!("starting MCP server for project '{}'", store.project_id());
+    tracing::info!("starting MCP server");
 
     let pidfile = acquire_pidfile();
 
@@ -513,7 +500,6 @@ fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
     let store = open_store(cli)?;
     let mut system = store.load_system().context("failed to load system")?;
 
-    let project_id = store.project_id().to_string();
     let query_result = QueryEngine::process_query(&mut system, text);
     let surface = compute_surface(&system, &query_result);
     let composed = compose_context(
@@ -521,7 +507,6 @@ fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
         &surface,
         &query_result,
         &query_result.interference,
-        Some(&project_id),
         None,
     );
 
@@ -609,7 +594,6 @@ fn cmd_stats(cli: &Cli) -> Result<()> {
         .activation_distribution()
         .context("failed to get activation stats")?;
 
-    println!("project:    {}", store.project_id());
     println!("N:          {}", system.n());
     println!("episodes:   {}", system.episodes.len());
     println!(
@@ -694,7 +678,6 @@ fn inspect_overview(store: &BrainStore, limit: usize, json: bool) -> Result<()> 
             .collect();
 
         let out = serde_json::json!({
-            "project": store.project_id(),
             "total_occurrences": activation.total,
             "unique_words": unique_words,
             "episodes": sub_episodes.len(),
@@ -717,10 +700,7 @@ fn inspect_overview(store: &BrainStore, limit: usize, json: bool) -> Result<()> 
     let reset = "\x1b[0m";
     let cyan = "\x1b[36m";
 
-    println!(
-        "{bold}MEMORY OVERVIEW{reset} {dim}— {}{reset}",
-        store.project_id()
-    );
+    println!("{bold}MEMORY OVERVIEW{reset}");
     println!("{dim}───────────────────────────────{reset}");
     println!(
         "  occurrences:  {bold}{}{reset} {dim}({} unique words){reset}",
@@ -1007,7 +987,6 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
     let store = open_store(cli)?;
     let mut system = store.load_system().context("failed to load system")?;
 
-    let project_id = store.project_id().to_string();
     let query_result = QueryEngine::process_query(&mut system, text);
     let surface = compute_surface(&system, &query_result);
     let composed = compose_context(
@@ -1015,7 +994,6 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
         &surface,
         &query_result,
         &query_result.interference,
-        Some(&project_id),
         None,
     );
 
