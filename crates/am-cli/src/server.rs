@@ -607,6 +607,17 @@ impl AmServer {
         let results_json: Vec<serde_json::Value> = results
             .iter()
             .map(|r| {
+                let mut con_ids = Vec::new();
+                let mut sub_ids = Vec::new();
+                let mut nov_ids = Vec::new();
+                for f in &r.context.included {
+                    match f.category {
+                        RecallCategory::Conscious => con_ids.push(f.neighborhood_id.to_string()),
+                        RecallCategory::Subconscious => sub_ids.push(f.neighborhood_id.to_string()),
+                        RecallCategory::Novel => nov_ids.push(f.neighborhood_id.to_string()),
+                    }
+                }
+
                 serde_json::json!({
                     "query": r.query,
                     "context": r.context.context,
@@ -614,6 +625,11 @@ impl AmServer {
                         "conscious": r.context.metrics.conscious,
                         "subconscious": r.context.metrics.subconscious,
                         "novel": r.context.metrics.novel,
+                    },
+                    "recalled_ids": {
+                        "conscious": con_ids,
+                        "subconscious": sub_ids,
+                        "novel": nov_ids,
                     },
                     "budget": {
                         "tokens_used": r.context.tokens_used,
