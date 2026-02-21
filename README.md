@@ -1,91 +1,115 @@
 # attention-matters
 
-Pure Rust implementation of the **DAE** (Daemon Attention Engine) — a geometric memory system that models recall as activation on a closed S³ manifold.
+A geometric memory engine built on the S³ hypersphere. Memories aren't retrieved — they're surfaced through quaternion drift, phasor interference, and Kuramoto phase coupling across dual manifolds.
 
-Memories aren't retrieved, they're *surfaced* through quaternion drift, phasor interference, and phase coupling across conscious and subconscious manifolds. The math decides what matters.
+Every query reshapes the manifold. Every recall changes what gets recalled next. The geometry does the thinking.
+
+## How it works
+
+```
+Query: "quaternion drift"
+    │
+    ▼
+┌─ activate ──── drift ──── interfere ──── couple ──── surface ──── compose ─┐
+│                                                                             │
+│  Words activate      Occurrences    Conscious &     Phases         Score,   │
+│  on the manifold     SLERP toward   subconscious    synchronize    rank,    │
+│  with IDF weights    each other     phasors         via Kuramoto   return   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+Words live as points on a 4D unit sphere. When a query activates them, they drift toward each other along geodesics. Interference between conscious and subconscious manifolds determines what surfaces. Phase coupling synchronizes related memories over time. The system has genuine history — it learns from being used.
+
+Two conservation laws keep it grounded: total mass M=1 (finite attention budget) and coupling constants K_CON + K_SUB = 1 (zero-sum attention between manifolds). Every constant derives from φ and π.
+
+## Install
+
+```bash
+npx -y attention-matters          # CLI
+npx -y attention-matters serve    # MCP server
+```
+
+Or build from source:
+
+```bash
+cargo install --path crates/am-cli
+```
+
+## MCP server
+
+Runs as a Model Context Protocol server, giving AI agents persistent geometric memory across sessions.
+
+```bash
+am serve
+```
+
+Tools: `am_query`, `am_buffer`, `am_ingest`, `am_salient`, `am_feedback`, `am_activate_response`, `am_batch_query`, `am_export`, `am_import`, `am_stats`
+
+## CLI
+
+```bash
+am query "what did we decide about the API"    # recall from memory
+am ingest document.md                          # add to the manifold
+am stats                                       # system state
+am inspect neighborhoods --limit 5             # peek at the geometry
+am export > state.json                         # portable state
+am import < state.json                         # restore
+am sync                                        # sync session transcripts
+```
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│  DAESystem                                               │
-│                                                          │
-│  ┌──────────────────┐       ┌─────────────────────────┐  │
-│  │  Conscious       │       │  Subconscious           │  │
-│  │  Episode         │       │  Episodes (N)           │  │
-│  │                  │       │                         │  │
-│  │  Neighborhoods   │       │  Neighborhoods          │  │
-│  │    → Occurrences │       │    → Occurrences        │  │
-│  └─────────┬────────┘       └────────────┬────────────┘  │
-│            │                             │               │
-│            └──── phasor interference ────┘               │
-│                                                          │
-│  QueryEngine: activate → drift → interfere → surface     │
-└──────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  DAESystem                                                    │
+│                                                               │
+│  ┌───────────────────┐         ┌───────────────────────────┐  │
+│  │  Conscious         │         │  Subconscious             │  │
+│  │  Episode           │         │  Episodes (N)             │  │
+│  │                    │         │                           │  │
+│  │  Neighborhoods     │         │  Neighborhoods            │  │
+│  │    → Occurrences   │         │    → Occurrences          │  │
+│  └────────┬───────────┘         └─────────────┬─────────────┘  │
+│           │                                   │                │
+│           └───── phasor interference ─────────┘                │
+│                                                               │
+│  QueryEngine: activate → drift → interfere → couple → surface │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**Workspace crates:**
+Three crates, clean separation:
 
-| Crate | Purpose |
-|------------|---------|
-| `am-core` | Math engine — quaternions, phasors, drift, interference, Kuramoto coupling, context composition. Zero I/O. |
-| `am-store` | Persistence (stub) |
-| `am-cli` | CLI interface (stub) |
+| Crate | What it does |
+|-------|-------------|
+| `am-core` | Pure math. Quaternions, phasors, drift, interference, Kuramoto coupling, context composition. Zero I/O, 201 tests. |
+| `am-store` | Persistence. SQLite-backed brain.db — one database per developer, queryable from any project. |
+| `am-cli` | CLI + MCP server. Session sync, import/export, inspection tools. |
 
-## The Math
+## The math
 
-All constants derive from φ (golden ratio) and π — no magic numbers.
+All constants derive from φ (golden ratio) and π.
 
-- **Quaternion positions** on S³ give each memory a geometric location
-- **SLERP drift** pulls query attention toward relevant content, weighted by IDF
-- **Golden-angle phasors** distribute activation evenly across the manifold
-- **Cross-manifold interference** lets subconscious memories resonate with conscious ones
-- **Kuramoto coupling** synchronizes phases between co-activated neighborhoods, modulated by plasticity
-- **Drift rate**: OpenClaw variant `2c/C` (ratio / THRESHOLD) — physically intuitive
+| Mechanism | What it does |
+|-----------|-------------|
+| **Quaternion positions** | Each word instance lives on S³. SLERP interpolation along geodesics. |
+| **IDF-weighted drift** | Query activation pulls related occurrences closer. The manifold reshapes with every query. |
+| **Golden-angle phasors** | Phase distribution follows phyllotaxis (2π/φ²) for maximal separation. |
+| **Cross-manifold interference** | Subconscious memories resonate with conscious ones via cos(phase_diff). |
+| **Kuramoto coupling** | Phases synchronize between co-activated neighborhoods, modulated by plasticity. |
+| **Anchoring** | High-activation occurrences crystallize in place — stable structures emerge. |
 
-## Quick Start
-
-```rust
-use am_core::{DAESystem, QueryEngine, ingest_text, compose_context, compute_surface};
-
-// Create a two-manifold system
-let mut system = DAESystem::new();
-
-// Ingest text into the conscious manifold
-ingest_text(&mut system, "The cat sat on the mat.");
-ingest_text(&mut system, "Quantum mechanics describes nature at the atomic scale.");
-
-// Query — surfaces relevant memories through geometric activation
-let mut engine = QueryEngine::new();
-let query_result = engine.query(&mut system, "cat");
-
-// Compose human-readable context from activation
-let surface = compute_surface(&system, &query_result);
-let context = compose_context(&mut system, &surface, &query_result, "cat");
-println!("{}", context.context);
-```
-
-### v0.7.2 JSON Import
-
-```rust
-use am_core::{import_json, export_json};
-
-let json_str = std::fs::read_to_string("daemon-state.json").unwrap();
-let mut system = import_json(&json_str).unwrap();
-
-// Query against imported state
-let mut engine = QueryEngine::new();
-let result = engine.query(&mut system, "attention");
-```
+The system has two conservation laws:
+- **M = 1** — total mass is conserved. Attention is a finite resource.
+- **K_CON + K_SUB = 1** — coupling between manifolds is zero-sum.
 
 ## Development
 
-Requires Rust 2024 edition. Uses [just](https://github.com/casey/just) as task runner.
+Rust 2024 edition. [just](https://github.com/casey/just) as task runner.
 
 ```bash
 just check    # clippy (warnings = errors)
-just build    # cargo build
-just test     # 89 tests
+just build    # cargo build --workspace
+just test     # 253 tests
 just fmt      # rustfmt
 ```
 
