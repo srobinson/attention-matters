@@ -402,25 +402,24 @@ fn migrate_old_layout(base: &Path, brain_path: &Path, _current_project_id: &str)
     }
 
     // Also merge global.db conscious memories
-    if global_path.exists() {
-        if let Ok(global_store) = Store::open(&global_path) {
-            if let Ok(global_system) = global_store.load_system() {
-                let existing_ids: std::collections::HashSet<uuid::Uuid> = brain_system
-                    .conscious_episode
-                    .neighborhoods
-                    .iter()
-                    .map(|n| n.id)
-                    .collect();
-                let mut merged = 0;
-                for nbhd in global_system.conscious_episode.neighborhoods {
-                    if !existing_ids.contains(&nbhd.id) {
-                        brain_system.conscious_episode.add_neighborhood(nbhd);
-                        merged += 1;
-                    }
-                }
-                tracing::info!("merged {} conscious neighborhoods from global.db", merged);
+    if global_path.exists()
+        && let Ok(global_store) = Store::open(&global_path)
+        && let Ok(global_system) = global_store.load_system()
+    {
+        let existing_ids: std::collections::HashSet<uuid::Uuid> = brain_system
+            .conscious_episode
+            .neighborhoods
+            .iter()
+            .map(|n| n.id)
+            .collect();
+        let mut merged = 0;
+        for nbhd in global_system.conscious_episode.neighborhoods {
+            if !existing_ids.contains(&nbhd.id) {
+                brain_system.conscious_episode.add_neighborhood(nbhd);
+                merged += 1;
             }
         }
+        tracing::info!("merged {} conscious neighborhoods from global.db", merged);
     }
 
     brain_system.mark_dirty();

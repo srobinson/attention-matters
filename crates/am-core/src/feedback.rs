@@ -403,12 +403,7 @@ mod tests {
 
         // Occurrences start at activation_count = 0
         let nbhd_id = sys.episodes[0].neighborhoods[0].id;
-        let result = apply_feedback(
-            &mut sys,
-            "hello",
-            &[nbhd_id],
-            FeedbackSignal::Demote,
-        );
+        let result = apply_feedback(&mut sys, "hello", &[nbhd_id], FeedbackSignal::Demote);
 
         // Should not panic, activation should stay at 0
         for occ in &sys.episodes[0].neighborhoods[0].occurrences {
@@ -423,12 +418,7 @@ mod tests {
         let mut sys = make_feedback_system();
         let fake_id = uuid::Uuid::new_v4();
 
-        let result = apply_feedback(
-            &mut sys,
-            "quantum",
-            &[fake_id],
-            FeedbackSignal::Boost,
-        );
+        let result = apply_feedback(&mut sys, "quantum", &[fake_id], FeedbackSignal::Boost);
 
         assert_eq!(result.boosted, 0);
     }
@@ -438,12 +428,7 @@ mod tests {
         let mut sys = make_feedback_system();
         let nbhd_id = sys.episodes[0].neighborhoods[0].id;
 
-        let result = apply_feedback(
-            &mut sys,
-            "",
-            &[nbhd_id],
-            FeedbackSignal::Boost,
-        );
+        let result = apply_feedback(&mut sys, "", &[nbhd_id], FeedbackSignal::Boost);
 
         assert_eq!(result.boosted, 0);
     }

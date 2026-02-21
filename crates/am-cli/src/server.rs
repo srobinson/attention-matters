@@ -2,11 +2,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use am_core::{
-    BatchQueryEngine, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine,
+    BatchQueryEngine, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine, RecallCategory,
     apply_feedback, compose_context, compose_context_budgeted, compute_surface, export_json,
     extract_salient, import_json, ingest_text, mark_salient_typed,
 };
-use uuid::Uuid;
 use am_store::BrainStore;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -17,6 +16,7 @@ use rmcp::{ErrorData as McpError, ServerHandler, tool, tool_handler, tool_router
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 const BUFFER_THRESHOLD: usize = 3;
 
@@ -194,16 +194,41 @@ impl AmServer {
                 min_novel: 0,
             };
             let composed = compose_context_budgeted(
-                system, &surface, &query_result, &query_result.interference,
-                &budget, Some(&project_id), Some(&session_recalled_snapshot),
+                system,
+                &surface,
+                &query_result,
+                &query_result.interference,
+                &budget,
+                Some(&project_id),
+                Some(&session_recalled_snapshot),
             );
-            let ids: Vec<Uuid> = composed.included.iter().map(|f| f.neighborhood_id).collect();
+            let ids: Vec<Uuid> = composed
+                .included
+                .iter()
+                .map(|f| f.neighborhood_id)
+                .collect();
+            // Categorize IDs from IncludedFragment for feedback tracking
+            let mut con_ids = Vec::new();
+            let mut sub_ids = Vec::new();
+            let mut nov_ids = Vec::new();
+            for f in &composed.included {
+                match f.category {
+                    RecallCategory::Conscious => con_ids.push(f.neighborhood_id.to_string()),
+                    RecallCategory::Subconscious => sub_ids.push(f.neighborhood_id.to_string()),
+                    RecallCategory::Novel => nov_ids.push(f.neighborhood_id.to_string()),
+                }
+            }
             let json = serde_json::json!({
                 "context": composed.context,
                 "metrics": {
                     "conscious": composed.metrics.conscious,
                     "subconscious": composed.metrics.subconscious,
                     "novel": composed.metrics.novel,
+                },
+                "recalled_ids": {
+                    "conscious": con_ids,
+                    "subconscious": sub_ids,
+                    "novel": nov_ids,
                 },
                 "budget": {
                     "tokens_used": composed.tokens_used,
@@ -217,16 +242,26 @@ impl AmServer {
         } else {
             // Default: fixed-size composition
             let composed = compose_context(
-                system, &surface, &query_result, &query_result.interference,
-                Some(&project_id), Some(&session_recalled_snapshot),
+                system,
+                &surface,
+                &query_result,
+                &query_result.interference,
+                Some(&project_id),
+                Some(&session_recalled_snapshot),
             );
             let ids = composed.included_ids.clone();
+            let recalled = &composed.recalled_ids;
             let json = serde_json::json!({
                 "context": composed.context,
                 "metrics": {
                     "conscious": composed.metrics.conscious,
                     "subconscious": composed.metrics.subconscious,
                     "novel": composed.metrics.novel,
+                },
+                "recalled_ids": {
+                    "conscious": recalled.conscious.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                    "subconscious": recalled.subconscious.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                    "novel": recalled.novel.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                 },
                 "stats": Self::stats_json(system),
             });
@@ -534,23 +569,21 @@ impl AmServer {
         Parameters(req): Parameters<McpBatchQueryRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
-        let ServerState {
-            system, store, ..
-        } = &mut *state;
+        let ServerState { system, store, .. } = &mut *state;
 
         // Flush orphaned buffer (same as am_query)
         let orphaned = store.store().buffer_count().unwrap_or(0);
-        if orphaned > 0 {
-            if let Ok(exchanges) = store.store().drain_buffer() {
-                let combined: String = exchanges
-                    .iter()
-                    .map(|(u, a, _pid)| format!("{u}\n{a}"))
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                let rng = &mut SmallRng::from_os_rng();
-                let episode = ingest_text(&combined, Some("conversation"), rng);
-                system.add_episode(episode);
-            }
+        if orphaned > 0
+            && let Ok(exchanges) = store.store().drain_buffer()
+        {
+            let combined: String = exchanges
+                .iter()
+                .map(|(u, a, _pid)| format!("{u}\n{a}"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let rng = &mut SmallRng::from_os_rng();
+            let episode = ingest_text(&combined, Some("conversation"), rng);
+            system.add_episode(episode);
         }
 
         let project_id = store.project_id().to_string();

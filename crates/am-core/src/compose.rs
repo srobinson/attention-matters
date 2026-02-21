@@ -25,12 +25,21 @@ pub struct ContextMetrics {
     pub novel: u32,
 }
 
+/// Neighborhood IDs categorized by recall type — for feedback tracking.
+pub struct CategorizedIds {
+    pub conscious: Vec<Uuid>,
+    pub subconscious: Vec<Uuid>,
+    pub novel: Vec<Uuid>,
+}
+
 /// Result of context composition.
 pub struct ContextResult {
     pub context: String,
     pub metrics: ContextMetrics,
     /// Neighborhood IDs included in this result (for session dedup tracking).
     pub included_ids: Vec<Uuid>,
+    /// Neighborhood IDs categorized by recall type (for am_feedback).
+    pub recalled_ids: CategorizedIds,
 }
 
 /// Configuration for budget-constrained context composition.
@@ -108,7 +117,12 @@ fn rank_candidates(
         .collect();
 
     let con_scored = score_neighborhoods(system, &query_result.activation.conscious, true, None);
-    let sub_scored = score_neighborhoods(system, &query_result.activation.subconscious, false, project_id);
+    let sub_scored = score_neighborhoods(
+        system,
+        &query_result.activation.subconscious,
+        false,
+        project_id,
+    );
 
     let mut candidates = Vec::new();
     let mut selected_for_novel: HashSet<Uuid> = HashSet::new();
@@ -239,6 +253,9 @@ pub fn compose_context(
         subconscious: 0,
         novel: 0,
     };
+    let mut conscious_ids: Vec<Uuid> = Vec::new();
+    let mut subconscious_ids: Vec<Uuid> = Vec::new();
+    let mut novel_ids: Vec<Uuid> = Vec::new();
 
     // Helper: should this candidate be skipped due to session dedup?
     let should_skip = |c: &RankedCandidate| -> bool {
@@ -260,8 +277,13 @@ pub fn compose_context(
 
     if let Some(best) = con.first() {
         selected_ids.insert(best.neighborhood_id);
+        conscious_ids.push(best.neighborhood_id);
         let entry = format_entry(
-            RecallCategory::Conscious, 0, "", &best.text, best.neighborhood_type,
+            RecallCategory::Conscious,
+            0,
+            "",
+            &best.text,
+            best.neighborhood_type,
         );
         parts.extend(entry);
         metrics.conscious = 1;
@@ -280,12 +302,17 @@ pub fn compose_context(
 
     for (i, entry) in sub.iter().take(2).enumerate() {
         selected_ids.insert(entry.neighborhood_id);
+        subconscious_ids.push(entry.neighborhood_id);
         let ep_name = get_episode_name(system, entry.episode_idx);
         if !parts.is_empty() {
             parts.push(String::new());
         }
         let lines = format_entry(
-            RecallCategory::Subconscious, i + 1, &ep_name, &entry.text, entry.neighborhood_type,
+            RecallCategory::Subconscious,
+            i + 1,
+            &ep_name,
+            &entry.text,
+            entry.neighborhood_type,
         );
         parts.extend(lines);
         metrics.subconscious += 1;
@@ -304,12 +331,17 @@ pub fn compose_context(
 
     if let Some(best) = novel.first() {
         selected_ids.insert(best.neighborhood_id);
+        novel_ids.push(best.neighborhood_id);
         let ep_name = get_episode_name(system, best.episode_idx);
         if !parts.is_empty() {
             parts.push(String::new());
         }
         let lines = format_entry(
-            RecallCategory::Novel, 0, &ep_name, &best.text, best.neighborhood_type,
+            RecallCategory::Novel,
+            0,
+            &ep_name,
+            &best.text,
+            best.neighborhood_type,
         );
         parts.extend(lines);
         metrics.novel = 1;
@@ -318,6 +350,11 @@ pub fn compose_context(
     ContextResult {
         context: parts.join("\n"),
         metrics,
+        recalled_ids: CategorizedIds {
+            conscious: conscious_ids,
+            subconscious: subconscious_ids,
+            novel: novel_ids,
+        },
         included_ids: selected_ids.into_iter().collect(),
     }
 }
@@ -389,7 +426,8 @@ pub fn compose_context_budgeted(
     let mut included: Vec<IncludedFragment> = Vec::new();
     let mut tokens_used: usize = 0;
     // Count unique neighborhoods across all categories (a neighborhood may appear as both Subconscious and Novel)
-    let unique_candidate_ids: HashSet<Uuid> = candidates.iter().map(|c| c.neighborhood_id).collect();
+    let unique_candidate_ids: HashSet<Uuid> =
+        candidates.iter().map(|c| c.neighborhood_id).collect();
     let total_unique_candidates = unique_candidate_ids.len();
 
     let try_add = |candidate: &RankedCandidate,
@@ -427,8 +465,14 @@ pub fn compose_context_budgeted(
         if con_filled >= budget.min_conscious {
             break;
         }
-        if try_add(c, &mut selected_ids, &mut included, &mut tokens_used, budget.max_tokens, system)
-        {
+        if try_add(
+            c,
+            &mut selected_ids,
+            &mut included,
+            &mut tokens_used,
+            budget.max_tokens,
+            system,
+        ) {
             con_filled += 1;
         }
     }
@@ -438,8 +482,14 @@ pub fn compose_context_budgeted(
         if sub_filled >= budget.min_subconscious {
             break;
         }
-        if try_add(c, &mut selected_ids, &mut included, &mut tokens_used, budget.max_tokens, system)
-        {
+        if try_add(
+            c,
+            &mut selected_ids,
+            &mut included,
+            &mut tokens_used,
+            budget.max_tokens,
+            system,
+        ) {
             sub_filled += 1;
         }
     }
@@ -449,8 +499,14 @@ pub fn compose_context_budgeted(
         if novel_filled >= budget.min_novel {
             break;
         }
-        if try_add(c, &mut selected_ids, &mut included, &mut tokens_used, budget.max_tokens, system)
-        {
+        if try_add(
+            c,
+            &mut selected_ids,
+            &mut included,
+            &mut tokens_used,
+            budget.max_tokens,
+            system,
+        ) {
             novel_filled += 1;
         }
     }
@@ -466,7 +522,14 @@ pub fn compose_context_budgeted(
         if tokens_used >= budget.max_tokens {
             break;
         }
-        try_add(c, &mut selected_ids, &mut included, &mut tokens_used, budget.max_tokens, system);
+        try_add(
+            c,
+            &mut selected_ids,
+            &mut included,
+            &mut tokens_used,
+            budget.max_tokens,
+            system,
+        );
     }
 
     let excluded_count = total_unique_candidates.saturating_sub(included.len());
@@ -489,7 +552,11 @@ pub fn compose_context_budgeted(
             parts.push(String::new());
         }
         let lines = format_entry(
-            RecallCategory::Conscious, 0, "", &entry.text, entry.neighborhood_type,
+            RecallCategory::Conscious,
+            0,
+            "",
+            &entry.text,
+            entry.neighborhood_type,
         );
         parts.extend(lines);
         metrics.conscious += 1;
@@ -505,7 +572,10 @@ pub fn compose_context_budgeted(
             parts.push(String::new());
         }
         let lines = format_entry(
-            RecallCategory::Subconscious, i + 1, &entry.episode_name, &entry.text,
+            RecallCategory::Subconscious,
+            i + 1,
+            &entry.episode_name,
+            &entry.text,
             entry.neighborhood_type,
         );
         parts.extend(lines);
@@ -522,7 +592,11 @@ pub fn compose_context_budgeted(
             parts.push(String::new());
         }
         let lines = format_entry(
-            RecallCategory::Novel, 0, &entry.episode_name, &entry.text, entry.neighborhood_type,
+            RecallCategory::Novel,
+            0,
+            &entry.episode_name,
+            &entry.text,
+            entry.neighborhood_type,
         );
         parts.extend(lines);
         metrics.novel += 1;
@@ -582,9 +656,15 @@ fn parse_days_ago(timestamp: &str) -> f64 {
     if parts.len() != 3 {
         return 0.0;
     }
-    let Ok(y) = parts[0].parse::<i64>() else { return 0.0 };
-    let Ok(m) = parts[1].parse::<i64>() else { return 0.0 };
-    let Ok(d) = parts[2].parse::<i64>() else { return 0.0 };
+    let Ok(y) = parts[0].parse::<i64>() else {
+        return 0.0;
+    };
+    let Ok(m) = parts[1].parse::<i64>() else {
+        return 0.0;
+    };
+    let Ok(d) = parts[2].parse::<i64>() else {
+        return 0.0;
+    };
 
     // Simple Julian day number for comparison (good enough for decay)
     let jdn = |year: i64, month: i64, day: i64| -> i64 {
@@ -672,17 +752,26 @@ fn score_neighborhoods(
 
     // For conscious neighborhoods, compute recency boost based on position.
     // Later neighborhoods (higher index) were added more recently.
-    let conscious_count = if data.iter().any(|(_, ep_idx, _, _, _, _)| *ep_idx == usize::MAX) {
+    let conscious_count = if data
+        .iter()
+        .any(|(_, ep_idx, _, _, _, _)| *ep_idx == usize::MAX)
+    {
         system.conscious_episode.neighborhoods.len() as f64
     } else {
         1.0
     };
     let conscious_recency: HashMap<Uuid, f64> = if conscious_count > 1.0 {
-        system.conscious_episode.neighborhoods.iter().enumerate().map(|(i, nbhd)| {
-            // Newest neighborhood (last) gets boost 2.0, oldest gets 1.0
-            let recency = 1.0 + (i as f64 / conscious_count);
-            (nbhd.id, recency)
-        }).collect()
+        system
+            .conscious_episode
+            .neighborhoods
+            .iter()
+            .enumerate()
+            .map(|(i, nbhd)| {
+                // Newest neighborhood (last) gets boost 2.0, oldest gets 1.0
+                let recency = 1.0 + (i as f64 / conscious_count);
+                (nbhd.id, recency)
+            })
+            .collect()
     } else {
         HashMap::new()
     };
@@ -726,7 +815,10 @@ fn score_neighborhoods(
                 sn.score *= decay;
                 // For conscious neighborhoods, apply recency boost (newer = higher score)
                 if sn.episode_idx == usize::MAX {
-                    let boost = conscious_recency.get(&sn.neighborhood_id).copied().unwrap_or(1.0);
+                    let boost = conscious_recency
+                        .get(&sn.neighborhood_id)
+                        .copied()
+                        .unwrap_or(1.0);
                     sn.score *= boost;
                 }
             }
@@ -867,7 +959,14 @@ mod tests {
         let mut sys = make_full_system();
         let result = QueryEngine::process_query(&mut sys, "quantum physics neural");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         assert!(ctx.context.contains("CONSCIOUS RECALL:"));
         assert!(ctx.context.contains("SUBCONSCIOUS RECALL"));
@@ -890,7 +989,14 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "alpha");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         // No conscious recall since no conscious content matches
         assert!(!ctx.context.contains("CONSCIOUS RECALL:"));
@@ -901,7 +1007,14 @@ mod tests {
         let mut sys = make_full_system();
         let result = QueryEngine::process_query(&mut sys, "quantum");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         assert!(ctx.metrics.conscious <= 1);
         assert!(ctx.metrics.subconscious <= 2);
@@ -951,12 +1064,26 @@ mod tests {
         let mut sys1 = make_full_system();
         let result1 = QueryEngine::process_query(&mut sys1, "quantum");
         let surface1 = compute_surface(&sys1, &result1);
-        let ctx1 = compose_context(&mut sys1, &surface1, &result1, &result1.interference, None, None);
+        let ctx1 = compose_context(
+            &mut sys1,
+            &surface1,
+            &result1,
+            &result1.interference,
+            None,
+            None,
+        );
 
         let mut sys2 = make_full_system();
         let result2 = QueryEngine::process_query(&mut sys2, "quantum");
         let surface2 = compute_surface(&sys2, &result2);
-        let ctx2 = compose_context(&mut sys2, &surface2, &result2, &result2.interference, None, None);
+        let ctx2 = compose_context(
+            &mut sys2,
+            &surface2,
+            &result2,
+            &result2.interference,
+            None,
+            None,
+        );
 
         assert_eq!(ctx1.context, ctx2.context);
     }
@@ -1092,7 +1219,14 @@ mod tests {
         let mut sys = make_full_system();
         let result = QueryEngine::process_query(&mut sys, "quantum physics neural");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         // Must contain expected sections
         assert!(ctx.context.contains("CONSCIOUS RECALL:"));
@@ -1109,7 +1243,14 @@ mod tests {
         let mut sys2 = make_full_system();
         let result2 = QueryEngine::process_query(&mut sys2, "quantum physics neural");
         let surface2 = compute_surface(&sys2, &result2);
-        let ctx2 = compose_context(&mut sys2, &surface2, &result2, &result2.interference, None, None);
+        let ctx2 = compose_context(
+            &mut sys2,
+            &surface2,
+            &result2,
+            &result2.interference,
+            None,
+            None,
+        );
         assert_eq!(ctx.context, ctx2.context);
     }
 
@@ -1176,7 +1317,12 @@ mod tests {
         let mut sys = DAESystem::new("test");
         let id = mark_salient_typed(&mut sys, "DECISION: architecture is event-driven", &mut rng);
 
-        let nbhd = sys.conscious_episode.neighborhoods.iter().find(|n| n.id == id).unwrap();
+        let nbhd = sys
+            .conscious_episode
+            .neighborhoods
+            .iter()
+            .find(|n| n.id == id)
+            .unwrap();
         assert_eq!(nbhd.neighborhood_type, NeighborhoodType::Decision);
         // Prefix should be stripped from the source text used to build tokens
         assert!(!nbhd.source_text.contains("DECISION:"));
@@ -1207,7 +1353,14 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "architecture event");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         // The decision should appear in conscious recall with [DECIDED] prefix
         assert!(
@@ -1238,7 +1391,14 @@ mod tests {
         // First query — no session recall set
         let result = QueryEngine::process_query(&mut sys, "quantum");
         let surface = compute_surface(&sys, &result);
-        let ctx1 = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx1 = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         assert!(ctx1.metrics.conscious > 0 || ctx1.metrics.subconscious > 0);
         assert!(!ctx1.included_ids.is_empty());
@@ -1250,7 +1410,12 @@ mod tests {
         let result2 = QueryEngine::process_query(&mut sys, "quantum");
         let surface2 = compute_surface(&sys, &result2);
         let ctx2 = compose_context(
-            &mut sys, &surface2, &result2, &result2.interference, None, Some(&recalled),
+            &mut sys,
+            &surface2,
+            &result2,
+            &result2.interference,
+            None,
+            Some(&recalled),
         );
 
         // Non-decision neighborhoods should be skipped
@@ -1268,11 +1433,8 @@ mod tests {
         let mut sys = DAESystem::new("test");
 
         // Mark a decision
-        let decision_id = sys.add_to_conscious_typed(
-            "always use Postgres",
-            NeighborhoodType::Decision,
-            &mut rng,
-        );
+        let decision_id =
+            sys.add_to_conscious_typed("always use Postgres", NeighborhoodType::Decision, &mut rng);
 
         // Add subconscious context that matches
         let mut ep = Episode::new("DB notes");
@@ -1291,7 +1453,12 @@ mod tests {
         let result = QueryEngine::process_query(&mut sys, "postgres database");
         let surface = compute_surface(&sys, &result);
         let ctx = compose_context(
-            &mut sys, &surface, &result, &result.interference, None, Some(&recalled),
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            Some(&recalled),
         );
 
         // Decision should still appear despite being in recalled set
@@ -1334,7 +1501,14 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "alpha beta");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         // Should have subconscious recall from at least one episode
         assert!(
@@ -1362,7 +1536,14 @@ mod tests {
         let mut sys = make_full_system();
         let result = QueryEngine::process_query(&mut sys, "quantum physics");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         // included_ids should contain the neighborhood IDs that were included
         assert!(
@@ -1400,7 +1581,14 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "user prefers dark");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None, None);
+        let ctx = compose_context(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            None,
+            None,
+        );
 
         assert!(
             ctx.context.contains("[PREFERENCE]"),

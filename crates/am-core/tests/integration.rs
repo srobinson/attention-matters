@@ -246,8 +246,22 @@ fn serde_roundtrip_with_query() {
     let surface1 = compute_surface(&system, &result1);
     let surface2 = compute_surface(&system2, &result2);
 
-    let composed1 = compose_context(&mut system, &surface1, &result1, &result1.interference, None, None);
-    let composed2 = compose_context(&mut system2, &surface2, &result2, &result2.interference, None, None);
+    let composed1 = compose_context(
+        &mut system,
+        &surface1,
+        &result1,
+        &result1.interference,
+        None,
+        None,
+    );
+    let composed2 = compose_context(
+        &mut system2,
+        &surface2,
+        &result2,
+        &result2.interference,
+        None,
+        None,
+    );
 
     assert_eq!(
         composed1.context, composed2.context,

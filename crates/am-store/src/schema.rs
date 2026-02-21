@@ -82,9 +82,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         .prepare("SELECT project_id FROM episodes LIMIT 0")
         .is_err()
     {
-        conn.execute_batch(
-            "ALTER TABLE episodes ADD COLUMN project_id TEXT NOT NULL DEFAULT '';",
-        )?;
+        conn.execute_batch("ALTER TABLE episodes ADD COLUMN project_id TEXT NOT NULL DEFAULT '';")?;
     }
     if conn
         .prepare("SELECT project_id FROM conversation_buffer LIMIT 0")
@@ -106,9 +104,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
     }
 
     // Index on project_id (safe to run after ALTER TABLE or on fresh db)
-    conn.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_ep_project ON episodes(project_id);",
-    )?;
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_ep_project ON episodes(project_id);")?;
 
     // Backfill empty timestamps on existing episodes using rowid order.
     // Episodes are inserted chronologically, so rowid gives relative ordering.
@@ -158,9 +154,7 @@ fn backfill_empty_timestamps(conn: &Connection) -> Result<()> {
 
     let tx = conn.unchecked_transaction()?;
     {
-        let mut update = tx.prepare(
-            "UPDATE episodes SET timestamp = ?1 WHERE id = ?2",
-        )?;
+        let mut update = tx.prepare("UPDATE episodes SET timestamp = ?1 WHERE id = ?2")?;
         for (i, (id, _rowid)) in rows.iter().enumerate() {
             let ts_secs = start_secs + (i as u64) * step;
             let ts = unix_to_iso8601(ts_secs);

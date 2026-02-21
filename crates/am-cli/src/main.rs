@@ -511,9 +511,7 @@ async fn shutdown_signal() {
 
 fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
     let store = open_store(cli)?;
-    let mut system = store
-        .load_system()
-        .context("failed to load system")?;
+    let mut system = store.load_system().context("failed to load system")?;
 
     let project_id = store.project_id().to_string();
     let query_result = QueryEngine::process_query(&mut system, text);
@@ -551,9 +549,7 @@ fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
 
 fn cmd_ingest(cli: &Cli, files: &[PathBuf], dir: Option<&std::path::Path>) -> Result<()> {
     let store = open_store(cli)?;
-    let mut system = store
-        .load_system()
-        .context("failed to load system")?;
+    let mut system = store.load_system().context("failed to load system")?;
     let mut rng = SmallRng::from_os_rng();
 
     let mut paths: Vec<PathBuf> = files.to_vec();
@@ -605,9 +601,7 @@ fn cmd_ingest(cli: &Cli, files: &[PathBuf], dir: Option<&std::path::Path>) -> Re
 
 fn cmd_stats(cli: &Cli) -> Result<()> {
     let store = open_store(cli)?;
-    let system = store
-        .load_system()
-        .context("failed to load system")?;
+    let system = store.load_system().context("failed to load system")?;
 
     let db_size = store.store().db_size();
     let activation = store
@@ -1011,9 +1005,7 @@ fn inspect_neighborhoods(store: &BrainStore, limit: usize, json: bool) -> Result
 
 fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
     let store = open_store(cli)?;
-    let mut system = store
-        .load_system()
-        .context("failed to load system")?;
+    let mut system = store.load_system().context("failed to load system")?;
 
     let project_id = store.project_id().to_string();
     let query_result = QueryEngine::process_query(&mut system, text);
@@ -1090,9 +1082,7 @@ fn cmd_sync(
     dir_override: Option<&std::path::Path>,
 ) -> Result<()> {
     let store = open_store(cli)?;
-    let mut system = store
-        .load_system()
-        .context("failed to load system")?;
+    let mut system = store.load_system().context("failed to load system")?;
     let mut rng = SmallRng::from_os_rng();
 
     let claude_dir = sync::resolve_claude_dir(dir_override);
@@ -1348,9 +1338,7 @@ fn cmd_forget(
 
 fn cmd_export(cli: &Cli, path: &std::path::Path) -> Result<()> {
     let store = open_store(cli)?;
-    let system = store
-        .load_system()
-        .context("failed to load system")?;
+    let system = store.load_system().context("failed to load system")?;
 
     let json = export_json(&system).context("failed to serialize state")?;
     std::fs::write(path, &json).with_context(|| format!("failed to write {}", path.display()))?;

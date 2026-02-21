@@ -3,7 +3,9 @@ use std::path::Path;
 use rusqlite::{Connection, params};
 use uuid::Uuid;
 
-use am_core::{DAESystem, DaemonPhasor, Episode, Neighborhood, NeighborhoodType, Occurrence, Quaternion};
+use am_core::{
+    DAESystem, DaemonPhasor, Episode, Neighborhood, NeighborhoodType, Occurrence, Quaternion,
+};
 
 use crate::error::{Result, StoreError};
 use crate::schema;
@@ -391,7 +393,12 @@ impl Store {
 
     // --- Conversation buffer ---
 
-    pub fn append_buffer(&self, user_text: &str, assistant_text: &str, project_id: &str) -> Result<usize> {
+    pub fn append_buffer(
+        &self,
+        user_text: &str,
+        assistant_text: &str,
+        project_id: &str,
+    ) -> Result<usize> {
         self.conn.execute(
             "INSERT INTO conversation_buffer (user_text, assistant_text, project_id) VALUES (?1, ?2, ?3)",
             params![user_text, assistant_text, project_id],

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "fmm": {
+      "args": [
+        "mcp"
+      ],
+      "command": "fmm"
+    }
+  }
+}

@@ -11,9 +11,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::compose::{
-    BudgetConfig, BudgetedContextResult, compose_context_budgeted,
-};
+use crate::compose::{BudgetConfig, BudgetedContextResult, compose_context_budgeted};
 use crate::query::{QueryEngine, QueryResult};
 use crate::surface::compute_surface;
 use crate::system::{DAESystem, OccurrenceRef};
@@ -72,7 +70,8 @@ impl BatchQueryEngine {
             .iter()
             .map(|req| {
                 let tokens = tokenize(&req.query);
-                let unique: HashSet<String> = tokens.into_iter().map(|t| t.to_lowercase()).collect();
+                let unique: HashSet<String> =
+                    tokens.into_iter().map(|t| t.to_lowercase()).collect();
                 all_tokens.extend(unique.iter().cloned());
                 unique
             })
