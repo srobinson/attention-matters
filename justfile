@@ -8,7 +8,7 @@ test:
     cargo test --workspace
 
 fmt:
-    cargo fmt --all
+    cargo fmt --all -- --fix
 
 clippy:
     cargo clippy --workspace --all-targets --fix --allow-dirty -- -D warnings

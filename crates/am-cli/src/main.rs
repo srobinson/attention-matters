@@ -295,8 +295,7 @@ fn open_store(_cli: &Cli) -> Result<BrainStore> {
     let base_dir = std::env::var("AM_DATA_DIR")
         .ok()
         .map(std::path::PathBuf::from);
-    BrainStore::open(base_dir.as_deref())
-        .context("failed to open brain store")
+    BrainStore::open(base_dir.as_deref()).context("failed to open brain store")
 }
 
 fn init_tracing(verbose: bool) {

@@ -6,3 +6,4 @@
 /.nancy
 /target
 .claude/
+npm/*/scripts/am
