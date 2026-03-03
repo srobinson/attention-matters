@@ -9,6 +9,26 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "(am sync || npx -y attention-matters sync) 2>/dev/null; echo 'Preflight: ok'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "(am sync || npx -y attention-matters sync) 2>/dev/null; true"
+          }
+        ]
+      }
     ]
   }
 }
