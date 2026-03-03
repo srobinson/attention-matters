@@ -721,8 +721,8 @@ pub fn compose_index(
         .into_iter()
         .filter(|(_, s)| *s >= MIN_SCORE_THRESHOLD)
         .map(|(c, score)| {
-            let full_tokens = c.tokens + ENTRY_HEADER_OVERHEAD_TOKENS;
-            total_tokens_if_fetched += full_tokens;
+            let llm_tokens = estimate_llm_tokens(&c.text);
+            total_tokens_if_fetched += llm_tokens;
 
             // Get epoch from the neighborhood
             let epoch = if let Some(nref) = system.get_neighborhood_ref(c.neighborhood_id) {
@@ -744,7 +744,7 @@ pub fn compose_index(
                 score,
                 epoch,
                 summary,
-                token_estimate: estimate_llm_tokens(&c.text),
+                token_estimate: llm_tokens,
             }
         })
         .collect();
@@ -761,17 +761,13 @@ pub fn compose_index(
 /// Retrieve full content for specific neighborhood IDs.
 /// Phase 2 of two-phase retrieval: after reviewing the index, fetch
 /// only the neighborhoods you actually need.
-pub fn retrieve_by_ids(
-    system: &DAESystem,
-    ids: &[Uuid],
-) -> Vec<IncludedFragment> {
+pub fn retrieve_by_ids(system: &DAESystem, ids: &[Uuid]) -> Vec<IncludedFragment> {
     let mut fragments = Vec::new();
 
-    for &id in ids {
+    'outer: for &id in ids {
         // Search conscious episode first
-        for (nbhd_idx, nbhd) in system.conscious_episode.neighborhoods.iter().enumerate() {
+        for nbhd in &system.conscious_episode.neighborhoods {
             if nbhd.id == id {
-                let _ = nbhd_idx; // used for identification
                 let text = if !nbhd.source_text.is_empty() {
                     nbhd.source_text.clone()
                 } else {
@@ -790,7 +786,7 @@ pub fn retrieve_by_ids(
                     text,
                     neighborhood_type: nbhd.neighborhood_type,
                 });
-                break;
+                continue 'outer;
             }
         }
 
@@ -816,7 +812,7 @@ pub fn retrieve_by_ids(
                         text,
                         neighborhood_type: nbhd.neighborhood_type,
                     });
-                    break;
+                    continue 'outer;
                 }
             }
         }
@@ -2495,7 +2491,10 @@ mod tests {
                 "summary should be truncated: {}",
                 entry.summary.len()
             );
-            assert!(entry.token_estimate > 0, "token estimate should be positive");
+            assert!(
+                entry.token_estimate > 0,
+                "token estimate should be positive"
+            );
             assert!(entry.score > 0.0, "score should be positive");
         }
         assert!(
@@ -2544,7 +2543,7 @@ mod tests {
 
     #[test]
     fn test_retrieve_by_ids_returns_matching_neighborhoods() {
-        let mut sys = make_full_system();
+        let sys = make_full_system();
 
         // Get a neighborhood ID from conscious memory
         let conscious_id = sys.conscious_episode.neighborhoods[0].id;
@@ -2562,12 +2561,18 @@ mod tests {
         assert!(returned_ids.contains(&sub_id));
 
         // Conscious should be categorized as Conscious
-        let con = fragments.iter().find(|f| f.neighborhood_id == conscious_id).unwrap();
+        let con = fragments
+            .iter()
+            .find(|f| f.neighborhood_id == conscious_id)
+            .unwrap();
         assert_eq!(con.category, RecallCategory::Conscious);
         assert!(!con.text.is_empty());
 
         // Subconscious should be categorized as Subconscious
-        let sub = fragments.iter().find(|f| f.neighborhood_id == sub_id).unwrap();
+        let sub = fragments
+            .iter()
+            .find(|f| f.neighborhood_id == sub_id)
+            .unwrap();
         assert_eq!(sub.category, RecallCategory::Subconscious);
         assert!(!sub.text.is_empty());
     }

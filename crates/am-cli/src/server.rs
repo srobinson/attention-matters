@@ -1473,7 +1473,10 @@ mod tests {
         // Verify each entry has compact structure
         for entry in entries {
             assert!(entry.get("id").is_some(), "entry should have id");
-            assert!(entry.get("category").is_some(), "entry should have category");
+            assert!(
+                entry.get("category").is_some(),
+                "entry should have category"
+            );
             assert!(entry.get("type").is_some(), "entry should have type");
             assert!(entry.get("score").is_some(), "entry should have score");
             assert!(entry.get("epoch").is_some(), "entry should have epoch");
@@ -1534,12 +1537,9 @@ mod tests {
 
         let retrieved = &retrieve_json["entries"].as_array().unwrap()[0];
         assert_eq!(retrieved["id"], first_id);
+        assert!(retrieved.get("text").is_some(), "should have full text");
         assert!(
-            retrieved.get("text").is_some(),
-            "should have full text"
-        );
-        assert!(
-            retrieved["text"].as_str().unwrap().len() > 0,
+            !retrieved["text"].as_str().unwrap().is_empty(),
             "text should be non-empty"
         );
         assert!(
