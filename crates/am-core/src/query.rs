@@ -25,6 +25,8 @@ pub struct QueryResult {
     pub activation: ActivationResult,
     pub interference: Vec<InterferenceResult>,
     pub word_groups: Vec<WordGroup>,
+    /// Number of unique tokens in the original query (for density scoring).
+    pub query_token_count: usize,
 }
 
 /// Stateless query processor operating on a DAESystem.
@@ -105,6 +107,7 @@ impl QueryEngine {
             activation,
             interference,
             word_groups,
+            query_token_count,
         }
     }
 

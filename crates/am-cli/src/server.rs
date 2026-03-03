@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use am_core::{
@@ -30,9 +30,10 @@ struct ServerState {
     system: DAESystem,
     store: BrainStore,
     rng: SmallRng,
-    /// Neighborhood IDs already returned in this session (process lifetime).
-    /// Used to deduplicate non-decision neighborhoods across am_query calls.
-    session_recalled: HashSet<Uuid>,
+    /// Neighborhood recall counts this session (process lifetime).
+    /// Tracks how many times each neighborhood has been returned.
+    /// Non-decision neighborhoods get diminishing returns on repeated recalls.
+    session_recalled: HashMap<Uuid, u32>,
 }
 
 impl AmServer {
@@ -46,7 +47,7 @@ impl AmServer {
                 system,
                 store,
                 rng,
-                session_recalled: HashSet::new(),
+                session_recalled: HashMap::new(),
             })),
             tool_router: Self::tool_router(),
         })
@@ -270,9 +271,9 @@ impl AmServer {
             (json, ids)
         };
 
-        // Record returned neighborhood IDs for session dedup
+        // Increment recall count for returned neighborhood IDs (diminishing returns)
         for id in new_ids {
-            state.session_recalled.insert(id);
+            *state.session_recalled.entry(id).or_insert(0) += 1;
         }
 
         Ok(CallToolResult::success(vec![Content::text(

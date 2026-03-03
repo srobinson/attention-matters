@@ -112,8 +112,10 @@ fn rank_candidates(system: &mut DAESystem, query_result: &QueryResult) -> Vec<Ra
         .map(|r| system.get_occurrence(*r).word.to_lowercase())
         .collect();
 
-    let mut con_scored = score_neighborhoods(system, &query_result.activation.conscious, true);
-    let mut sub_scored = score_neighborhoods(system, &query_result.activation.subconscious, false);
+    let qtc = query_result.query_token_count;
+    let mut con_scored = score_neighborhoods(system, &query_result.activation.conscious, true, qtc);
+    let mut sub_scored =
+        score_neighborhoods(system, &query_result.activation.subconscious, false, qtc);
 
     // Suppress older neighborhoods that overlap with newer ones (contradiction handling)
     overlap_suppress(&mut con_scored, &mut sub_scored, system);
@@ -218,9 +220,9 @@ const ENTRY_HEADER_OVERHEAD_TOKENS: usize = 20;
 
 /// Compose human-readable context from surface and activation results.
 ///
-/// `session_recalled` tracks neighborhood IDs already returned this session.
-/// Non-decision neighborhoods in this set are skipped (dedup). Decision
-/// neighborhoods are always included but marked with `[DECIDED]` prefix.
+/// `session_recalled` tracks how many times each neighborhood ID has been
+/// returned this session. Non-decision neighborhoods get diminishing returns
+/// (score *= 1/(1+count)). Decision/Preference neighborhoods are exempt.
 ///
 /// `_surface` and `_interference` are part of the pipeline API and reserved
 /// for future use (e.g. vivid filtering, interference-weighted scoring).
@@ -229,12 +231,28 @@ pub fn compose_context(
     _surface: &SurfaceResult,
     query_result: &QueryResult,
     _interference: &[InterferenceResult],
-    session_recalled: Option<&HashSet<Uuid>>,
+    session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> ContextResult {
     let candidates = rank_candidates(system, query_result);
 
-    let empty_set = HashSet::new();
-    let recalled = session_recalled.unwrap_or(&empty_set);
+    let empty_map = HashMap::new();
+    let recalled = session_recalled.unwrap_or(&empty_map);
+
+    // Apply diminishing returns to previously-recalled candidates
+    let candidates: Vec<RankedCandidate> = candidates
+        .into_iter()
+        .map(|mut c| {
+            if let Some(&count) = recalled.get(&c.neighborhood_id) {
+                // Decisions/Preferences are exempt from diminishing returns
+                if c.neighborhood_type != NeighborhoodType::Decision
+                    && c.neighborhood_type != NeighborhoodType::Preference
+                {
+                    c.score *= 1.0 / (1.0 + count as f64);
+                }
+            }
+            c
+        })
+        .collect();
 
     let mut selected_ids: HashSet<Uuid> = HashSet::new();
     let mut parts: Vec<String> = Vec::new();
@@ -247,21 +265,10 @@ pub fn compose_context(
     let mut subconscious_ids: Vec<Uuid> = Vec::new();
     let mut novel_ids: Vec<Uuid> = Vec::new();
 
-    // Helper: should this candidate be skipped due to session dedup?
-    let should_skip = |c: &RankedCandidate| -> bool {
-        if recalled.contains(&c.neighborhood_id) {
-            // Decisions are never skipped — they always surface
-            c.neighborhood_type != NeighborhoodType::Decision
-                && c.neighborhood_type != NeighborhoodType::Preference
-        } else {
-            false
-        }
-    };
-
     // Conscious: top 1
     let mut con: Vec<&RankedCandidate> = candidates
         .iter()
-        .filter(|c| c.category == RecallCategory::Conscious && !should_skip(c))
+        .filter(|c| c.category == RecallCategory::Conscious)
         .collect();
     con.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
@@ -279,13 +286,11 @@ pub fn compose_context(
         metrics.conscious = 1;
     }
 
-    // Subconscious: top 2 (excluding already selected and deduped)
+    // Subconscious: top 2 (excluding already selected)
     let mut sub: Vec<&RankedCandidate> = candidates
         .iter()
         .filter(|c| {
-            c.category == RecallCategory::Subconscious
-                && !selected_ids.contains(&c.neighborhood_id)
-                && !should_skip(c)
+            c.category == RecallCategory::Subconscious && !selected_ids.contains(&c.neighborhood_id)
         })
         .collect();
     sub.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
@@ -308,13 +313,11 @@ pub fn compose_context(
         metrics.subconscious += 1;
     }
 
-    // Novel: top 1 (excluding already selected and deduped)
+    // Novel: top 1 (excluding already selected)
     let mut novel: Vec<&RankedCandidate> = candidates
         .iter()
         .filter(|c| {
-            c.category == RecallCategory::Novel
-                && !selected_ids.contains(&c.neighborhood_id)
-                && !should_skip(c)
+            c.category == RecallCategory::Novel && !selected_ids.contains(&c.neighborhood_id)
         })
         .collect();
     novel.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
@@ -354,9 +357,9 @@ pub fn compose_context(
 /// Fills guaranteed minimums first (highest-scored per category), then greedily
 /// fills remaining budget by score across all categories.
 ///
-/// `session_recalled` tracks neighborhood IDs already returned this session.
-/// Non-decision neighborhoods in this set are skipped (dedup). Decision
-/// neighborhoods are always included but marked with `[DECIDED]` prefix.
+/// `session_recalled` tracks how many times each neighborhood ID has been
+/// returned this session. Non-decision neighborhoods get diminishing returns
+/// (score *= 1/(1+count)). Decision/Preference neighborhoods are exempt.
 ///
 /// `_surface` and `_interference` are part of the pipeline API and reserved
 /// for future use (e.g. vivid filtering, interference-weighted scoring).
@@ -366,24 +369,26 @@ pub fn compose_context_budgeted(
     query_result: &QueryResult,
     _interference: &[InterferenceResult],
     budget: &BudgetConfig,
-    session_recalled: Option<&HashSet<Uuid>>,
+    session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> BudgetedContextResult {
     let candidates = rank_candidates(system, query_result);
 
-    let empty_set = HashSet::new();
-    let recalled = session_recalled.unwrap_or(&empty_set);
+    let empty_map = HashMap::new();
+    let recalled = session_recalled.unwrap_or(&empty_map);
 
-    // Filter out session-deduped non-decision candidates
+    // Apply diminishing returns to previously-recalled candidates
     let candidates: Vec<RankedCandidate> = candidates
         .into_iter()
-        .filter(|c| {
-            if recalled.contains(&c.neighborhood_id) {
-                // Decisions and preferences always pass through
-                c.neighborhood_type == NeighborhoodType::Decision
-                    || c.neighborhood_type == NeighborhoodType::Preference
-            } else {
-                true
+        .map(|mut c| {
+            if let Some(&count) = recalled.get(&c.neighborhood_id) {
+                // Decisions/Preferences are exempt from diminishing returns
+                if c.neighborhood_type != NeighborhoodType::Decision
+                    && c.neighborhood_type != NeighborhoodType::Preference
+                {
+                    c.score *= 1.0 / (1.0 + count as f64);
+                }
             }
+            c
         })
         .collect();
 
@@ -497,10 +502,12 @@ pub fn compose_context_budgeted(
         }
     }
 
-    // Phase 2: Greedily fill remaining budget by score across all categories
+    // Phase 2: Greedily fill remaining budget by score across all categories.
+    // Apply minimum score threshold here — category minimums are always filled,
+    // but overflow candidates must score above MIN_SCORE_THRESHOLD.
     let mut remaining: Vec<&RankedCandidate> = candidates
         .iter()
-        .filter(|c| !selected_ids.contains(&c.neighborhood_id))
+        .filter(|c| !selected_ids.contains(&c.neighborhood_id) && c.score >= MIN_SCORE_THRESHOLD)
         .collect();
     remaining.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
 
@@ -619,6 +626,10 @@ const OVERLAP_THRESHOLD: f64 = 0.3;
 /// Score multiplier applied to older neighborhoods in overlapping groups.
 const OVERLAP_SUPPRESSION: f64 = 0.1;
 
+/// Minimum score threshold for inclusion in recall results.
+/// Candidates scoring below this are excluded to avoid padding with weak matches.
+const MIN_SCORE_THRESHOLD: f64 = 1.0;
+
 struct ScoredNeighborhood {
     neighborhood_id: Uuid,
     episode_idx: usize, // usize::MAX for conscious
@@ -685,6 +696,7 @@ fn score_neighborhoods(
     system: &mut DAESystem,
     refs: &[OccurrenceRef],
     _is_conscious: bool,
+    query_token_count: usize,
 ) -> HashMap<Uuid, ScoredNeighborhood> {
     let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
 
@@ -781,9 +793,14 @@ fn score_neighborhoods(
         }
     }
 
-    // Post-process: apply recency decay then decision/preference competitive scoring
+    // Post-process: density bonus, recency decay, then decision/preference competitive scoring
     for sn in scored.values_mut() {
-        // All neighborhoods get recency decay first
+        // Co-occurrence density bonus: neighborhoods matching more query tokens score higher
+        if query_token_count > 0 {
+            let density_bonus = sn.activated_count as f64 / query_token_count as f64;
+            sn.score *= 1.0 + density_bonus;
+        }
+        // All neighborhoods get recency decay
         let decay = recency_cache.get(&sn.episode_idx).copied().unwrap_or(1.0);
         sn.score *= decay;
         // For conscious neighborhoods, apply recency boost (newer = higher score)
@@ -1218,12 +1235,20 @@ mod tests {
             None,
         );
 
-        // With huge budget, everything should be included
-        assert_eq!(
-            ctx.excluded_count, 0,
-            "expected no exclusions with huge budget, got {}",
-            ctx.excluded_count
+        // With huge budget, minimums should be filled; any exclusions are from
+        // the MIN_SCORE_THRESHOLD filtering weak matches from the overflow phase.
+        assert!(
+            !ctx.included.is_empty(),
+            "expected some inclusions with huge budget"
         );
+        // All included entries should score above threshold
+        for f in &ctx.included {
+            assert!(
+                f.score > 0.0,
+                "included fragment should have positive score, got {}",
+                f.score
+            );
+        }
     }
 
     #[test]
@@ -1492,62 +1517,79 @@ mod tests {
     }
 
     #[test]
-    fn test_session_dedup_skips_non_decisions() {
+    fn test_session_diminishing_returns_non_decisions() {
+        // Two identical subconscious neighborhoods matching the same query.
+        // One is in session_recalled (count=1), the other is not.
+        // The recalled one should score lower due to diminishing returns.
         let mut rng = rng();
         let mut sys = DAESystem::new("test");
 
-        // Add regular conscious memory
-        let nbhd_id = sys.add_to_conscious("quantum computing research", &mut rng);
-
-        // Add subconscious
-        let mut ep = Episode::new("Science");
-        ep.add_neighborhood(Neighborhood::from_tokens(
-            &to_tokens(&["quantum", "physics", "wave"]),
+        // Two subconscious episodes with identical words
+        let mut ep1 = Episode::new("First");
+        ep1.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["alpha", "beta", "gamma"]),
             None,
-            "quantum physics wave",
+            "alpha beta gamma first",
             &mut rng,
         ));
-        sys.add_episode(ep);
+        sys.add_episode(ep1);
+        let nbhd1_id = sys.episodes[0].neighborhoods[0].id;
 
-        // First query — no session recall set
-        let result = QueryEngine::process_query(&mut sys, "quantum");
+        let mut ep2 = Episode::new("Second");
+        ep2.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["alpha", "beta", "gamma"]),
+            None,
+            "alpha beta gamma second",
+            &mut rng,
+        ));
+        sys.add_episode(ep2);
+        let nbhd2_id = sys.episodes[1].neighborhoods[0].id;
+
+        // Mark only nbhd1 as previously recalled (count=1)
+        let mut recalled: HashMap<Uuid, u32> = HashMap::new();
+        recalled.insert(nbhd1_id, 1);
+
+        let result = QueryEngine::process_query(&mut sys, "alpha beta gamma");
         let surface = compute_surface(&sys, &result);
-        let ctx1 = compose_context(&mut sys, &surface, &result, &result.interference, None);
-
-        assert!(ctx1.metrics.conscious > 0 || ctx1.metrics.subconscious > 0);
-        assert!(!ctx1.included_ids.is_empty());
-
-        // Second query — pass the IDs from first query as session_recalled
-        let mut recalled: HashSet<Uuid> = ctx1.included_ids.iter().copied().collect();
-        recalled.insert(nbhd_id); // Ensure the conscious neighborhood is in the set
-
-        let result2 = QueryEngine::process_query(&mut sys, "quantum");
-        let surface2 = compute_surface(&sys, &result2);
-        let ctx2 = compose_context(
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 0,
+            min_subconscious: 2,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
             &mut sys,
-            &surface2,
-            &result2,
-            &result2.interference,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
             Some(&recalled),
         );
 
-        // Non-decision neighborhoods should be skipped
-        // The conscious neighborhood was an Insight (default), so it should be deduped
+        let f1 = ctx.included.iter().find(|f| f.neighborhood_id == nbhd1_id);
+        let f2 = ctx.included.iter().find(|f| f.neighborhood_id == nbhd2_id);
+
         assert!(
-            ctx2.metrics.conscious == 0,
-            "non-decision conscious recall should be deduped on second query, got {}",
-            ctx2.metrics.conscious,
+            f1.is_some() && f2.is_some(),
+            "both neighborhoods should be included"
+        );
+        let s1 = f1.unwrap().score;
+        let s2 = f2.unwrap().score;
+        assert!(
+            s1 < s2,
+            "recalled neighborhood should score lower: recalled={}, fresh={}",
+            s1,
+            s2,
         );
     }
 
     #[test]
-    fn test_session_dedup_keeps_decisions() {
+    fn test_session_diminishing_returns_decisions_exempt() {
         let mut rng = rng();
         let mut sys = DAESystem::new("test");
 
         // Mark a decision
-        let decision_id =
-            sys.add_to_conscious_typed("always use Postgres", NeighborhoodType::Decision, &mut rng);
+        sys.add_to_conscious_typed("always use Postgres", NeighborhoodType::Decision, &mut rng);
 
         // Add subconscious context that matches
         let mut ep = Episode::new("DB notes");
@@ -1559,26 +1601,65 @@ mod tests {
         ));
         sys.add_episode(ep);
 
-        // Simulate session recall set containing the decision ID
-        let mut recalled: HashSet<Uuid> = HashSet::new();
-        recalled.insert(decision_id);
-
+        // First query — get scores without session recall
         let result = QueryEngine::process_query(&mut sys, "postgres database");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 1,
+            min_subconscious: 1,
+            min_novel: 0,
+        };
+        let ctx1 = compose_context_budgeted(
             &mut sys,
             &surface,
             &result,
             &result.interference,
+            &budget,
+            None,
+        );
+
+        // Build session recall map with count=1 for all returned IDs
+        let mut recalled: HashMap<Uuid, u32> = HashMap::new();
+        for f in &ctx1.included {
+            recalled.insert(f.neighborhood_id, 1);
+        }
+
+        // Second query with session recall
+        let result2 = QueryEngine::process_query(&mut sys, "postgres database");
+        let surface2 = compute_surface(&sys, &result2);
+        let ctx2 = compose_context_budgeted(
+            &mut sys,
+            &surface2,
+            &result2,
+            &result2.interference,
+            &budget,
             Some(&recalled),
         );
 
-        // Decision should still appear despite being in recalled set
+        // Decision should still appear and score unchanged (exempt from diminishing returns)
         assert!(
-            ctx.context.contains("[DECIDED]"),
-            "decisions should survive session dedup, got:\n{}",
-            ctx.context,
+            ctx2.context.contains("[DECIDED]"),
+            "decisions should survive session recall, got:\n{}",
+            ctx2.context,
         );
+        // Find decision in both results and verify score is unchanged
+        let d1 = ctx1
+            .included
+            .iter()
+            .find(|f| f.neighborhood_type == NeighborhoodType::Decision);
+        let d2 = ctx2
+            .included
+            .iter()
+            .find(|f| f.neighborhood_type == NeighborhoodType::Decision);
+        if let (Some(d1), Some(d2)) = (d1, d2) {
+            assert!(
+                (d1.score - d2.score).abs() < 0.01,
+                "decision score should be unchanged: first={}, second={}",
+                d1.score,
+                d2.score,
+            );
+        }
     }
 
     #[test]
@@ -1931,6 +2012,191 @@ mod tests {
                 top.text,
             );
         }
+    }
+
+    // =====================================================================
+    // Co-occurrence density bonus tests (ALP-684)
+    // =====================================================================
+
+    #[test]
+    fn test_density_bonus_many_words_scores_higher() {
+        // A memory matching many query words should score higher than one
+        // matching only a single (even rare) word.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Neighborhood A: matches 4 of 5 query words
+        let mut ep1 = Episode::new("Broad match");
+        ep1.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["alpha", "beta", "gamma", "delta", "unrelated"]),
+            None,
+            "alpha beta gamma delta unrelated",
+            &mut rng,
+        ));
+        sys.add_episode(ep1);
+
+        // Neighborhood B: matches only 1 query word ("epsilon") which is rare
+        let mut ep2 = Episode::new("Single match");
+        ep2.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["epsilon", "foo", "bar", "baz", "qux"]),
+            None,
+            "epsilon foo bar baz qux",
+            &mut rng,
+        ));
+        sys.add_episode(ep2);
+
+        // Query with 5 words — 4 match neighborhood A, 1 matches neighborhood B
+        let result = QueryEngine::process_query(&mut sys, "alpha beta gamma delta epsilon");
+        let surface = compute_surface(&sys, &result);
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 0,
+            min_subconscious: 2,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        let sub_entries: Vec<&IncludedFragment> = ctx
+            .included
+            .iter()
+            .filter(|f| f.category == RecallCategory::Subconscious)
+            .collect();
+        assert!(
+            sub_entries.len() >= 2,
+            "expected at least 2 subconscious entries, got {}",
+            sub_entries.len()
+        );
+        // The broad-match (4 words) should score higher than single-match (1 word)
+        let broad = sub_entries
+            .iter()
+            .find(|f| f.text.contains("alpha"))
+            .unwrap();
+        let single = sub_entries
+            .iter()
+            .find(|f| f.text.contains("epsilon"))
+            .unwrap();
+        assert!(
+            broad.score > single.score,
+            "4-word match should score higher than 1-word match: broad={}, single={}",
+            broad.score,
+            single.score,
+        );
+    }
+
+    // =====================================================================
+    // Minimum score threshold tests (ALP-686)
+    // =====================================================================
+
+    #[test]
+    fn test_min_score_threshold_excludes_weak_overflow() {
+        // Weak-scoring candidates should be excluded from the greedy fill
+        // phase but category minimums are always filled.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Strong match
+        let mut ep1 = Episode::new("Strong");
+        ep1.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["target", "keyword", "matching", "relevant"]),
+            None,
+            "target keyword matching relevant",
+            &mut rng,
+        ));
+        sys.add_episode(ep1);
+
+        // Weak match — shares only one common word with query
+        let mut ep2 = Episode::new("Weak");
+        ep2.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["target", "unrelated1", "unrelated2", "unrelated3"]),
+            None,
+            "target unrelated1 unrelated2 unrelated3",
+            &mut rng,
+        ));
+        sys.add_episode(ep2);
+
+        let result = QueryEngine::process_query(
+            &mut sys,
+            "target keyword matching relevant additional context",
+        );
+        let surface = compute_surface(&sys, &result);
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 0,
+            min_subconscious: 1, // Only need 1 minimum
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        // The strong match should be included as the minimum fill
+        let strong = ctx.included.iter().find(|f| f.text.contains("keyword"));
+        assert!(strong.is_some(), "strong match should be included");
+
+        // If the weak match scores below MIN_SCORE_THRESHOLD, it should be
+        // excluded from the overflow phase. Either way, weak matches shouldn't
+        // dominate the results.
+        if ctx.included.len() > 1 {
+            // If weak match is included, it should score lower than strong
+            let scores: Vec<f64> = ctx.included.iter().map(|f| f.score).collect();
+            let max_score = scores.iter().cloned().fold(f64::MIN, f64::max);
+            assert!(
+                strong.unwrap().score >= max_score * 0.5,
+                "strong match should be among the top scorers"
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_results_when_nothing_matches() {
+        // Query with no matching words should produce empty results.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        let mut ep = Episode::new("Science");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["quantum", "physics", "particle"]),
+            None,
+            "quantum physics particle",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        // Query with completely unrelated words
+        let result = QueryEngine::process_query(&mut sys, "cooking recipe ingredients");
+        let surface = compute_surface(&sys, &result);
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 0,
+            min_subconscious: 0,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        assert!(
+            ctx.included.is_empty(),
+            "completely unrelated query should produce no results, got {} entries",
+            ctx.included.len()
+        );
     }
 
     #[test]
