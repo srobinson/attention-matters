@@ -137,6 +137,7 @@ impl BatchQueryEngine {
                 },
                 interference,
                 word_groups,
+                query_token_count: query_tokens.len(),
             };
 
             let surface = compute_surface(system, &query_result);

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use am_core::{
@@ -30,9 +30,10 @@ struct ServerState {
     system: DAESystem,
     store: BrainStore,
     rng: SmallRng,
-    /// Neighborhood IDs already returned in this session (process lifetime).
-    /// Used to deduplicate non-decision neighborhoods across am_query calls.
-    session_recalled: HashSet<Uuid>,
+    /// Neighborhood recall counts this session (process lifetime).
+    /// Tracks how many times each neighborhood has been returned.
+    /// Non-decision neighborhoods get diminishing returns on repeated recalls.
+    session_recalled: HashMap<Uuid, u32>,
 }
 
 impl AmServer {
@@ -46,7 +47,7 @@ impl AmServer {
                 system,
                 store,
                 rng,
-                session_recalled: HashSet::new(),
+                session_recalled: HashMap::new(),
             })),
             tool_router: Self::tool_router(),
         })
@@ -98,6 +99,11 @@ struct ActivateResponseRequest {
 struct SalientRequest {
     /// Text to mark as conscious memory (may contain salient tags)
     text: String,
+    /// Optional list of neighborhood UUIDs that this new memory supersedes.
+    /// Superseded neighborhoods are permanently excluded from future recall.
+    /// Use recalled_ids from am_query to identify which memories to replace.
+    #[serde(default)]
+    supersedes: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -265,9 +271,9 @@ impl AmServer {
             (json, ids)
         };
 
-        // Record returned neighborhood IDs for session dedup
+        // Increment recall count for returned neighborhood IDs (diminishing returns)
         for id in new_ids {
-            state.session_recalled.insert(id);
+            *state.session_recalled.entry(id).or_insert(0) += 1;
         }
 
         Ok(CallToolResult::success(vec![Content::text(
@@ -315,7 +321,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Mark an insight as conscious memory — something worth remembering across sessions and across projects. Use for: architecture decisions, user preferences, recurring patterns, hard-won debugging insights, project conventions. These surface as CONSCIOUS RECALL in future queries. Be selective — mark only genuinely reusable insights, not routine facts. Writes to brain-wide memory, queryable from any project."
+        description = "Mark an insight as conscious memory — something worth remembering across sessions and across projects. Use for: architecture decisions, user preferences, recurring patterns, hard-won debugging insights, project conventions. These surface as CONSCIOUS RECALL in future queries. Be selective — mark only genuinely reusable insights, not routine facts. Writes to brain-wide memory, queryable from any project. To replace outdated memories, pass their UUIDs (from am_query recalled_ids) in the supersedes array."
     )]
     async fn am_salient(
         &self,
@@ -327,25 +333,55 @@ impl AmServer {
         } = &mut *state;
 
         let stored = extract_salient(system, &req.text, rng);
-        let stored = if stored == 0 {
+        let new_id = if stored == 0 {
             // No <salient> tags found — mark the whole text as salient
             // with automatic type detection from DECISION:/PREFERENCE: prefix
-            mark_salient_typed(system, &req.text, rng);
+            let id = mark_salient_typed(system, &req.text, rng);
             if let Err(e) = store.save_system(system) {
                 tracing::error!("failed to persist after salient: {e}");
             }
-            1u32
+            Some(id)
         } else {
             if let Err(e) = store.save_system(system) {
                 tracing::error!("failed to persist after salient: {e}");
             }
-            stored
+            None
         };
+        let stored = if stored == 0 { 1u32 } else { stored };
 
-        let result = serde_json::json!({
+        // Process supersedes: mark old neighborhoods as superseded by the new one
+        let mut superseded_count = 0u32;
+        if let Some(new_id) = new_id {
+            for old_id_str in &req.supersedes {
+                if let Ok(old_id) = Uuid::parse_str(old_id_str) {
+                    // Update in-memory
+                    if system.mark_superseded(old_id, new_id) {
+                        // Persist targeted update to SQLite
+                        if let Err(e) = store.store().mark_superseded(old_id, new_id) {
+                            tracing::error!("failed to persist supersession: {e}");
+                        }
+                        superseded_count += 1;
+                    } else {
+                        tracing::warn!("supersedes target not found: {old_id_str}");
+                    }
+                } else {
+                    tracing::warn!("invalid UUID in supersedes: {old_id_str}");
+                }
+            }
+        } else if !req.supersedes.is_empty() {
+            tracing::warn!(
+                "supersedes ignored: multiple salient tags produce multiple neighborhoods, \
+                 supersession only applies to single-neighborhood salient calls"
+            );
+        }
+
+        let mut result = serde_json::json!({
             "stored": stored,
             "stats": Self::stats_json(system),
         });
+        if superseded_count > 0 {
+            result["superseded"] = serde_json::json!(superseded_count);
+        }
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_default(),
@@ -765,6 +801,7 @@ mod tests {
         server
             .am_salient(Parameters(SalientRequest {
                 text: "quantum computing is revolutionary".to_string(),
+                supersedes: vec![],
             }))
             .await
             .unwrap();
@@ -801,6 +838,7 @@ mod tests {
         let result = server
             .am_salient(Parameters(SalientRequest {
                 text: "important insight about neural networks".to_string(),
+                supersedes: vec![],
             }))
             .await
             .unwrap();
@@ -823,6 +861,7 @@ mod tests {
         let result = server
             .am_salient(Parameters(SalientRequest {
                 text: "Normal text <salient>first insight</salient> middle <salient>second insight</salient> end".to_string(),
+                supersedes: vec![],
             }))
             .await
             .unwrap();
@@ -974,6 +1013,7 @@ mod tests {
         server
             .am_salient(Parameters(SalientRequest {
                 text: "key insight".to_string(),
+                supersedes: vec![],
             }))
             .await
             .unwrap();
@@ -1014,6 +1054,80 @@ mod tests {
         assert!(json.get("stats").is_some());
         // The orphaned buffer should have been flushed into an episode
         assert_eq!(json["stats"]["episodes"], 1);
+    }
+
+    #[tokio::test]
+    async fn test_am_salient_supersedes_old_memory() {
+        let server = make_server();
+
+        // Create an initial conscious memory
+        let result1 = server
+            .am_salient(Parameters(SalientRequest {
+                text: "deployment uses monolith architecture pattern".to_string(),
+                supersedes: vec![],
+            }))
+            .await
+            .unwrap();
+        let json1 = parse_result(&result1);
+        assert_eq!(json1["stored"], 1);
+
+        // Query to get the recalled_ids of the old memory
+        let query_result = server
+            .am_query(Parameters(QueryRequest {
+                text: "deployment architecture pattern".to_string(),
+                max_tokens: None,
+            }))
+            .await
+            .unwrap();
+        let query_json = parse_result(&query_result);
+        let old_ids: Vec<String> = query_json["recalled_ids"]["conscious"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            !old_ids.is_empty(),
+            "should have conscious recall IDs from the first memory"
+        );
+
+        // Create a new memory that supersedes the old one
+        let result2 = server
+            .am_salient(Parameters(SalientRequest {
+                text: "deployment uses microservices architecture pattern".to_string(),
+                supersedes: old_ids.clone(),
+            }))
+            .await
+            .unwrap();
+        let json2 = parse_result(&result2);
+        assert_eq!(json2["stored"], 1);
+        assert_eq!(
+            json2["superseded"],
+            serde_json::json!(old_ids.len()),
+            "should report superseded count"
+        );
+
+        // Query again — the old memory should not appear
+        let query_result2 = server
+            .am_query(Parameters(QueryRequest {
+                text: "deployment architecture pattern".to_string(),
+                max_tokens: None,
+            }))
+            .await
+            .unwrap();
+        let query_json2 = parse_result(&query_result2);
+        let context = query_json2["context"].as_str().unwrap_or("");
+
+        assert!(
+            !context.contains("monolith"),
+            "superseded memory should not appear in recall, got:\n{}",
+            context,
+        );
+        assert!(
+            context.contains("microservices"),
+            "replacement memory should appear in recall, got:\n{}",
+            context,
+        );
     }
 
     #[test]

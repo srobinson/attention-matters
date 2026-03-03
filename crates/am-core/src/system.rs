@@ -53,6 +53,10 @@ pub struct DAESystem {
     pub episodes: Vec<Episode>,
     pub conscious_episode: Episode,
     pub agent_name: String,
+    /// Monotonic counter for epoch assignment. Each new neighborhood gets the
+    /// current value, then it increments.
+    #[serde(default)]
+    pub next_epoch: u64,
 
     #[serde(skip)]
     word_neighborhood_index: HashMap<String, HashSet<Uuid>>,
@@ -72,6 +76,7 @@ impl DAESystem {
             episodes: Vec::new(),
             conscious_episode: Episode::new_conscious(),
             agent_name: agent_name.to_string(),
+            next_epoch: 0,
             word_neighborhood_index: HashMap::new(),
             word_occurrence_index: HashMap::new(),
             neighborhood_index: HashMap::new(),
@@ -226,6 +231,7 @@ impl DAESystem {
         let tokens = tokenize(text);
         let mut neighborhood = Neighborhood::from_tokens(&tokens, None, text, rng);
         neighborhood.neighborhood_type = nbhd_type;
+        neighborhood.epoch = self.assign_epoch();
 
         for occ in &mut neighborhood.occurrences {
             occ.activate();
@@ -237,10 +243,59 @@ impl DAESystem {
         id
     }
 
-    /// Add a subconscious episode.
-    pub fn add_episode(&mut self, episode: Episode) {
+    /// Assign the next epoch value and increment the counter.
+    fn assign_epoch(&mut self) -> u64 {
+        let epoch = self.next_epoch;
+        self.next_epoch += 1;
+        epoch
+    }
+
+    /// Add a subconscious episode. Assigns epochs to any neighborhoods
+    /// that still have the default epoch 0 (i.e., freshly created).
+    ///
+    /// INVARIANT: Loaded neighborhoods (from Store or import) must not pass
+    /// through this method — they go via `episodes.push()` + `sync_next_epoch()`
+    /// to preserve their original epochs. This method is only for new episodes
+    /// created during the current session.
+    pub fn add_episode(&mut self, mut episode: Episode) {
+        for nbhd in &mut episode.neighborhoods {
+            if nbhd.epoch == 0 {
+                nbhd.epoch = self.assign_epoch();
+            }
+        }
         self.episodes.push(episode);
         self.index_dirty = true;
+    }
+
+    /// Mark a neighborhood as superseded by another.
+    /// Returns true if the neighborhood was found and marked.
+    pub fn mark_superseded(&mut self, old_id: Uuid, new_id: Uuid) -> bool {
+        self.ensure_indexes();
+        if let Some(n_ref) = self.neighborhood_index.get(&old_id).copied() {
+            let episode = if n_ref.is_conscious() {
+                &mut self.conscious_episode
+            } else {
+                &mut self.episodes[n_ref.episode_idx]
+            };
+            episode.neighborhoods[n_ref.neighborhood_idx].superseded_by = Some(new_id);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Sync `next_epoch` to be above the maximum epoch found in the system.
+    /// Call after loading from store to ensure new neighborhoods get unique epochs.
+    pub fn sync_next_epoch(&mut self) {
+        let max_epoch = self
+            .episodes
+            .iter()
+            .flat_map(|e| e.neighborhoods.iter())
+            .chain(self.conscious_episode.neighborhoods.iter())
+            .map(|n| n.epoch)
+            .max()
+            .unwrap_or(0);
+        self.next_epoch = self.next_epoch.max(max_epoch + 1);
     }
 
     /// Get immutable occurrence by ref.
@@ -462,5 +517,83 @@ mod tests {
 
         let con_ep = sys.get_episode_for_occurrence(result.conscious[0]);
         assert!(con_ep.is_conscious);
+    }
+
+    #[test]
+    fn test_epoch_increments_on_conscious() {
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        sys.add_to_conscious("first memory", &mut rng);
+        sys.add_to_conscious("second memory", &mut rng);
+        sys.add_to_conscious("third memory", &mut rng);
+
+        assert_eq!(sys.conscious_episode.neighborhoods[0].epoch, 0);
+        assert_eq!(sys.conscious_episode.neighborhoods[1].epoch, 1);
+        assert_eq!(sys.conscious_episode.neighborhoods[2].epoch, 2);
+        assert_eq!(sys.next_epoch, 3);
+    }
+
+    #[test]
+    fn test_epoch_increments_on_episode() {
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // First conscious neighborhood gets epoch 0
+        sys.add_to_conscious("conscious", &mut rng);
+
+        // Episode neighborhoods get epochs 1, 2
+        let mut ep = Episode::new("ep1");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["hello", "world"]),
+            None,
+            "hello world",
+            &mut rng,
+        ));
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["foo", "bar"]),
+            None,
+            "foo bar",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        assert_eq!(sys.conscious_episode.neighborhoods[0].epoch, 0);
+        assert_eq!(sys.episodes[0].neighborhoods[0].epoch, 1);
+        assert_eq!(sys.episodes[0].neighborhoods[1].epoch, 2);
+        assert_eq!(sys.next_epoch, 3);
+    }
+
+    #[test]
+    fn test_sync_next_epoch() {
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        sys.add_to_conscious("first", &mut rng);
+        sys.add_to_conscious("second", &mut rng);
+        assert_eq!(sys.next_epoch, 2);
+
+        // Simulate loading from store: reset next_epoch then sync
+        sys.next_epoch = 0;
+        sys.sync_next_epoch();
+        assert_eq!(sys.next_epoch, 2); // max epoch is 1, so next is 2
+    }
+
+    #[test]
+    fn test_epoch_preserved_on_loaded_episode() {
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Simulate a loaded episode with pre-assigned epochs
+        let mut ep = Episode::new("loaded");
+        let mut nbhd = Neighborhood::from_tokens(&to_tokens(&["hello"]), None, "hello", &mut rng);
+        nbhd.epoch = 42; // pre-assigned from store
+        ep.add_neighborhood(nbhd);
+        // Bypass add_episode to simulate direct load (epoch != 0)
+        sys.episodes.push(ep);
+        sys.sync_next_epoch();
+
+        assert_eq!(sys.next_epoch, 43);
+        assert_eq!(sys.episodes[0].neighborhoods[0].epoch, 42);
     }
 }
