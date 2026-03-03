@@ -36,7 +36,7 @@ pub struct CategorizedIds {
 pub struct ContextResult {
     pub context: String,
     pub metrics: ContextMetrics,
-    /// Neighborhood IDs included in this result (for session dedup tracking).
+    /// Neighborhood IDs included in this result (for session recall tracking).
     pub included_ids: Vec<Uuid>,
     /// Neighborhood IDs categorized by recall type (for am_feedback).
     pub recalled_ids: CategorizedIds,

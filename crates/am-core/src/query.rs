@@ -60,8 +60,13 @@ impl QueryEngine {
     pub fn process_query(system: &mut DAESystem, query: &str) -> QueryResult {
         let activation = Self::activate(system, query);
 
-        // Weight floor for large queries
-        let query_token_count = tokenize(query).len();
+        // Unique token count (matches activate's dedup and batch_query's HashSet)
+        let query_token_count = {
+            let tokens = tokenize(query);
+            let unique: std::collections::HashSet<String> =
+                tokens.into_iter().map(|t| t.to_lowercase()).collect();
+            unique.len()
+        };
         let total_nbhd = system.total_neighborhoods();
 
         let (drift_sub, drift_con) = if query_token_count > 50 {
