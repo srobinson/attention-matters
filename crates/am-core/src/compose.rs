@@ -1876,9 +1876,7 @@ mod tests {
         // Older episode
         let mut ep1 = Episode::new("Old discussion");
         ep1.add_neighborhood(Neighborhood::from_tokens(
-            &to_tokens(&[
-                "database", "strategy", "uses", "sqlite", "for", "storage",
-            ]),
+            &to_tokens(&["database", "strategy", "uses", "sqlite", "for", "storage"]),
             None,
             "database strategy uses sqlite for storage",
             &mut rng,
@@ -1888,9 +1886,7 @@ mod tests {
         // Newer episode with contradicting info
         let mut ep2 = Episode::new("New discussion");
         ep2.add_neighborhood(Neighborhood::from_tokens(
-            &to_tokens(&[
-                "database", "strategy", "uses", "postgres", "for", "storage",
-            ]),
+            &to_tokens(&["database", "strategy", "uses", "postgres", "for", "storage"]),
             None,
             "database strategy uses postgres for storage",
             &mut rng,
