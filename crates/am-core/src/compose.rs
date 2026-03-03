@@ -218,6 +218,26 @@ fn format_entry(
 
 const ENTRY_HEADER_OVERHEAD_TOKENS: usize = 20;
 
+/// Apply diminishing returns to previously-recalled candidates.
+/// Decisions/Preferences are exempt — they always surface at full score.
+fn apply_diminishing_returns(
+    candidates: Vec<RankedCandidate>,
+    recalled: &HashMap<Uuid, u32>,
+) -> Vec<RankedCandidate> {
+    candidates
+        .into_iter()
+        .map(|mut c| {
+            if let Some(&count) = recalled.get(&c.neighborhood_id)
+                && c.neighborhood_type != NeighborhoodType::Decision
+                && c.neighborhood_type != NeighborhoodType::Preference
+            {
+                c.score *= 1.0 / (1.0 + count as f64);
+            }
+            c
+        })
+        .collect()
+}
+
 /// Compose human-readable context from surface and activation results.
 ///
 /// `session_recalled` tracks how many times each neighborhood ID has been
@@ -237,22 +257,7 @@ pub fn compose_context(
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
-
-    // Apply diminishing returns to previously-recalled candidates
-    let candidates: Vec<RankedCandidate> = candidates
-        .into_iter()
-        .map(|mut c| {
-            if let Some(&count) = recalled.get(&c.neighborhood_id) {
-                // Decisions/Preferences are exempt from diminishing returns
-                if c.neighborhood_type != NeighborhoodType::Decision
-                    && c.neighborhood_type != NeighborhoodType::Preference
-                {
-                    c.score *= 1.0 / (1.0 + count as f64);
-                }
-            }
-            c
-        })
-        .collect();
+    let candidates = apply_diminishing_returns(candidates, recalled);
 
     let mut selected_ids: HashSet<Uuid> = HashSet::new();
     let mut parts: Vec<String> = Vec::new();
@@ -375,22 +380,7 @@ pub fn compose_context_budgeted(
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
-
-    // Apply diminishing returns to previously-recalled candidates
-    let candidates: Vec<RankedCandidate> = candidates
-        .into_iter()
-        .map(|mut c| {
-            if let Some(&count) = recalled.get(&c.neighborhood_id) {
-                // Decisions/Preferences are exempt from diminishing returns
-                if c.neighborhood_type != NeighborhoodType::Decision
-                    && c.neighborhood_type != NeighborhoodType::Preference
-                {
-                    c.score *= 1.0 / (1.0 + count as f64);
-                }
-            }
-            c
-        })
-        .collect();
+    let candidates = apply_diminishing_returns(candidates, recalled);
 
     // Split candidates by category, sorted by score desc
     let mut conscious: Vec<&RankedCandidate> = candidates
@@ -702,7 +692,17 @@ fn score_neighborhoods(
 
     // Pre-collect data to avoid borrow conflicts.
     // Superseded neighborhoods are excluded — they've been explicitly replaced.
-    let data: Vec<(Uuid, usize, String, u32, f64, NeighborhoodType, u64)> = refs
+    struct OccData {
+        nbhd_id: Uuid,
+        episode_idx: usize,
+        word: String,
+        activation_count: u32,
+        plasticity: f64,
+        nbhd_type: NeighborhoodType,
+        epoch: u64,
+    }
+
+    let data: Vec<OccData> = refs
         .iter()
         .filter_map(|r| {
             let occ = system.get_occurrence(*r);
@@ -710,26 +710,26 @@ fn score_neighborhoods(
             if nbhd.superseded_by.is_some() {
                 return None;
             }
-            Some((
-                nbhd.id,
-                if r.is_conscious() {
+            Some(OccData {
+                nbhd_id: nbhd.id,
+                episode_idx: if r.is_conscious() {
                     usize::MAX
                 } else {
                     r.episode_idx
                 },
-                occ.word.to_lowercase(),
-                occ.activation_count,
-                occ.plasticity(),
-                nbhd.neighborhood_type,
-                nbhd.epoch,
-            ))
+                word: occ.word.to_lowercase(),
+                activation_count: occ.activation_count,
+                plasticity: occ.plasticity(),
+                nbhd_type: nbhd.neighborhood_type,
+                epoch: nbhd.epoch,
+            })
         })
         .collect();
 
     // Pre-collect recency decay per episode_idx
     let recency_cache: HashMap<usize, f64> = data
         .iter()
-        .map(|(_, ep_idx, _, _, _, _, _)| *ep_idx)
+        .map(|d| d.episode_idx)
         .collect::<HashSet<_>>()
         .into_iter()
         .map(|ep_idx| {
@@ -741,10 +741,7 @@ fn score_neighborhoods(
 
     // For conscious neighborhoods, compute recency boost based on position.
     // Later neighborhoods (higher index) were added more recently.
-    let conscious_count = if data
-        .iter()
-        .any(|(_, ep_idx, _, _, _, _, _)| *ep_idx == usize::MAX)
-    {
+    let conscious_count = if data.iter().any(|d| d.episode_idx == usize::MAX) {
         system.conscious_episode.neighborhoods.len() as f64
     } else {
         1.0
@@ -765,31 +762,31 @@ fn score_neighborhoods(
         HashMap::new()
     };
 
-    for (nbhd_id, ep_idx, word, activation_count, plasticity, nbhd_type, epoch) in &data {
-        let weight = system.get_word_weight(word);
+    for d in &data {
+        let weight = system.get_word_weight(&d.word);
 
         let entry = scored
-            .entry(*nbhd_id)
+            .entry(d.nbhd_id)
             .or_insert_with(|| ScoredNeighborhood {
-                neighborhood_id: *nbhd_id,
-                episode_idx: *ep_idx,
+                neighborhood_id: d.nbhd_id,
+                episode_idx: d.episode_idx,
                 score: 0.0,
                 activated_count: 0,
                 words: HashSet::new(),
                 max_word_weight: 0.0,
                 max_plasticity: 0.0,
-                neighborhood_type: *nbhd_type,
-                epoch: *epoch,
+                neighborhood_type: d.nbhd_type,
+                epoch: d.epoch,
             });
 
-        entry.score += weight * *activation_count as f64;
-        entry.words.insert(word.clone());
+        entry.score += weight * d.activation_count as f64;
+        entry.words.insert(d.word.clone());
         entry.activated_count += 1;
         if weight > entry.max_word_weight {
             entry.max_word_weight = weight;
         }
-        if *plasticity > entry.max_plasticity {
-            entry.max_plasticity = *plasticity;
+        if d.plasticity > entry.max_plasticity {
+            entry.max_plasticity = d.plasticity;
         }
     }
 
@@ -855,12 +852,13 @@ fn overlap_suppress(
     sub_scored: &mut HashMap<Uuid, ScoredNeighborhood>,
     system: &mut DAESystem,
 ) {
-    // Collect word sets and epochs from all scored neighborhoods
-    let mut info: Vec<(Uuid, HashSet<String>, u64)> = Vec::new();
+    // Collect references to word sets and epochs — no cloning needed since
+    // we only read words during pairwise comparison, then mutate scores after.
+    let mut info: Vec<(Uuid, &HashSet<String>, u64)> = Vec::new();
     let mut seen: HashSet<Uuid> = HashSet::new();
     for (id, sn) in con_scored.iter().chain(sub_scored.iter()) {
         if seen.insert(*id) {
-            info.push((*id, sn.words.clone(), sn.epoch));
+            info.push((*id, &sn.words, sn.epoch));
         }
     }
 
@@ -872,7 +870,7 @@ fn overlap_suppress(
     let mut suppress: HashSet<Uuid> = HashSet::new();
     for i in 0..info.len() {
         for j in (i + 1)..info.len() {
-            let overlap = idf_weighted_overlap(&info[i].1, &info[j].1, system);
+            let overlap = idf_weighted_overlap(info[i].1, info[j].1, system);
             if overlap > OVERLAP_THRESHOLD {
                 let epoch_i = info[i].2;
                 let epoch_j = info[j].2;
