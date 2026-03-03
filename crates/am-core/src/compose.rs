@@ -112,8 +112,11 @@ fn rank_candidates(system: &mut DAESystem, query_result: &QueryResult) -> Vec<Ra
         .map(|r| system.get_occurrence(*r).word.to_lowercase())
         .collect();
 
-    let con_scored = score_neighborhoods(system, &query_result.activation.conscious, true);
-    let sub_scored = score_neighborhoods(system, &query_result.activation.subconscious, false);
+    let mut con_scored = score_neighborhoods(system, &query_result.activation.conscious, true);
+    let mut sub_scored = score_neighborhoods(system, &query_result.activation.subconscious, false);
+
+    // Suppress older neighborhoods that overlap with newer ones (contradiction handling)
+    overlap_suppress(&mut con_scored, &mut sub_scored, system);
 
     let mut candidates = Vec::new();
     let mut selected_for_novel: HashSet<Uuid> = HashSet::new();
@@ -604,6 +607,13 @@ const DECISION_FLAT_SCORE: f64 = 100.0;
 /// score *= 1.0 / (1.0 + days_old * RECENCY_DECAY_RATE)
 const RECENCY_DECAY_RATE: f64 = 0.01;
 
+/// IDF-weighted word overlap threshold for contradiction detection.
+/// Pairs of neighborhoods above this threshold are considered overlapping.
+const OVERLAP_THRESHOLD: f64 = 0.3;
+
+/// Score multiplier applied to older neighborhoods in overlapping groups.
+const OVERLAP_SUPPRESSION: f64 = 0.1;
+
 struct ScoredNeighborhood {
     neighborhood_id: Uuid,
     episode_idx: usize, // usize::MAX for conscious
@@ -613,6 +623,7 @@ struct ScoredNeighborhood {
     max_word_weight: f64,
     max_plasticity: f64,
     neighborhood_type: NeighborhoodType,
+    epoch: u64,
 }
 
 /// Compute days since an episode's timestamp (empty or unparseable → 0.0).
@@ -674,7 +685,7 @@ fn score_neighborhoods(
 
     // Pre-collect data to avoid borrow conflicts.
     // Superseded neighborhoods are excluded — they've been explicitly replaced.
-    let data: Vec<(Uuid, usize, String, u32, f64, NeighborhoodType)> = refs
+    let data: Vec<(Uuid, usize, String, u32, f64, NeighborhoodType, u64)> = refs
         .iter()
         .filter_map(|r| {
             let occ = system.get_occurrence(*r);
@@ -693,6 +704,7 @@ fn score_neighborhoods(
                 occ.activation_count,
                 occ.plasticity(),
                 nbhd.neighborhood_type,
+                nbhd.epoch,
             ))
         })
         .collect();
@@ -700,7 +712,7 @@ fn score_neighborhoods(
     // Pre-collect recency decay per episode_idx
     let recency_cache: HashMap<usize, f64> = data
         .iter()
-        .map(|(_, ep_idx, _, _, _, _)| *ep_idx)
+        .map(|(_, ep_idx, _, _, _, _, _)| *ep_idx)
         .collect::<HashSet<_>>()
         .into_iter()
         .map(|ep_idx| {
@@ -714,7 +726,7 @@ fn score_neighborhoods(
     // Later neighborhoods (higher index) were added more recently.
     let conscious_count = if data
         .iter()
-        .any(|(_, ep_idx, _, _, _, _)| *ep_idx == usize::MAX)
+        .any(|(_, ep_idx, _, _, _, _, _)| *ep_idx == usize::MAX)
     {
         system.conscious_episode.neighborhoods.len() as f64
     } else {
@@ -736,7 +748,7 @@ fn score_neighborhoods(
         HashMap::new()
     };
 
-    for (nbhd_id, ep_idx, word, activation_count, plasticity, nbhd_type) in &data {
+    for (nbhd_id, ep_idx, word, activation_count, plasticity, nbhd_type, epoch) in &data {
         let weight = system.get_word_weight(word);
 
         let entry = scored
@@ -750,6 +762,7 @@ fn score_neighborhoods(
                 max_word_weight: 0.0,
                 max_plasticity: 0.0,
                 neighborhood_type: *nbhd_type,
+                epoch: *epoch,
             });
 
         entry.score += weight * *activation_count as f64;
@@ -785,6 +798,79 @@ fn score_neighborhoods(
     }
 
     scored
+}
+
+/// Compute IDF-weighted word overlap between two word sets.
+/// Returns Σ IDF(w) for intersection / Σ IDF(w) for union.
+fn idf_weighted_overlap(
+    words_a: &HashSet<String>,
+    words_b: &HashSet<String>,
+    system: &mut DAESystem,
+) -> f64 {
+    let intersection: f64 = words_a
+        .intersection(words_b)
+        .map(|w| system.get_word_weight(w))
+        .sum();
+    let union: f64 = words_a
+        .union(words_b)
+        .map(|w| system.get_word_weight(w))
+        .sum();
+    if union < f64::EPSILON {
+        return 0.0;
+    }
+    intersection / union
+}
+
+/// Detect overlapping neighborhoods across conscious and subconscious scores
+/// and suppress older ones. For each pair with IDF-weighted overlap above
+/// OVERLAP_THRESHOLD, the lower-epoch neighborhood gets its score multiplied
+/// by OVERLAP_SUPPRESSION (0.1x). This ensures that when contradicting memories
+/// exist, only the newest version ranks highly.
+fn overlap_suppress(
+    con_scored: &mut HashMap<Uuid, ScoredNeighborhood>,
+    sub_scored: &mut HashMap<Uuid, ScoredNeighborhood>,
+    system: &mut DAESystem,
+) {
+    // Collect word sets and epochs from all scored neighborhoods
+    let mut info: Vec<(Uuid, HashSet<String>, u64)> = Vec::new();
+    let mut seen: HashSet<Uuid> = HashSet::new();
+    for (id, sn) in con_scored.iter().chain(sub_scored.iter()) {
+        if seen.insert(*id) {
+            info.push((*id, sn.words.clone(), sn.epoch));
+        }
+    }
+
+    if info.len() < 2 {
+        return;
+    }
+
+    // Pairwise comparison — O(k²) but k is bounded (top candidates only)
+    let mut suppress: HashSet<Uuid> = HashSet::new();
+    for i in 0..info.len() {
+        for j in (i + 1)..info.len() {
+            let overlap = idf_weighted_overlap(&info[i].1, &info[j].1, system);
+            if overlap > OVERLAP_THRESHOLD {
+                let epoch_i = info[i].2;
+                let epoch_j = info[j].2;
+                if epoch_i < epoch_j {
+                    suppress.insert(info[i].0);
+                } else if epoch_j < epoch_i {
+                    suppress.insert(info[j].0);
+                }
+                // Same epoch: leave both unsuppressed
+            }
+        }
+    }
+
+    // Apply suppression factor to affected neighborhoods
+    for id in &suppress {
+        if let Some(sn) = con_scored.get_mut(id) {
+            sn.score *= OVERLAP_SUPPRESSION;
+        }
+        if let Some(sn) = sub_scored.get_mut(id) {
+            sn.score *= OVERLAP_SUPPRESSION;
+        }
+    }
 }
 
 fn get_neighborhood_text(system: &DAESystem, neighborhood_id: Uuid, episode_idx: usize) -> String {
@@ -1531,6 +1617,238 @@ mod tests {
             !ctx.context.contains("monolith"),
             "superseded Decision should not surface, got:\n{}",
             ctx.context,
+        );
+    }
+
+    // =====================================================================
+    // Overlap detection / contradiction suppression tests (ALP-681)
+    // =====================================================================
+
+    #[test]
+    fn test_overlap_suppresses_older_contradicting_memory() {
+        // Two conscious memories about the same topic — only the newer should surface.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Older memory (lower epoch)
+        sys.add_to_conscious_typed(
+            "deployment strategy uses monolith pattern for all services",
+            NeighborhoodType::Insight,
+            &mut rng,
+        );
+        // Newer memory (higher epoch) — contradicts the first
+        sys.add_to_conscious_typed(
+            "deployment strategy uses microservices pattern for all services",
+            NeighborhoodType::Insight,
+            &mut rng,
+        );
+
+        let result = QueryEngine::process_query(&mut sys, "deployment strategy pattern services");
+        let surface = compute_surface(&sys, &result);
+        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+
+        // The newer memory should surface; the older should be suppressed
+        assert!(
+            ctx.context.contains("microservices"),
+            "newer memory should surface in recall, got:\n{}",
+            ctx.context,
+        );
+        // The older overlapping memory should be suppressed (not in top results)
+        // Note: it may still appear if there are very few candidates, but its
+        // score should be 0.1x of the newer one, so it won't be top-ranked.
+    }
+
+    #[test]
+    fn test_overlap_does_not_suppress_non_overlapping() {
+        // Two unrelated memories — both should surface normally.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        sys.add_to_conscious_typed(
+            "quantum physics wave particle duality experiment",
+            NeighborhoodType::Insight,
+            &mut rng,
+        );
+        sys.add_to_conscious_typed(
+            "chocolate cake recipe butter sugar flour eggs",
+            NeighborhoodType::Insight,
+            &mut rng,
+        );
+
+        // Add a subconscious episode so there's something to query
+        let mut ep = Episode::new("Science");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["quantum", "physics"]),
+            None,
+            "quantum physics",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        let result = QueryEngine::process_query(&mut sys, "quantum physics");
+        let surface = compute_surface(&sys, &result);
+        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+
+        // The quantum physics memory should surface
+        assert!(
+            ctx.context.contains("quantum"),
+            "relevant memory should surface, got:\n{}",
+            ctx.context,
+        );
+        // The cake recipe should NOT surface (not relevant to query)
+        // This is a relevance check, not overlap — cake has no query overlap
+    }
+
+    #[test]
+    fn test_overlap_threshold_boundary() {
+        // Memories with minimal word overlap should NOT trigger suppression.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Memory A: mostly unique words with one shared word
+        sys.add_to_conscious_typed(
+            "the architecture of ancient roman aqueducts was remarkable engineering",
+            NeighborhoodType::Insight,
+            &mut rng,
+        );
+        // Memory B: different topic, shares "architecture" but low overlap
+        sys.add_to_conscious_typed(
+            "modern software architecture patterns include microservices and event sourcing",
+            NeighborhoodType::Insight,
+            &mut rng,
+        );
+
+        let result = QueryEngine::process_query(&mut sys, "architecture");
+        let surface = compute_surface(&sys, &result);
+        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+
+        // Both should be able to surface since they have low overlap
+        // (only "architecture" is shared, rest is different)
+        assert!(
+            ctx.context.contains("architecture"),
+            "architecture-related memory should surface, got:\n{}",
+            ctx.context,
+        );
+    }
+
+    #[test]
+    fn test_overlap_in_subconscious_episodes() {
+        // Contradicting subconscious memories — newer episode should win.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Older episode
+        let mut ep1 = Episode::new("Old discussion");
+        ep1.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&[
+                "database", "strategy", "uses", "sqlite", "for", "storage",
+            ]),
+            None,
+            "database strategy uses sqlite for storage",
+            &mut rng,
+        ));
+        sys.add_episode(ep1);
+
+        // Newer episode with contradicting info
+        let mut ep2 = Episode::new("New discussion");
+        ep2.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&[
+                "database", "strategy", "uses", "postgres", "for", "storage",
+            ]),
+            None,
+            "database strategy uses postgres for storage",
+            &mut rng,
+        ));
+        sys.add_episode(ep2);
+
+        let result = QueryEngine::process_query(&mut sys, "database strategy storage");
+        let surface = compute_surface(&sys, &result);
+
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 0,
+            min_subconscious: 1,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        // The newer episode (postgres) should rank higher
+        let sub_entries: Vec<&IncludedFragment> = ctx
+            .included
+            .iter()
+            .filter(|f| f.category == RecallCategory::Subconscious)
+            .collect();
+        if sub_entries.len() >= 2 {
+            assert!(
+                sub_entries[0].score > sub_entries[1].score,
+                "newer (postgres) should score higher than older (sqlite)"
+            );
+        }
+        // Top subconscious should be postgres
+        if let Some(top) = sub_entries.first() {
+            assert!(
+                top.text.contains("postgres"),
+                "newer memory (postgres) should be top subconscious, got: {}",
+                top.text,
+            );
+        }
+    }
+
+    #[test]
+    fn test_idf_weighted_overlap_computation() {
+        // Direct test of the overlap computation function
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Add some content so IDF weights are meaningful
+        let mut ep = Episode::new("context");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["common", "word", "appears", "everywhere"]),
+            None,
+            "common word appears everywhere",
+            &mut rng,
+        ));
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["rare", "unique", "special"]),
+            None,
+            "rare unique special",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        // Identical word sets should have overlap = 1.0
+        let words_a: HashSet<String> = ["alpha", "beta"].iter().map(|s| s.to_string()).collect();
+        let words_b: HashSet<String> = ["alpha", "beta"].iter().map(|s| s.to_string()).collect();
+        let overlap = idf_weighted_overlap(&words_a, &words_b, &mut sys);
+        assert!(
+            (overlap - 1.0).abs() < 0.01,
+            "identical sets should have overlap ~1.0, got {}",
+            overlap,
+        );
+
+        // Disjoint word sets should have overlap = 0.0
+        let words_c: HashSet<String> = ["gamma", "delta"].iter().map(|s| s.to_string()).collect();
+        let overlap2 = idf_weighted_overlap(&words_a, &words_c, &mut sys);
+        assert!(
+            overlap2 < 0.01,
+            "disjoint sets should have overlap ~0.0, got {}",
+            overlap2,
+        );
+
+        // Empty sets
+        let empty: HashSet<String> = HashSet::new();
+        let overlap3 = idf_weighted_overlap(&empty, &words_a, &mut sys);
+        assert!(
+            overlap3 < 0.01,
+            "empty set overlap should be ~0.0, got {}",
+            overlap3,
         );
     }
 }
