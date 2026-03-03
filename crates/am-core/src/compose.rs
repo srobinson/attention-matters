@@ -25,6 +25,20 @@ pub struct ContextMetrics {
     pub novel: u32,
 }
 
+/// Estimated LLM token cost of recalled content, broken down by category.
+/// Uses chars/4 approximation which is within ~20% of Claude BPE tokenization.
+pub struct TokenEstimate {
+    pub conscious: usize,
+    pub subconscious: usize,
+    pub novel: usize,
+    pub total: usize,
+}
+
+/// Estimate LLM tokens from text length (chars / 4, rounded up).
+fn estimate_llm_tokens(text: &str) -> usize {
+    text.len().div_ceil(4)
+}
+
 /// Neighborhood IDs categorized by recall type — for feedback tracking.
 pub struct CategorizedIds {
     pub conscious: Vec<Uuid>,
@@ -40,6 +54,8 @@ pub struct ContextResult {
     pub included_ids: Vec<Uuid>,
     /// Neighborhood IDs categorized by recall type (for am_feedback).
     pub recalled_ids: CategorizedIds,
+    /// Estimated LLM token cost of the recalled content.
+    pub token_estimate: TokenEstimate,
 }
 
 /// Configuration for budget-constrained context composition.
@@ -85,6 +101,8 @@ pub struct BudgetedContextResult {
     pub excluded_count: usize,
     pub tokens_used: usize,
     pub tokens_budget: usize,
+    /// Estimated LLM token cost of the recalled content.
+    pub token_estimate: TokenEstimate,
 }
 
 // -- Shared internals --
@@ -270,6 +288,10 @@ pub fn compose_context(
     let mut subconscious_ids: Vec<Uuid> = Vec::new();
     let mut novel_ids: Vec<Uuid> = Vec::new();
 
+    let mut te_conscious: usize = 0;
+    let mut te_subconscious: usize = 0;
+    let mut te_novel: usize = 0;
+
     // Conscious: top 1
     let mut con: Vec<&RankedCandidate> = candidates
         .iter()
@@ -280,6 +302,7 @@ pub fn compose_context(
     if let Some(best) = con.first() {
         selected_ids.insert(best.neighborhood_id);
         conscious_ids.push(best.neighborhood_id);
+        te_conscious += estimate_llm_tokens(&best.text);
         let entry = format_entry(
             RecallCategory::Conscious,
             0,
@@ -303,6 +326,7 @@ pub fn compose_context(
     for (i, entry) in sub.iter().take(2).enumerate() {
         selected_ids.insert(entry.neighborhood_id);
         subconscious_ids.push(entry.neighborhood_id);
+        te_subconscious += estimate_llm_tokens(&entry.text);
         let ep_name = get_episode_name(system, entry.episode_idx);
         if !parts.is_empty() {
             parts.push(String::new());
@@ -330,6 +354,7 @@ pub fn compose_context(
     if let Some(best) = novel.first() {
         selected_ids.insert(best.neighborhood_id);
         novel_ids.push(best.neighborhood_id);
+        te_novel += estimate_llm_tokens(&best.text);
         let ep_name = get_episode_name(system, best.episode_idx);
         if !parts.is_empty() {
             parts.push(String::new());
@@ -354,6 +379,12 @@ pub fn compose_context(
             novel: novel_ids,
         },
         included_ids: selected_ids.into_iter().collect(),
+        token_estimate: TokenEstimate {
+            conscious: te_conscious,
+            subconscious: te_subconscious,
+            novel: te_novel,
+            total: te_conscious + te_subconscious + te_novel,
+        },
     }
 }
 
@@ -585,6 +616,23 @@ pub fn compose_context_budgeted(
         metrics.novel += 1;
     }
 
+    // Compute per-category token estimates from included fragments
+    let te_conscious: usize = included
+        .iter()
+        .filter(|f| f.category == RecallCategory::Conscious)
+        .map(|f| estimate_llm_tokens(&f.text))
+        .sum();
+    let te_subconscious: usize = included
+        .iter()
+        .filter(|f| f.category == RecallCategory::Subconscious)
+        .map(|f| estimate_llm_tokens(&f.text))
+        .sum();
+    let te_novel: usize = included
+        .iter()
+        .filter(|f| f.category == RecallCategory::Novel)
+        .map(|f| estimate_llm_tokens(&f.text))
+        .sum();
+
     BudgetedContextResult {
         context: parts.join("\n"),
         metrics,
@@ -592,6 +640,12 @@ pub fn compose_context_budgeted(
         excluded_count,
         tokens_used,
         tokens_budget: budget.max_tokens,
+        token_estimate: TokenEstimate {
+            conscious: te_conscious,
+            subconscious: te_subconscious,
+            novel: te_novel,
+            total: te_conscious + te_subconscious + te_novel,
+        },
     }
 }
 

@@ -258,6 +258,12 @@ impl AmServer {
                     "subconscious": sub_ids,
                     "novel": nov_ids,
                 },
+                "token_estimate": {
+                    "conscious": composed.token_estimate.conscious,
+                    "subconscious": composed.token_estimate.subconscious,
+                    "novel": composed.token_estimate.novel,
+                    "total": composed.token_estimate.total,
+                },
                 "budget": {
                     "tokens_used": composed.tokens_used,
                     "tokens_budget": composed.tokens_budget,
@@ -289,6 +295,12 @@ impl AmServer {
                     "conscious": recalled.conscious.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                     "subconscious": recalled.subconscious.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
                     "novel": recalled.novel.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+                },
+                "token_estimate": {
+                    "conscious": composed.token_estimate.conscious,
+                    "subconscious": composed.token_estimate.subconscious,
+                    "novel": composed.token_estimate.novel,
+                    "total": composed.token_estimate.total,
                 },
                 "stats": Self::stats_json(system),
             });
@@ -704,6 +716,12 @@ impl AmServer {
                         "subconscious": sub_ids,
                         "novel": nov_ids,
                     },
+                    "token_estimate": {
+                        "conscious": r.context.token_estimate.conscious,
+                        "subconscious": r.context.token_estimate.subconscious,
+                        "novel": r.context.token_estimate.novel,
+                        "total": r.context.token_estimate.total,
+                    },
                     "budget": {
                         "tokens_used": r.context.tokens_used,
                         "tokens_budget": r.context.tokens_budget,
@@ -872,6 +890,33 @@ mod tests {
 
         let stats = &json["stats"];
         assert!(stats["n"].as_u64().unwrap() > 0);
+
+        // Verify token_estimate field exists with per-category breakdown
+        let te = &json["token_estimate"];
+        assert!(
+            te.get("conscious").is_some(),
+            "should have token_estimate.conscious"
+        );
+        assert!(
+            te.get("subconscious").is_some(),
+            "should have token_estimate.subconscious"
+        );
+        assert!(
+            te.get("novel").is_some(),
+            "should have token_estimate.novel"
+        );
+        assert!(
+            te.get("total").is_some(),
+            "should have token_estimate.total"
+        );
+        // Total should be sum of categories
+        let total = te["total"].as_u64().unwrap();
+        let sum = te["conscious"].as_u64().unwrap()
+            + te["subconscious"].as_u64().unwrap()
+            + te["novel"].as_u64().unwrap();
+        assert_eq!(total, sum, "total should equal sum of categories");
+        // With content ingested, total should be > 0
+        assert!(total > 0, "token estimate should be positive with content");
     }
 
     #[tokio::test]

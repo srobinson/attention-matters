@@ -26,7 +26,7 @@ pub mod tokenizer;
 pub use batch::{BatchQueryEngine, BatchQueryRequest, BatchQueryResult};
 pub use compose::{
     BudgetConfig, BudgetedContextResult, CategorizedIds, ContextMetrics, ContextResult,
-    IncludedFragment, RecallCategory, compose_context, compose_context_budgeted,
+    IncludedFragment, RecallCategory, TokenEstimate, compose_context, compose_context_budgeted,
     detect_neighborhood_type, extract_salient, mark_salient_typed,
 };
 pub use constants::{
