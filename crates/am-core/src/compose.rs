@@ -672,13 +672,17 @@ fn score_neighborhoods(
 ) -> HashMap<Uuid, ScoredNeighborhood> {
     let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
 
-    // Pre-collect data to avoid borrow conflicts
+    // Pre-collect data to avoid borrow conflicts.
+    // Superseded neighborhoods are excluded — they've been explicitly replaced.
     let data: Vec<(Uuid, usize, String, u32, f64, NeighborhoodType)> = refs
         .iter()
-        .map(|r| {
+        .filter_map(|r| {
             let occ = system.get_occurrence(*r);
             let nbhd = system.get_neighborhood_for_occurrence(*r);
-            (
+            if nbhd.superseded_by.is_some() {
+                return None;
+            }
+            Some((
                 nbhd.id,
                 if r.is_conscious() {
                     usize::MAX
@@ -689,7 +693,7 @@ fn score_neighborhoods(
                 occ.activation_count,
                 occ.plasticity(),
                 nbhd.neighborhood_type,
-            )
+            ))
         })
         .collect();
 
@@ -1458,6 +1462,74 @@ mod tests {
         assert!(
             ctx.context.contains("[PREFERENCE]"),
             "preference type should have [PREFERENCE] prefix in output, got:\n{}",
+            ctx.context,
+        );
+    }
+
+    #[test]
+    fn test_superseded_neighborhood_excluded_from_recall() {
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Create two conscious memories about the same topic
+        let old_id = sys.add_to_conscious_typed(
+            "use approach alpha for deployment",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
+        let new_id = sys.add_to_conscious_typed(
+            "use approach beta for deployment instead",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
+
+        // Mark old as superseded
+        assert!(sys.mark_superseded(old_id, new_id));
+
+        // Query for deployment
+        let result = QueryEngine::process_query(&mut sys, "deployment approach");
+        let surface = compute_surface(&sys, &result);
+        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+
+        // The superseded memory (alpha) should not appear
+        assert!(
+            !ctx.context.contains("approach alpha"),
+            "superseded neighborhood should not appear in recall, got:\n{}",
+            ctx.context,
+        );
+        // The new memory (beta) should appear
+        assert!(
+            ctx.context.contains("approach beta"),
+            "replacement neighborhood should appear in recall, got:\n{}",
+            ctx.context,
+        );
+    }
+
+    #[test]
+    fn test_superseded_decision_excluded() {
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Decision that gets superseded
+        let old_id = sys.add_to_conscious_typed(
+            "DECISION: architecture uses monolith pattern",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
+        let new_id = sys.add_to_conscious_typed(
+            "DECISION: architecture uses microservices pattern",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
+        sys.mark_superseded(old_id, new_id);
+
+        let result = QueryEngine::process_query(&mut sys, "architecture pattern");
+        let surface = compute_surface(&sys, &result);
+        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+
+        assert!(
+            !ctx.context.contains("monolith"),
+            "superseded Decision should not surface, got:\n{}",
             ctx.context,
         );
     }

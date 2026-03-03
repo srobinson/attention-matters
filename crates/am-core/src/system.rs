@@ -262,6 +262,23 @@ impl DAESystem {
         self.index_dirty = true;
     }
 
+    /// Mark a neighborhood as superseded by another.
+    /// Returns true if the neighborhood was found and marked.
+    pub fn mark_superseded(&mut self, old_id: Uuid, new_id: Uuid) -> bool {
+        self.ensure_indexes();
+        if let Some(n_ref) = self.neighborhood_index.get(&old_id).copied() {
+            let episode = if n_ref.is_conscious() {
+                &mut self.conscious_episode
+            } else {
+                &mut self.episodes[n_ref.episode_idx]
+            };
+            episode.neighborhoods[n_ref.neighborhood_idx].superseded_by = Some(new_id);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Sync `next_epoch` to be above the maximum epoch found in the system.
     /// Call after loading from store to ensure new neighborhoods get unique epochs.
     pub fn sync_next_epoch(&mut self) {

@@ -68,6 +68,12 @@ pub struct WireNeighborhood {
     pub neighborhood_type: String,
     #[serde(default)]
     pub epoch: u64,
+    #[serde(
+        rename = "supersededBy",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub superseded_by: Option<String>,
     pub occurrences: Vec<WireOccurrence>,
 }
 
@@ -153,6 +159,10 @@ fn wire_neighborhood_to_domain(wire: WireNeighborhood) -> Neighborhood {
     nbhd.id = Uuid::parse_str(&wire.id).unwrap_or_else(|_| Uuid::new_v4());
     nbhd.neighborhood_type = NeighborhoodType::from_str_lossy(&wire.neighborhood_type);
     nbhd.epoch = wire.epoch;
+    nbhd.superseded_by = wire
+        .superseded_by
+        .as_deref()
+        .and_then(|s| Uuid::parse_str(s).ok());
 
     for wire_occ in wire.occurrences {
         let mut occ = Occurrence::new(
@@ -192,6 +202,7 @@ fn domain_neighborhood_to_wire(nbhd: &Neighborhood) -> WireNeighborhood {
         source_text: nbhd.source_text.clone(),
         neighborhood_type: nbhd.neighborhood_type.as_str().to_string(),
         epoch: nbhd.epoch,
+        superseded_by: nbhd.superseded_by.map(|id| id.to_string()),
         occurrences: nbhd
             .occurrences
             .iter()
@@ -458,5 +469,65 @@ mod tests {
         assert_eq!(sys.episodes[0].neighborhoods[0].epoch, 0);
         // next_epoch synced to 1 (max 0 + 1)
         assert_eq!(sys.next_epoch, 1);
+    }
+
+    #[test]
+    fn test_superseded_by_roundtrip() {
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test-agent");
+
+        let old_id = sys.add_to_conscious("old memory", &mut rng);
+        let new_id = sys.add_to_conscious("new memory", &mut rng);
+        sys.mark_superseded(old_id, new_id);
+
+        let json = export_json(&sys).unwrap();
+        let sys2 = import_json(&json).unwrap();
+
+        assert_eq!(
+            sys2.conscious_episode.neighborhoods[0].superseded_by,
+            Some(new_id)
+        );
+        assert_eq!(sys2.conscious_episode.neighborhoods[1].superseded_by, None);
+    }
+
+    #[test]
+    fn test_old_format_without_superseded_by() {
+        // Old wire format without supersededBy — should default to None
+        let json = r#"{
+            "version": "0.7.2",
+            "timestamp": "",
+            "system": {
+                "episodes": [{
+                    "name": "test",
+                    "isConscious": false,
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "timestamp": "",
+                    "neighborhoods": [{
+                        "seed": [1.0, 0.0, 0.0, 0.0],
+                        "id": "00000000-0000-0000-0000-000000000002",
+                        "sourceText": "hello",
+                        "epoch": 5,
+                        "occurrences": [{
+                            "word": "hello",
+                            "position": [1.0, 0.0, 0.0, 0.0],
+                            "phasor": 1.234,
+                            "activationCount": 5,
+                            "neighborhoodId": "00000000-0000-0000-0000-000000000002"
+                        }]
+                    }]
+                }],
+                "consciousEpisode": {
+                    "name": "conscious",
+                    "isConscious": true,
+                    "id": "00000000-0000-0000-0000-000000000003",
+                    "neighborhoods": []
+                },
+                "agentName": "echo"
+            }
+        }"#;
+
+        let sys = import_json(json).unwrap();
+        assert_eq!(sys.episodes[0].neighborhoods[0].superseded_by, None);
+        assert_eq!(sys.episodes[0].neighborhoods[0].epoch, 5);
     }
 }
