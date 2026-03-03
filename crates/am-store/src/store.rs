@@ -186,8 +186,8 @@ impl Store {
         episode_id: Uuid,
     ) -> Result<()> {
         conn.execute(
-            "INSERT INTO neighborhoods (id, episode_id, seed_w, seed_x, seed_y, seed_z, source_text, neighborhood_type)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO neighborhoods (id, episode_id, seed_w, seed_x, seed_y, seed_z, source_text, neighborhood_type, epoch, superseded_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 neighborhood.id.to_string(),
                 episode_id.to_string(),
@@ -197,6 +197,8 @@ impl Store {
                 neighborhood.seed.z,
                 neighborhood.source_text,
                 neighborhood.neighborhood_type.as_str(),
+                neighborhood.epoch,
+                neighborhood.superseded_by.map(|id| id.to_string()),
             ],
         )?;
 
@@ -270,40 +272,32 @@ impl Store {
         }
 
         system.mark_dirty();
+        system.sync_next_epoch();
         Ok(system)
     }
 
     fn load_neighborhoods(&self, episode_id: &str) -> Result<Vec<Neighborhood>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, seed_w, seed_x, seed_y, seed_z, source_text, COALESCE(neighborhood_type, 'memory')
+            "SELECT id, seed_w, seed_x, seed_y, seed_z, source_text, COALESCE(neighborhood_type, 'memory'), epoch, superseded_by
              FROM neighborhoods WHERE episode_id = ?1 ORDER BY rowid",
         )?;
 
-        let rows: Vec<(String, f64, f64, f64, f64, String, String)> = stmt
-            .query_map([episode_id], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, f64>(1)?,
-                    row.get::<_, f64>(2)?,
-                    row.get::<_, f64>(3)?,
-                    row.get::<_, f64>(4)?,
-                    row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
-                ))
-            })?
-            .collect::<std::result::Result<_, _>>()?;
-
-        let mut neighborhoods = Vec::with_capacity(rows.len());
-        for (id_str, w, x, y, z, source_text, nbhd_type_str) in rows {
+        let mut neighborhoods = Vec::new();
+        let mut query_rows = stmt.query([episode_id])?;
+        while let Some(row) = query_rows.next()? {
+            let id_str: String = row.get(0)?;
             let id = parse_uuid(&id_str)?;
             let occurrences = self.load_occurrences(&id_str)?;
+            let superseded_by: Option<String> = row.get(8)?;
 
             neighborhoods.push(Neighborhood {
                 id,
-                seed: Quaternion::new(w, x, y, z),
+                seed: Quaternion::new(row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
                 occurrences,
-                source_text,
-                neighborhood_type: NeighborhoodType::from_str_lossy(&nbhd_type_str),
+                source_text: row.get(5)?,
+                neighborhood_type: NeighborhoodType::from_str_lossy(&row.get::<_, String>(6)?),
+                epoch: row.get(7)?,
+                superseded_by: superseded_by.and_then(|s| Uuid::parse_str(&s).ok()),
             });
         }
 
@@ -358,6 +352,20 @@ impl Store {
         if rows == 0 {
             return Err(StoreError::InvalidData(format!(
                 "occurrence not found: {occurrence_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Mark a neighborhood as superseded by another (targeted update, no full save).
+    pub fn mark_superseded(&self, old_id: Uuid, new_id: Uuid) -> Result<()> {
+        let rows = self.conn.execute(
+            "UPDATE neighborhoods SET superseded_by = ?1 WHERE id = ?2",
+            params![new_id.to_string(), old_id.to_string()],
+        )?;
+        if rows == 0 {
+            return Err(StoreError::InvalidData(format!(
+                "neighborhood not found: {old_id}"
             )));
         }
         Ok(())

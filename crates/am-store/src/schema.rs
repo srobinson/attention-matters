@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -46,7 +46,9 @@ pub fn initialize(conn: &Connection) -> Result<()> {
             seed_y             REAL NOT NULL,
             seed_z             REAL NOT NULL,
             source_text        TEXT NOT NULL DEFAULT '',
-            neighborhood_type  TEXT NOT NULL DEFAULT 'memory'
+            neighborhood_type  TEXT NOT NULL DEFAULT 'memory',
+            epoch              INTEGER NOT NULL DEFAULT 0,
+            superseded_by      TEXT
         );
 
         CREATE TABLE IF NOT EXISTS occurrences (
@@ -82,6 +84,24 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "ALTER TABLE neighborhoods ADD COLUMN neighborhood_type TEXT NOT NULL DEFAULT 'memory';",
         )?;
+    }
+
+    // Add epoch to older databases that lack it
+    if conn
+        .prepare("SELECT epoch FROM neighborhoods LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch(
+            "ALTER TABLE neighborhoods ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+
+    // Add superseded_by to older databases that lack it
+    if conn
+        .prepare("SELECT superseded_by FROM neighborhoods LIMIT 0")
+        .is_err()
+    {
+        conn.execute_batch("ALTER TABLE neighborhoods ADD COLUMN superseded_by TEXT;")?;
     }
 
     // Backfill empty timestamps on existing episodes using rowid order.

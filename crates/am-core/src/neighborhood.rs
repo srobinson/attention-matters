@@ -53,6 +53,13 @@ pub struct Neighborhood {
     pub source_text: String,
     #[serde(default)]
     pub neighborhood_type: NeighborhoodType,
+    /// Monotonic creation order. Higher epoch = newer neighborhood.
+    #[serde(default)]
+    pub epoch: u64,
+    /// If set, this neighborhood has been explicitly superseded by another.
+    /// Superseded neighborhoods are excluded from recall.
+    #[serde(default)]
+    pub superseded_by: Option<Uuid>,
 }
 
 impl Neighborhood {
@@ -63,6 +70,8 @@ impl Neighborhood {
             occurrences: Vec::new(),
             source_text,
             neighborhood_type: NeighborhoodType::default(),
+            epoch: 0,
+            superseded_by: None,
         }
     }
 
