@@ -5,10 +5,39 @@
 //! filtering out tool calls, thinking blocks, system messages, and file
 //! history snapshots.
 
+use std::io::{self, IsTerminal, Read};
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 use anyhow::{Context, Result};
+use serde::Deserialize;
+
+/// Hook payload sent by Claude Code on stdin (PreCompact / Stop hooks).
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub struct HookInput {
+    pub session_id: String,
+    pub transcript_path: String,
+    /// "PreCompact" or "Stop"
+    #[serde(default)]
+    pub hook_event_name: Option<String>,
+}
+
+/// Read hook input from stdin if it's piped (not a terminal).
+/// Returns `None` when running interactively.
+pub fn read_hook_input() -> Option<HookInput> {
+    let stdin = io::stdin();
+    if stdin.is_terminal() {
+        return None;
+    }
+    let mut buf = String::new();
+    stdin.lock().read_to_string(&mut buf).ok()?;
+    let buf = buf.trim();
+    if buf.is_empty() {
+        return None;
+    }
+    serde_json::from_str(buf).ok()
+}
 
 /// A discovered session transcript file.
 pub struct SessionInfo {
@@ -366,5 +395,43 @@ mod tests {
 
         let text = extract_session_text(&path).unwrap();
         assert!(text.contains("query engine"));
+    }
+
+    #[test]
+    fn test_hook_input_stop_payload() {
+        let json = r#"{"session_id":"abc-123","transcript_path":"/tmp/test.jsonl","hook_event_name":"Stop"}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.session_id, "abc-123");
+        assert_eq!(input.transcript_path, "/tmp/test.jsonl");
+        assert_eq!(input.hook_event_name.as_deref(), Some("Stop"));
+    }
+
+    #[test]
+    fn test_hook_input_precompact_payload() {
+        let json = r#"{"session_id":"def-456","transcript_path":"/home/user/.claude/projects/foo/def-456.jsonl","hook_event_name":"PreCompact"}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.session_id, "def-456");
+        assert_eq!(
+            input.transcript_path,
+            "/home/user/.claude/projects/foo/def-456.jsonl"
+        );
+        assert_eq!(input.hook_event_name.as_deref(), Some("PreCompact"));
+    }
+
+    #[test]
+    fn test_hook_input_extra_fields_ignored() {
+        let json = r#"{"session_id":"xyz","transcript_path":"/tmp/x.jsonl","hook_event_name":"Stop","extra_field":"ignored","cwd":"/foo"}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.session_id, "xyz");
+        assert_eq!(input.transcript_path, "/tmp/x.jsonl");
+    }
+
+    #[test]
+    fn test_hook_input_missing_event_name() {
+        // hook_event_name is optional
+        let json = r#"{"session_id":"abc","transcript_path":"/tmp/t.jsonl"}"#;
+        let input: HookInput = serde_json::from_str(json).unwrap();
+        assert_eq!(input.session_id, "abc");
+        assert!(input.hook_event_name.is_none());
     }
 }

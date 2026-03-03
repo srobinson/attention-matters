@@ -198,21 +198,22 @@ enum Commands {
     /// Ingest Claude Code session transcripts into memory
     #[command(
         long_about = "Sync Claude Code session transcripts into geometric memory.\n\n\
-            Reads session transcripts from Claude Code's project directory\n\
-            and ingests them as memory episodes. Each session becomes one\n\
-            episode containing the substantive exchanges (user questions\n\
-            and assistant responses, excluding tool calls and system noise).\n\n\
-            This makes memory self-populating — past conversations become\n\
-            searchable context in future sessions without relying on the\n\
-            model calling am_buffer.",
+            Two modes:\n\
+            1. Stdin (hook-triggered): reads transcript_path + session_id from\n\
+               JSON on stdin and ingests that single session. Used by Claude Code\n\
+               PreCompact/Stop hooks.\n\
+            2. Discovery (--all): walks the filesystem to discover and re-ingest\n\
+               all session transcripts. For manual bulk re-sync.\n\n\
+            Replace semantics: if an episode with the same name already exists,\n\
+            it is replaced (not duplicated).",
         after_help = "\x1b[1mExamples:\x1b[0m\n  \
-            am sync                    # Ingest new transcripts since last sync\n  \
-            am sync --all              # Re-ingest all transcripts\n  \
-            am sync --dry-run          # Show what would be ingested\n  \
-            am sync --dir ~/.claude    # Custom Claude config directory"
+            echo '{...}' | am sync     # Ingest single session from hook stdin\n  \
+            am sync --all              # Discover and re-ingest all transcripts\n  \
+            am sync --all --dry-run    # Show what would be ingested\n  \
+            am sync --all --dir ~/.claude  # Custom Claude config directory"
     )]
     Sync {
-        /// Re-ingest all transcripts (ignore last-sync marker)
+        /// Discover and ingest all transcripts via filesystem walk
         #[arg(long)]
         all: bool,
 
@@ -1058,6 +1059,109 @@ fn cmd_sync(
     dry_run: bool,
     dir_override: Option<&std::path::Path>,
 ) -> Result<()> {
+    let hook_input = sync::read_hook_input();
+
+    if let Some(hook) = hook_input
+        && !all
+    {
+        // Stdin mode: hook-triggered single-session ingest
+        return cmd_sync_single(cli, hook, dry_run);
+    }
+
+    if all {
+        // Discovery mode: bulk re-ingest via filesystem walk
+        cmd_sync_discover(cli, dry_run, dir_override)
+    } else {
+        // Interactive terminal, no --all flag — print usage hint
+        println!("Usage: pipe hook JSON on stdin, or use --all for bulk discovery.\n");
+        println!("  echo '{{\"session_id\":\"...\",\"transcript_path\":\"...\"}}' | am sync");
+        println!("  am sync --all");
+        println!("  am sync --all --dry-run");
+        Ok(())
+    }
+}
+
+/// Ingest a single session from hook stdin input.
+fn cmd_sync_single(cli: &Cli, hook: sync::HookInput, dry_run: bool) -> Result<()> {
+    let bold = "\x1b[1m";
+    let dim = "\x1b[2m";
+    let reset = "\x1b[0m";
+
+    // Expand ~ in transcript path
+    let raw_path = if hook.transcript_path.starts_with("~/") {
+        let home = std::env::var("HOME")
+            .or_else(|_| std::env::var("USERPROFILE"))
+            .unwrap_or_else(|_| ".".to_string());
+        format!("{}{}", home, &hook.transcript_path[1..])
+    } else {
+        hook.transcript_path.clone()
+    };
+    let path = std::path::PathBuf::from(&raw_path);
+
+    if !path.exists() {
+        eprintln!("Transcript not found: {}", path.display());
+        return Ok(());
+    }
+
+    let text = sync::extract_session_text(&path)
+        .with_context(|| format!("failed to parse {}", path.display()))?;
+
+    if text.is_empty() {
+        println!(
+            "  {dim}skip{reset} {} (no substantive content)",
+            safe_prefix(&hook.session_id, 8)
+        );
+        return Ok(());
+    }
+
+    let episode_name = format!("session-{}", safe_prefix(&hook.session_id, 8));
+    let text_preview = truncate_text(&text, 60);
+
+    if dry_run {
+        println!(
+            "  {bold}sync{reset} {} ({} chars) {dim}{text_preview}{reset}",
+            safe_prefix(&hook.session_id, 8),
+            text.len()
+        );
+        println!("\n{dim}Dry run: no changes made.{reset}");
+        return Ok(());
+    }
+
+    let store = open_store(cli)?;
+    let mut system = store.load_system().context("failed to load system")?;
+    let mut rng = SmallRng::from_os_rng();
+
+    // Replace semantics: remove existing episode with same name
+    system.episodes.retain(|e| e.name != episode_name);
+
+    let episode = ingest_text(&text, Some(&episode_name), &mut rng);
+    let nbhd_count = episode.neighborhoods.len();
+    system.add_episode(episode);
+
+    store
+        .save_system(&system)
+        .context("failed to save system")?;
+
+    println!(
+        "  {bold}synced{reset} {} → {} neighborhoods {dim}{text_preview}{reset}",
+        safe_prefix(&hook.session_id, 8),
+        nbhd_count,
+    );
+    println!(
+        "\n{bold}Done.{reset} N={}, episodes={}",
+        system.n(),
+        system.episodes.len()
+    );
+
+    Ok(())
+}
+
+/// Discover and re-ingest all sessions via filesystem walk.
+fn cmd_sync_discover(
+    cli: &Cli,
+    dry_run: bool,
+    dir_override: Option<&std::path::Path>,
+) -> Result<()> {
     let store = open_store(cli)?;
     let mut system = store.load_system().context("failed to load system")?;
     let mut rng = SmallRng::from_os_rng();
@@ -1078,48 +1182,23 @@ fn cmd_sync(
         }
     };
 
-    let synced_sessions: std::collections::HashSet<String> = if all {
-        std::collections::HashSet::new()
-    } else {
-        store
-            .store()
-            .get_metadata("synced_sessions")
-            .ok()
-            .flatten()
-            .map(|s| s.split(',').map(String::from).collect())
-            .unwrap_or_default()
-    };
-
     let sessions = sync::discover_sessions(&project_dir).context("failed to discover sessions")?;
-
-    let new_sessions: Vec<_> = sessions
-        .iter()
-        .filter(|s| !synced_sessions.contains(&s.session_id))
-        .collect();
 
     let bold = "\x1b[1m";
     let dim = "\x1b[2m";
     let reset = "\x1b[0m";
 
-    if new_sessions.is_empty() {
-        println!(
-            "All {bold}{}{reset} sessions already synced.",
-            sessions.len()
-        );
+    if sessions.is_empty() {
+        println!("No sessions found.");
         return Ok(());
     }
 
-    println!(
-        "{bold}Found {}{reset} new session(s) to sync {dim}(of {} total){reset}\n",
-        new_sessions.len(),
-        sessions.len()
-    );
+    println!("{bold}Found {}{reset} session(s) to sync\n", sessions.len());
 
     let mut total_episodes = 0u32;
     let mut total_text_len = 0usize;
-    let mut newly_synced: Vec<String> = synced_sessions.into_iter().collect();
 
-    for session in &new_sessions {
+    for session in &sessions {
         let text = match sync::extract_session_text(&session.path) {
             Ok(t) => t,
             Err(e) => {
@@ -1135,10 +1214,10 @@ fn cmd_sync(
                     safe_prefix(&session.session_id, 8)
                 );
             }
-            newly_synced.push(session.session_id.clone());
             continue;
         }
 
+        let episode_name = format!("session-{}", safe_prefix(&session.session_id, 8));
         let text_preview = truncate_text(&text, 60);
         total_text_len += text.len();
 
@@ -1149,7 +1228,9 @@ fn cmd_sync(
                 text.len()
             );
         } else {
-            let episode_name = format!("session-{}", safe_prefix(&session.session_id, 8));
+            // Replace semantics: remove existing episode with same name
+            system.episodes.retain(|e| e.name != episode_name);
+
             let episode = ingest_text(&text, Some(&episode_name), &mut rng);
             let nbhd_count = episode.neighborhoods.len();
             system.add_episode(episode);
@@ -1160,8 +1241,6 @@ fn cmd_sync(
                 safe_prefix(&session.session_id, 8),
                 nbhd_count,
             );
-
-            newly_synced.push(session.session_id.clone());
         }
     }
 
@@ -1169,7 +1248,7 @@ fn cmd_sync(
         println!(
             "\n{dim}Dry run: would ingest ~{} chars from {} sessions.{reset}",
             total_text_len,
-            new_sessions.len()
+            sessions.len()
         );
     } else {
         if total_episodes > 0 {
@@ -1177,15 +1256,6 @@ fn cmd_sync(
                 .save_system(&system)
                 .context("failed to save system")?;
         }
-
-        // Update synced sessions list
-        newly_synced.sort();
-        newly_synced.dedup();
-        let synced_str = newly_synced.join(",");
-        store
-            .store()
-            .set_metadata("synced_sessions", &synced_str)
-            .context("failed to save sync state")?;
 
         println!(
             "\n{bold}Done.{reset} Ingested {total_episodes} episode(s). N={}, episodes={}",

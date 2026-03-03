@@ -44,4 +44,7 @@ This project has persistent geometric memory via the `am` MCP server. Query memo
 | `query`        | QueryEngine: drift, interference, Kuramoto coupling          |
 | `surface`      | Surface computation: vivid neighborhoods/episodes, fragments |
 | `compose`      | Context composition: conscious/subconscious/novel recall     |
+| `batch`        | Batch query engine for amortized IDF across multiple queries |
+| `feedback`     | Feedback signals (boost/demote) for recalled neighborhoods   |
+| `time`         | Timestamp utilities (ISO8601, Unix seconds conversion)       |
 | `serde_compat` | v0.7.2 JSON wire format import/export                        |

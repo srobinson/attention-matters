@@ -348,7 +348,7 @@ fn sync_dry_run() {
 
     // Dry run should find the session but not ingest
     am_cmd(&dir)
-        .args(["sync", "--dry-run", "--dir"])
+        .args(["sync", "--all", "--dry-run", "--dir"])
         .arg(&claude_dir)
         .assert()
         .success()
@@ -386,7 +386,7 @@ fn sync_ingests_sessions() {
 
     // Real sync
     am_cmd(&dir)
-        .args(["sync", "--dir"])
+        .args(["sync", "--all", "--dir"])
         .arg(&claude_dir)
         .assert()
         .success()
@@ -401,13 +401,20 @@ fn sync_ingests_sessions() {
         .success()
         .stdout(predicate::str::contains("episodes:   2"));
 
-    // Re-sync should say all synced
+    // Re-sync with --all replaces (not duplicates) — still 2 episodes
     am_cmd(&dir)
-        .args(["sync", "--dir"])
+        .args(["sync", "--all", "--dir"])
         .arg(&claude_dir)
         .assert()
         .success()
-        .stdout(predicate::str::contains("already synced"));
+        .stdout(predicate::str::contains("Found 2"))
+        .stdout(predicate::str::contains("Done."));
+
+    am_cmd(&dir)
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   2"));
 }
 
 #[test]
@@ -419,11 +426,61 @@ fn sync_no_project_dir() {
     std::fs::create_dir_all(&empty_claude).unwrap();
 
     am_cmd(&dir)
-        .args(["sync", "--dir"])
+        .args(["sync", "--all", "--dir"])
         .arg(&empty_claude)
         .assert()
         .success()
         .stdout(predicate::str::contains("No Claude Code project directory"));
+}
+
+#[test]
+fn sync_stdin_hook() {
+    let dir = TempDir::new().unwrap();
+
+    // Create a transcript file for the hook to reference
+    let transcript = dir.path().join("test-session.jsonl");
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&transcript).unwrap();
+        writeln!(f, "{{\"type\":\"user\",\"message\":{{\"role\":\"user\",\"content\":\"How does the DAE attention engine perform geometric drift correction?\"}}}}").unwrap();
+        writeln!(f, "{{\"type\":\"assistant\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"Drift correction uses IDF-weighted SLERP on the S3 manifold to move occurrence quaternions.\"}}]}}}}").unwrap();
+    }
+
+    let hook_json = format!(
+        r#"{{"session_id":"hook-test-1","transcript_path":"{}","hook_event_name":"Stop"}}"#,
+        transcript.display()
+    );
+
+    // Pipe hook JSON on stdin — should ingest the session
+    am_cmd(&dir)
+        .args(["sync"])
+        .write_stdin(hook_json.as_bytes())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("synced"))
+        .stdout(predicate::str::contains("Done."));
+
+    // Verify 1 episode created
+    am_cmd(&dir)
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   1"));
+
+    // Pipe the same hook JSON again — replace semantics, still 1 episode
+    am_cmd(&dir)
+        .args(["sync"])
+        .write_stdin(hook_json.as_bytes())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("synced"))
+        .stdout(predicate::str::contains("Done."));
+
+    am_cmd(&dir)
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   1"));
 }
 
 #[test]

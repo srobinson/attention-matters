@@ -226,7 +226,7 @@ impl AmServer {
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
 
-        let (result, new_ids) = if let Some(max_tokens) = req.max_tokens {
+        let (mut result, new_ids) = if let Some(max_tokens) = req.max_tokens {
             // Budgeted query: Nancy's prompt compiler uses this
             let budget = BudgetConfig {
                 max_tokens,
@@ -318,6 +318,33 @@ impl AmServer {
             });
             (json, ids)
         };
+
+        // Compose compact index summary (top 10 entries, most recent first)
+        let index = compose_index(
+            system,
+            &surface,
+            &query_result,
+            &query_result.interference,
+            Some(&session_recalled_snapshot),
+        );
+        let mut sorted_entries = index.entries;
+        sorted_entries.sort_by(|a, b| b.epoch.cmp(&a.epoch));
+        let index_entries: Vec<serde_json::Value> = sorted_entries
+            .iter()
+            .take(10)
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.neighborhood_id.to_string(),
+                    "category": format!("{:?}", e.category),
+                    "type": format!("{:?}", e.neighborhood_type),
+                    "score": (e.score * 100.0).round() / 100.0,
+                    "epoch": e.epoch,
+                    "summary": e.summary,
+                    "token_estimate": e.token_estimate,
+                })
+            })
+            .collect();
+        result["index"] = serde_json::json!(index_entries);
 
         // Increment recall count for returned neighborhood IDs (diminishing returns)
         for id in new_ids {
@@ -1561,6 +1588,84 @@ mod tests {
 
         let json = parse_result(&result);
         assert_eq!(json["count"], 0, "invalid UUIDs should return empty");
+    }
+
+    #[tokio::test]
+    async fn test_am_query_includes_index() {
+        let server = make_server();
+
+        // Ingest content
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Geometric memory uses hypersphere manifolds for associative recall. Neighborhoods cluster related concepts.".to_string(),
+                name: Some("geo-memory".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        // Add conscious content
+        server
+            .am_salient(Parameters(SalientRequest {
+                text: "hypersphere manifolds enable geometric reasoning".to_string(),
+                supersedes: vec![],
+            }))
+            .await
+            .unwrap();
+
+        // Query (default path, no budget)
+        let result = server
+            .am_query(Parameters(QueryRequest {
+                text: "geometric manifold memory".to_string(),
+                max_tokens: None,
+            }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+
+        // Verify index field exists
+        assert!(json.get("index").is_some(), "should have index field");
+        let index = json["index"].as_array().unwrap();
+
+        // At most 10 entries
+        assert!(index.len() <= 10, "index should have at most 10 entries");
+
+        // Should have at least one entry (we ingested content + salient)
+        assert!(!index.is_empty(), "index should have entries");
+
+        // Verify each entry has the expected compact structure
+        for entry in index {
+            assert!(entry.get("id").is_some(), "entry should have id");
+            assert!(
+                entry.get("category").is_some(),
+                "entry should have category"
+            );
+            assert!(entry.get("type").is_some(), "entry should have type");
+            assert!(entry.get("score").is_some(), "entry should have score");
+            assert!(entry.get("epoch").is_some(), "entry should have epoch");
+            assert!(entry.get("summary").is_some(), "entry should have summary");
+            assert!(
+                entry.get("token_estimate").is_some(),
+                "entry should have token_estimate"
+            );
+        }
+
+        // Verify budgeted path also includes index
+        let budgeted_result = server
+            .am_query(Parameters(QueryRequest {
+                text: "geometric manifold memory".to_string(),
+                max_tokens: Some(500),
+            }))
+            .await
+            .unwrap();
+
+        let budgeted_json = parse_result(&budgeted_result);
+        assert!(
+            budgeted_json.get("index").is_some(),
+            "budgeted query should also have index field"
+        );
+        let budgeted_index = budgeted_json["index"].as_array().unwrap();
+        assert!(budgeted_index.len() <= 10);
     }
 
     #[test]

@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "am": {
-      "command": "npx",
-      "args": ["-y", "attention-matters", "serve"]
-    }
-  }
-}
