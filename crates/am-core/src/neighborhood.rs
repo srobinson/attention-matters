@@ -53,6 +53,9 @@ pub struct Neighborhood {
     pub source_text: String,
     #[serde(default)]
     pub neighborhood_type: NeighborhoodType,
+    /// Monotonic creation order. Higher epoch = newer neighborhood.
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 impl Neighborhood {
@@ -63,6 +66,7 @@ impl Neighborhood {
             occurrences: Vec::new(),
             source_text,
             neighborhood_type: NeighborhoodType::default(),
+            epoch: 0,
         }
     }
 
