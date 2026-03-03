@@ -5,6 +5,7 @@ use rand::Rng;
 use regex::Regex;
 use uuid::Uuid;
 
+use crate::neighborhood::NeighborhoodType;
 use crate::query::{InterferenceResult, QueryResult};
 use crate::surface::SurfaceResult;
 use crate::system::{DAESystem, OccurrenceRef};
@@ -649,6 +650,181 @@ pub fn compose_context_budgeted(
     }
 }
 
+/// Compact index entry for two-phase retrieval.
+/// ~50-100 tokens per entry vs ~500-1000 for full content.
+pub struct IndexEntry {
+    pub neighborhood_id: Uuid,
+    pub category: RecallCategory,
+    pub neighborhood_type: NeighborhoodType,
+    pub score: f64,
+    pub epoch: u64,
+    /// First 100 chars of the neighborhood text.
+    pub summary: String,
+    /// Estimated LLM tokens for the full content.
+    pub token_estimate: usize,
+}
+
+/// Result of index composition for two-phase retrieval.
+pub struct IndexResult {
+    pub entries: Vec<IndexEntry>,
+    pub stats_snapshot: IndexStats,
+}
+
+/// Snapshot of manifold statistics for the index response.
+pub struct IndexStats {
+    pub total_candidates: usize,
+    pub total_tokens_if_fetched: usize,
+}
+
+/// Compose a compact index of the best-matching neighborhoods without full content.
+/// Same scoring pipeline as compose_context_budgeted but returns only metadata.
+pub fn compose_index(
+    system: &mut DAESystem,
+    _surface: &SurfaceResult,
+    query_result: &QueryResult,
+    _interference: &[InterferenceResult],
+    session_recalled: Option<&HashMap<Uuid, u32>>,
+) -> IndexResult {
+    let candidates = rank_candidates(system, query_result);
+    let total_candidates = candidates.len();
+
+    // Deduplicate: same neighborhood may appear in multiple categories,
+    // keep the entry with the highest score.
+    let mut best: HashMap<Uuid, &RankedCandidate> = HashMap::new();
+    for c in &candidates {
+        let entry = best.entry(c.neighborhood_id).or_insert(c);
+        if c.score > entry.score {
+            best.insert(c.neighborhood_id, c);
+        }
+    }
+
+    let mut scored: Vec<(&RankedCandidate, f64)> = best
+        .into_values()
+        .map(|c| {
+            let mut score = c.score;
+            // Apply diminishing returns for previously recalled neighborhoods
+            if let Some(recalled) = session_recalled
+                && c.neighborhood_type != NeighborhoodType::Decision
+                && c.neighborhood_type != NeighborhoodType::Preference
+                && let Some(&count) = recalled.get(&c.neighborhood_id)
+            {
+                score *= 1.0 / (1.0 + count as f64);
+            }
+            (c, score)
+        })
+        .collect();
+
+    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut total_tokens_if_fetched = 0;
+    let entries: Vec<IndexEntry> = scored
+        .into_iter()
+        .filter(|(_, s)| *s >= MIN_SCORE_THRESHOLD)
+        .map(|(c, score)| {
+            let full_tokens = c.tokens + ENTRY_HEADER_OVERHEAD_TOKENS;
+            total_tokens_if_fetched += full_tokens;
+
+            // Get epoch from the neighborhood
+            let epoch = if let Some(nref) = system.get_neighborhood_ref(c.neighborhood_id) {
+                system.get_neighborhood(nref).epoch
+            } else {
+                0
+            };
+
+            let summary = if c.text.len() <= 100 {
+                c.text.clone()
+            } else {
+                format!("{}...", &c.text[..c.text.floor_char_boundary(100)])
+            };
+
+            IndexEntry {
+                neighborhood_id: c.neighborhood_id,
+                category: c.category,
+                neighborhood_type: c.neighborhood_type,
+                score,
+                epoch,
+                summary,
+                token_estimate: estimate_llm_tokens(&c.text),
+            }
+        })
+        .collect();
+
+    IndexResult {
+        entries,
+        stats_snapshot: IndexStats {
+            total_candidates,
+            total_tokens_if_fetched,
+        },
+    }
+}
+
+/// Retrieve full content for specific neighborhood IDs.
+/// Phase 2 of two-phase retrieval: after reviewing the index, fetch
+/// only the neighborhoods you actually need.
+pub fn retrieve_by_ids(
+    system: &DAESystem,
+    ids: &[Uuid],
+) -> Vec<IncludedFragment> {
+    let mut fragments = Vec::new();
+
+    for &id in ids {
+        // Search conscious episode first
+        for (nbhd_idx, nbhd) in system.conscious_episode.neighborhoods.iter().enumerate() {
+            if nbhd.id == id {
+                let _ = nbhd_idx; // used for identification
+                let text = if !nbhd.source_text.is_empty() {
+                    nbhd.source_text.clone()
+                } else {
+                    nbhd.occurrences
+                        .iter()
+                        .map(|o| o.word.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                };
+                fragments.push(IncludedFragment {
+                    neighborhood_id: id,
+                    episode_name: "Previously marked salient".to_string(),
+                    category: RecallCategory::Conscious,
+                    score: 0.0, // Not scored in direct retrieval
+                    tokens: token_count(&text),
+                    text,
+                    neighborhood_type: nbhd.neighborhood_type,
+                });
+                break;
+            }
+        }
+
+        // Search subconscious episodes
+        for episode in &system.episodes {
+            for nbhd in &episode.neighborhoods {
+                if nbhd.id == id {
+                    let text = if !nbhd.source_text.is_empty() {
+                        nbhd.source_text.clone()
+                    } else {
+                        nbhd.occurrences
+                            .iter()
+                            .map(|o| o.word.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    };
+                    fragments.push(IncludedFragment {
+                        neighborhood_id: id,
+                        episode_name: episode.name.clone(),
+                        category: RecallCategory::Subconscious,
+                        score: 0.0,
+                        tokens: token_count(&text),
+                        text,
+                        neighborhood_type: nbhd.neighborhood_type,
+                    });
+                    break;
+                }
+            }
+        }
+    }
+
+    fragments
+}
+
 // -- Scoring internals --
 
 /// Multiplier for Decision/Preference neighborhoods.
@@ -988,8 +1164,6 @@ fn get_episode_name(system: &DAESystem, episode_idx: usize) -> String {
 
 static SALIENT_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?s)<salient>(.*?)</salient>").unwrap());
-
-use crate::neighborhood::NeighborhoodType;
 
 /// Detect neighborhood type from text prefix (DECISION: / PREFERENCE:).
 /// Returns the detected type and the text with the prefix stripped.
@@ -2300,5 +2474,131 @@ mod tests {
             "empty set overlap should be ~0.0, got {}",
             overlap3,
         );
+    }
+
+    #[test]
+    fn test_compose_index_returns_compact_entries() {
+        let mut sys = make_full_system();
+        let qr = QueryEngine::process_query(&mut sys, "quantum physics particle");
+        let surface = compute_surface(&sys, &qr);
+
+        let index = compose_index(&mut sys, &surface, &qr, &qr.interference, None);
+
+        assert!(
+            !index.entries.is_empty(),
+            "index should have entries for matching query"
+        );
+        // Each entry should have a summary <= 103 chars (100 + "...")
+        for entry in &index.entries {
+            assert!(
+                entry.summary.len() <= 103,
+                "summary should be truncated: {}",
+                entry.summary.len()
+            );
+            assert!(entry.token_estimate > 0, "token estimate should be positive");
+            assert!(entry.score > 0.0, "score should be positive");
+        }
+        assert!(
+            index.stats_snapshot.total_candidates > 0,
+            "total_candidates should be positive"
+        );
+    }
+
+    #[test]
+    fn test_compose_index_deduplicates_across_categories() {
+        let mut sys = make_full_system();
+        let qr = QueryEngine::process_query(&mut sys, "quantum physics");
+        let surface = compute_surface(&sys, &qr);
+
+        let index = compose_index(&mut sys, &surface, &qr, &qr.interference, None);
+
+        // Each neighborhood ID should appear at most once
+        let mut seen: HashSet<Uuid> = HashSet::new();
+        for entry in &index.entries {
+            assert!(
+                seen.insert(entry.neighborhood_id),
+                "duplicate ID in index: {}",
+                entry.neighborhood_id
+            );
+        }
+    }
+
+    #[test]
+    fn test_compose_index_respects_min_score_threshold() {
+        let mut sys = make_full_system();
+        // Query for something very specific
+        let qr = QueryEngine::process_query(&mut sys, "quantum physics particle wave");
+        let surface = compute_surface(&sys, &qr);
+
+        let index = compose_index(&mut sys, &surface, &qr, &qr.interference, None);
+
+        for entry in &index.entries {
+            assert!(
+                entry.score >= MIN_SCORE_THRESHOLD,
+                "entry score {} should be >= threshold {}",
+                entry.score,
+                MIN_SCORE_THRESHOLD
+            );
+        }
+    }
+
+    #[test]
+    fn test_retrieve_by_ids_returns_matching_neighborhoods() {
+        let mut sys = make_full_system();
+
+        // Get a neighborhood ID from conscious memory
+        let conscious_id = sys.conscious_episode.neighborhoods[0].id;
+
+        // Get a neighborhood ID from subconscious
+        let sub_id = sys.episodes[0].neighborhoods[0].id;
+
+        let fragments = retrieve_by_ids(&sys, &[conscious_id, sub_id]);
+
+        assert_eq!(fragments.len(), 2, "should return 2 fragments");
+
+        // Verify we got the right IDs back
+        let returned_ids: HashSet<Uuid> = fragments.iter().map(|f| f.neighborhood_id).collect();
+        assert!(returned_ids.contains(&conscious_id));
+        assert!(returned_ids.contains(&sub_id));
+
+        // Conscious should be categorized as Conscious
+        let con = fragments.iter().find(|f| f.neighborhood_id == conscious_id).unwrap();
+        assert_eq!(con.category, RecallCategory::Conscious);
+        assert!(!con.text.is_empty());
+
+        // Subconscious should be categorized as Subconscious
+        let sub = fragments.iter().find(|f| f.neighborhood_id == sub_id).unwrap();
+        assert_eq!(sub.category, RecallCategory::Subconscious);
+        assert!(!sub.text.is_empty());
+    }
+
+    #[test]
+    fn test_retrieve_by_ids_handles_missing_ids() {
+        let sys = make_full_system();
+        let missing_id = Uuid::new_v4();
+
+        let fragments = retrieve_by_ids(&sys, &[missing_id]);
+
+        assert!(
+            fragments.is_empty(),
+            "should return empty for non-existent IDs"
+        );
+    }
+
+    #[test]
+    fn test_compose_index_total_tokens_if_fetched() {
+        let mut sys = make_full_system();
+        let qr = QueryEngine::process_query(&mut sys, "quantum physics");
+        let surface = compute_surface(&sys, &qr);
+
+        let index = compose_index(&mut sys, &surface, &qr, &qr.interference, None);
+
+        // total_tokens_if_fetched should be > 0 when there are entries
+        if !index.entries.is_empty() {
+            assert!(
+                index.stats_snapshot.total_tokens_if_fetched > 0,
+                "total_tokens_if_fetched should be positive when entries exist"
+            );
+        }
     }
 }

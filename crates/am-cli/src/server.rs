@@ -6,8 +6,8 @@ use std::time::Instant;
 
 use am_core::{
     BatchQueryEngine, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine, RecallCategory,
-    apply_feedback, compose_context, compose_context_budgeted, compute_surface, export_json,
-    extract_salient, import_json, ingest_text, mark_salient_typed,
+    apply_feedback, compose_context, compose_context_budgeted, compose_index, compute_surface,
+    export_json, extract_salient, import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
 };
 use am_store::BrainStore;
 use rand::SeedableRng;
@@ -178,6 +178,18 @@ struct McpBatchQueryRequest {
     queries: Vec<BatchQueryItem>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct QueryIndexRequest {
+    /// The query text to search memory for
+    text: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct RetrieveByIdsRequest {
+    /// Neighborhood UUIDs to retrieve full content for (from am_query_index results)
+    ids: Vec<String>,
+}
+
 #[tool_router]
 impl AmServer {
     #[tool(
@@ -311,6 +323,126 @@ impl AmServer {
         for id in new_ids {
             *state.session_recalled.entry(id).or_insert(0) += 1;
         }
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(
+        description = "Two-phase retrieval: get a compact index of matching memories without full content. Returns neighborhood IDs, types, scores, summaries (first 100 chars), and token estimates. Use this first to see what's available (~50-100 tokens/entry vs ~500-1000 for full content), then call am_retrieve with selected IDs to fetch only the memories you need. Reduces context pollution for large manifolds."
+    )]
+    async fn am_query_index(
+        &self,
+        Parameters(req): Parameters<QueryIndexRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut state = self.state.lock().await;
+        let session_recalled_snapshot = state.session_recalled.clone();
+        let ServerState {
+            system, store, rng, ..
+        } = &mut *state;
+
+        // Flush any orphaned buffer
+        let orphaned = store.store().buffer_count().unwrap_or(0);
+        if orphaned > 0
+            && let Ok(exchanges) = store.store().drain_buffer()
+        {
+            let combined: String = exchanges
+                .iter()
+                .map(|(u, a)| format!("{u}\n{a}"))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let episode = ingest_text(&combined, Some("conversation"), rng);
+            system.add_episode(episode);
+            if let Err(e) = store.save_system(system) {
+                tracing::error!("failed to persist flushed buffer episode: {e}");
+            }
+        }
+
+        let query_result = QueryEngine::process_query(system, &req.text);
+        let surface = compute_surface(system, &query_result);
+
+        let index = compose_index(
+            system,
+            &surface,
+            &query_result,
+            &query_result.interference,
+            Some(&session_recalled_snapshot),
+        );
+
+        if let Err(e) = store.save_system(system) {
+            tracing::error!("failed to persist after query_index: {e}");
+        }
+
+        let entries_json: Vec<serde_json::Value> = index
+            .entries
+            .iter()
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.neighborhood_id.to_string(),
+                    "category": format!("{:?}", e.category),
+                    "type": format!("{:?}", e.neighborhood_type),
+                    "score": (e.score * 100.0).round() / 100.0,
+                    "epoch": e.epoch,
+                    "summary": e.summary,
+                    "token_estimate": e.token_estimate,
+                })
+            })
+            .collect();
+
+        let result = serde_json::json!({
+            "entries": entries_json,
+            "total_candidates": index.stats_snapshot.total_candidates,
+            "total_tokens_if_fetched": index.stats_snapshot.total_tokens_if_fetched,
+            "stats": Self::stats_json(system),
+        });
+
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string_pretty(&result).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(
+        description = "Retrieve full content for specific neighborhood IDs. Phase 2 of two-phase retrieval: after reviewing am_query_index results, call this with the IDs of memories you want to see in full. Returns complete text for each requested neighborhood."
+    )]
+    async fn am_retrieve(
+        &self,
+        Parameters(req): Parameters<RetrieveByIdsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut state = self.state.lock().await;
+        let ServerState { system, .. } = &mut *state;
+
+        let ids: Vec<Uuid> = req
+            .ids
+            .iter()
+            .filter_map(|s| Uuid::parse_str(s).ok())
+            .collect();
+
+        let fragments = retrieve_by_ids(system, &ids);
+
+        // Track these as recalled for diminishing returns
+        for f in &fragments {
+            *state.session_recalled.entry(f.neighborhood_id).or_insert(0) += 1;
+        }
+
+        let entries_json: Vec<serde_json::Value> = fragments
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "id": f.neighborhood_id.to_string(),
+                    "category": format!("{:?}", f.category),
+                    "type": format!("{:?}", f.neighborhood_type),
+                    "episode": f.episode_name,
+                    "tokens": f.tokens,
+                    "text": f.text,
+                })
+            })
+            .collect();
+
+        let result = serde_json::json!({
+            "entries": entries_json,
+            "count": fragments.len(),
+        });
 
         Ok(CallToolResult::success(vec![Content::text(
             serde_json::to_string_pretty(&result).unwrap_or_default(),
@@ -1290,6 +1422,145 @@ mod tests {
             .unwrap();
         let json = parse_result(&result);
         assert_eq!(json["deduplicated"], true);
+    }
+
+    #[tokio::test]
+    async fn test_am_query_index_returns_compact_entries() {
+        let server = make_server();
+
+        // Ingest content
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Quantum mechanics describes particle behavior at subatomic scales. Wave functions collapse on measurement.".to_string(),
+                name: Some("science".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        server
+            .am_salient(Parameters(SalientRequest {
+                text: "quantum computing is revolutionary technology".to_string(),
+                supersedes: vec![],
+            }))
+            .await
+            .unwrap();
+
+        // Query the index
+        let result = server
+            .am_query_index(Parameters(QueryIndexRequest {
+                text: "quantum particles".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+
+        // Verify response structure
+        assert!(json.get("entries").is_some(), "should have entries");
+        assert!(
+            json.get("total_candidates").is_some(),
+            "should have total_candidates"
+        );
+        assert!(
+            json.get("total_tokens_if_fetched").is_some(),
+            "should have total_tokens_if_fetched"
+        );
+        assert!(json.get("stats").is_some(), "should have stats");
+
+        let entries = json["entries"].as_array().unwrap();
+        assert!(!entries.is_empty(), "should have matching entries");
+
+        // Verify each entry has compact structure
+        for entry in entries {
+            assert!(entry.get("id").is_some(), "entry should have id");
+            assert!(entry.get("category").is_some(), "entry should have category");
+            assert!(entry.get("type").is_some(), "entry should have type");
+            assert!(entry.get("score").is_some(), "entry should have score");
+            assert!(entry.get("epoch").is_some(), "entry should have epoch");
+            assert!(entry.get("summary").is_some(), "entry should have summary");
+            assert!(
+                entry.get("token_estimate").is_some(),
+                "entry should have token_estimate"
+            );
+
+            // Summary should be compact (<=103 chars: 100 + "...")
+            let summary = entry["summary"].as_str().unwrap();
+            assert!(
+                summary.len() <= 103,
+                "summary should be truncated, got {} chars",
+                summary.len()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_am_retrieve_returns_full_content() {
+        let server = make_server();
+
+        // Ingest content
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Rust borrow checker enforces ownership rules at compile time. Lifetimes prevent dangling references.".to_string(),
+                name: Some("rust-guide".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        // Get index to find IDs
+        let index_result = server
+            .am_query_index(Parameters(QueryIndexRequest {
+                text: "rust borrow checker".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        let index_json = parse_result(&index_result);
+        let entries = index_json["entries"].as_array().unwrap();
+        assert!(!entries.is_empty(), "should have index entries");
+
+        // Pick the first ID
+        let first_id = entries[0]["id"].as_str().unwrap().to_string();
+
+        // Retrieve full content
+        let retrieve_result = server
+            .am_retrieve(Parameters(RetrieveByIdsRequest {
+                ids: vec![first_id.clone()],
+            }))
+            .await
+            .unwrap();
+
+        let retrieve_json = parse_result(&retrieve_result);
+        assert_eq!(retrieve_json["count"], 1);
+
+        let retrieved = &retrieve_json["entries"].as_array().unwrap()[0];
+        assert_eq!(retrieved["id"], first_id);
+        assert!(
+            retrieved.get("text").is_some(),
+            "should have full text"
+        );
+        assert!(
+            retrieved["text"].as_str().unwrap().len() > 0,
+            "text should be non-empty"
+        );
+        assert!(
+            retrieved.get("episode").is_some(),
+            "should have episode name"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_retrieve_handles_invalid_ids() {
+        let server = make_server();
+
+        let result = server
+            .am_retrieve(Parameters(RetrieveByIdsRequest {
+                ids: vec!["not-a-uuid".to_string()],
+            }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+        assert_eq!(json["count"], 0, "invalid UUIDs should return empty");
     }
 
     #[test]
