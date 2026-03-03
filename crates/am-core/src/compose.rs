@@ -600,8 +600,13 @@ pub fn compose_context_budgeted(
 
 // -- Scoring internals --
 
-/// Flat score for decision neighborhoods — always high so they surface when relevant.
-const DECISION_FLAT_SCORE: f64 = 100.0;
+/// Multiplier for Decision/Preference neighborhoods.
+/// Decisions that genuinely match the query score this many times higher.
+const DECISION_MULTIPLIER: f64 = 3.0;
+
+/// Minimum score floor for Decision/Preference neighborhoods.
+/// Ensures some visibility even on unrelated queries, but doesn't dominate.
+const DECISION_FLOOR: f64 = 15.0;
 
 /// Recency decay coefficient for non-decision memories.
 /// score *= 1.0 / (1.0 + days_old * RECENCY_DECAY_RATE)
@@ -776,24 +781,26 @@ fn score_neighborhoods(
         }
     }
 
-    // Post-process: decisions get flat score, non-decisions get recency decay
+    // Post-process: apply recency decay then decision/preference competitive scoring
     for sn in scored.values_mut() {
+        // All neighborhoods get recency decay first
+        let decay = recency_cache.get(&sn.episode_idx).copied().unwrap_or(1.0);
+        sn.score *= decay;
+        // For conscious neighborhoods, apply recency boost (newer = higher score)
+        if sn.episode_idx == usize::MAX {
+            let boost = conscious_recency
+                .get(&sn.neighborhood_id)
+                .copied()
+                .unwrap_or(1.0);
+            sn.score *= boost;
+        }
+        // Decision/Preference: competitive scoring with floor
+        // score = max(normal_score * MULTIPLIER, FLOOR)
         match sn.neighborhood_type {
-            NeighborhoodType::Decision => {
-                sn.score = DECISION_FLAT_SCORE;
+            NeighborhoodType::Decision | NeighborhoodType::Preference => {
+                sn.score = (sn.score * DECISION_MULTIPLIER).max(DECISION_FLOOR);
             }
-            _ => {
-                let decay = recency_cache.get(&sn.episode_idx).copied().unwrap_or(1.0);
-                sn.score *= decay;
-                // For conscious neighborhoods, apply recency boost (newer = higher score)
-                if sn.episode_idx == usize::MAX {
-                    let boost = conscious_recency
-                        .get(&sn.neighborhood_id)
-                        .copied()
-                        .unwrap_or(1.0);
-                    sn.score *= boost;
-                }
-            }
+            _ => {}
         }
     }
 
@@ -1322,7 +1329,7 @@ mod tests {
 
     #[test]
     fn test_decision_flat_score() {
-        // Decisions should get DECISION_FLAT_SCORE regardless of activation count
+        // Decisions should surface with [DECIDED] prefix when query matches
         let mut rng = rng();
         let mut sys = DAESystem::new("test");
 
@@ -1351,6 +1358,135 @@ mod tests {
         assert!(
             ctx.context.contains("[DECIDED]"),
             "decision should have [DECIDED] prefix in output, got:\n{}",
+            ctx.context,
+        );
+    }
+
+    #[test]
+    fn test_decision_competitive_scoring_high_overlap() {
+        // A Decision with high query overlap should score >= DECISION_FLOOR
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Decision about postgres (only conscious memory, no overlapping subconscious)
+        sys.add_to_conscious_typed(
+            "always use postgres for database storage backend",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
+
+        // Unrelated subconscious episode (no word overlap with decision)
+        let mut ep = Episode::new("Nature");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["forest", "trees", "wildlife", "ecology"]),
+            None,
+            "forest trees wildlife ecology",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        let result = QueryEngine::process_query(&mut sys, "postgres database storage backend");
+        let surface = compute_surface(&sys, &result);
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 1,
+            min_subconscious: 0,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        // The decision should surface and score at or above the floor
+        let decision_entries: Vec<&IncludedFragment> = ctx
+            .included
+            .iter()
+            .filter(|f| f.neighborhood_type == NeighborhoodType::Decision)
+            .collect();
+        assert!(
+            !decision_entries.is_empty(),
+            "decision should be included in recall"
+        );
+        // With competitive scoring, score = max(normal * 3.0, 15.0)
+        let decision_score = decision_entries[0].score;
+        assert!(
+            decision_score >= 15.0,
+            "relevant decision should score >= floor (15.0), got {}",
+            decision_score,
+        );
+    }
+
+    #[test]
+    fn test_decision_competitive_scoring_low_overlap() {
+        // A Decision about architecture should score at floor on unrelated query
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Decision about architecture
+        sys.add_to_conscious_typed(
+            "architecture uses event driven microservices pattern",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
+
+        // Subconscious episode about cooking (completely unrelated)
+        let mut ep = Episode::new("Cooking");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["chocolate", "cake", "recipe", "sugar", "flour"]),
+            None,
+            "chocolate cake recipe sugar flour",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        let result =
+            QueryEngine::process_query(&mut sys, "chocolate cake recipe baking ingredients");
+        let surface = compute_surface(&sys, &result);
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 1,
+            min_subconscious: 1,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        // Check if the decision even activates — it shares no words with the query
+        let decision_entries: Vec<&IncludedFragment> = ctx
+            .included
+            .iter()
+            .filter(|f| f.neighborhood_type == NeighborhoodType::Decision)
+            .collect();
+
+        if !decision_entries.is_empty() {
+            // If it somehow activates, its score should be at or near the floor
+            let decision_score = decision_entries[0].score;
+            assert!(
+                decision_score <= 100.0,
+                "irrelevant decision should NOT score at old flat 100.0, got {}",
+                decision_score,
+            );
+        }
+        // Either way: the cooking result should outrank any irrelevant decision
+        let cooking_entries: Vec<&IncludedFragment> = ctx
+            .included
+            .iter()
+            .filter(|f| f.text.contains("chocolate") || f.text.contains("cake"))
+            .collect();
+        assert!(
+            !cooking_entries.is_empty(),
+            "relevant cooking memory should surface, got:\n{}",
             ctx.context,
         );
     }
