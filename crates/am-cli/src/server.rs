@@ -1,5 +1,8 @@
 use std::collections::HashMap;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::time::Instant;
 
 use am_core::{
     BatchQueryEngine, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine, RecallCategory,
@@ -19,6 +22,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 const BUFFER_THRESHOLD: usize = 3;
+const DEDUP_WINDOW_SECS: u64 = 60;
 
 #[derive(Clone)]
 pub struct AmServer {
@@ -34,6 +38,9 @@ struct ServerState {
     /// Tracks how many times each neighborhood has been returned.
     /// Non-decision neighborhoods get diminishing returns on repeated recalls.
     session_recalled: HashMap<Uuid, u32>,
+    /// Content hashes with timestamps for dedup within a time window.
+    /// Prevents duplicate episodes when am_buffer is called with identical content.
+    dedup_window: HashMap<u64, Instant>,
 }
 
 impl AmServer {
@@ -48,6 +55,7 @@ impl AmServer {
                 store,
                 rng,
                 session_recalled: HashMap::new(),
+                dedup_window: HashMap::new(),
             })),
             tool_router: Self::tool_router(),
         })
@@ -62,6 +70,22 @@ impl AmServer {
             tracing::warn!("WAL checkpoint failed: {e}");
         }
         tracing::info!("WAL checkpoint complete");
+    }
+
+    /// Compute a content hash for dedup. Uses DefaultHasher (u64) which gives
+    /// 16 hex chars — sufficient for dedup within a 60-second window.
+    fn content_hash(user: &str, assistant: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        user.hash(&mut hasher);
+        b"\n".hash(&mut hasher);
+        assistant.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Remove expired entries from the dedup window.
+    fn clean_dedup_window(window: &mut HashMap<u64, Instant>) {
+        let cutoff = Instant::now() - std::time::Duration::from_secs(DEDUP_WINDOW_SECS);
+        window.retain(|_, ts| *ts > cutoff);
     }
 
     fn stats_json(system: &mut DAESystem) -> serde_json::Value {
@@ -397,8 +421,27 @@ impl AmServer {
     ) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
         let ServerState {
-            system, store, rng, ..
+            system,
+            store,
+            rng,
+            dedup_window,
+            ..
         } = &mut *state;
+
+        // Dedup check: hash the exchange and check against recent hashes
+        let hash = Self::content_hash(&req.user, &req.assistant);
+        Self::clean_dedup_window(dedup_window);
+
+        if dedup_window.contains_key(&hash) {
+            let result = serde_json::json!({
+                "deduplicated": true,
+                "buffer_size": store.store().buffer_count().unwrap_or(0),
+            });
+            return Ok(CallToolResult::success(vec![Content::text(
+                serde_json::to_string_pretty(&result).unwrap_or_default(),
+            )]));
+        }
+        dedup_window.insert(hash, Instant::now());
 
         let buffer_size = store
             .store()
@@ -1128,6 +1171,80 @@ mod tests {
             "replacement memory should appear in recall, got:\n{}",
             context,
         );
+    }
+
+    #[tokio::test]
+    async fn test_am_buffer_dedup_identical_content() {
+        let server = make_server();
+
+        // First buffer call — should succeed
+        let result1 = server
+            .am_buffer(Parameters(BufferRequest {
+                user: "What is Rust?".to_string(),
+                assistant: "Rust is a systems programming language.".to_string(),
+            }))
+            .await
+            .unwrap();
+        let json1 = parse_result(&result1);
+        assert_eq!(json1["buffer_size"], 1);
+        assert!(json1.get("deduplicated").is_none());
+
+        // Second buffer call with identical content — should be deduplicated
+        let result2 = server
+            .am_buffer(Parameters(BufferRequest {
+                user: "What is Rust?".to_string(),
+                assistant: "Rust is a systems programming language.".to_string(),
+            }))
+            .await
+            .unwrap();
+        let json2 = parse_result(&result2);
+        assert_eq!(json2["deduplicated"], true);
+        assert_eq!(json2["buffer_size"], 1); // still 1, not 2
+
+        // Third buffer call with different content — should succeed
+        let result3 = server
+            .am_buffer(Parameters(BufferRequest {
+                user: "What is Go?".to_string(),
+                assistant: "Go is a compiled programming language by Google.".to_string(),
+            }))
+            .await
+            .unwrap();
+        let json3 = parse_result(&result3);
+        assert_eq!(json3["buffer_size"], 2);
+        assert!(json3.get("deduplicated").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_am_buffer_dedup_different_content_creates_episodes() {
+        let server = make_server();
+
+        // Buffer 3 different exchanges — should create 1 episode
+        for i in 0..3 {
+            server
+                .am_buffer(Parameters(BufferRequest {
+                    user: format!("Unique question {i}"),
+                    assistant: format!("Unique answer {i}"),
+                }))
+                .await
+                .unwrap();
+        }
+
+        let stats = parse_result(&server.am_stats().await.unwrap());
+        assert_eq!(
+            stats["episodes"], 1,
+            "3 unique exchanges should create 1 episode"
+        );
+
+        // Now try to buffer the same first exchange again — should be deduplicated
+        let result = server
+            .am_buffer(Parameters(BufferRequest {
+                user: "Unique question 0".to_string(),
+                assistant: "Unique answer 0".to_string(),
+            }))
+            .await
+            .unwrap();
+        let json = parse_result(&result);
+        assert_eq!(json["deduplicated"], true);
     }
 
     #[test]
