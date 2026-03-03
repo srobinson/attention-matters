@@ -31,17 +31,17 @@ This project has persistent geometric memory via the `am` MCP server. Query memo
 
 ## Module Map (am-core)
 
-| Module | Purpose |
-|--------|---------|
-| `constants` | φ, golden angle, neighborhood radius, thresholds |
-| `quaternion` | S³ math: SLERP, random, Hamilton product, geodesic distance |
-| `phasor` | Golden-angle phase distribution, circular interpolation |
-| `occurrence` | Word instance on manifold with activation, drift, plasticity |
-| `neighborhood` | Cluster of occurrences around a seed quaternion |
-| `episode` | Collection of neighborhoods (document/conversation) |
-| `system` | DAESystem with lazy indexes, IDF weights, activation |
-| `tokenizer` | Regex tokenizer + sentence chunking for ingestion |
-| `query` | QueryEngine: drift, interference, Kuramoto coupling |
-| `surface` | Surface computation: vivid neighborhoods/episodes, fragments |
-| `compose` | Context composition: conscious/subconscious/novel recall |
-| `serde_compat` | v0.7.2 JSON wire format import/export |
+| Module         | Purpose                                                      |
+| -------------- | ------------------------------------------------------------ |
+| `constants`    | φ, golden angle, neighborhood radius, thresholds             |
+| `quaternion`   | S³ math: SLERP, random, Hamilton product, geodesic distance  |
+| `phasor`       | Golden-angle phase distribution, circular interpolation      |
+| `occurrence`   | Word instance on manifold with activation, drift, plasticity |
+| `neighborhood` | Cluster of occurrences around a seed quaternion              |
+| `episode`      | Collection of neighborhoods (document/conversation)          |
+| `system`       | DAESystem with lazy indexes, IDF weights, activation         |
+| `tokenizer`    | Regex tokenizer + sentence chunking for ingestion            |
+| `query`        | QueryEngine: drift, interference, Kuramoto coupling          |
+| `surface`      | Surface computation: vivid neighborhoods/episodes, fragments |
+| `compose`      | Context composition: conscious/subconscious/novel recall     |
+| `serde_compat` | v0.7.2 JSON wire format import/export                        |
