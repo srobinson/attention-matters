@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6](https://github.com/srobinson/attention-matters/compare/v0.1.5...v0.1.6) (2026-03-04)
+
+
+### Features
+
+* fix conscious recall pipeline - remove DECISION_FLOOR, wire interference and vividness ([#16](https://github.com/srobinson/attention-matters/issues/16)) ([c5e1e80](https://github.com/srobinson/attention-matters/commit/c5e1e80340ad07b950393a9a07b1d17c46af8eb1))
+
 ## [0.1.5](https://github.com/srobinson/attention-matters/compare/v0.1.4...v0.1.5) (2026-03-03)
 
 ### Features
