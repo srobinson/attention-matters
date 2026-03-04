@@ -5,6 +5,10 @@
 //! interference, and Kuramoto phase coupling across conscious/subconscious
 //! manifolds.
 //!
+//! The mathematical framework was created by Smaxforn ([@smaxforn](https://x.com/smaxforn)).
+//! This crate is a Rust port of his original JavaScript DAE v0.7.2 engine,
+//! maintaining numerical compatibility with the original wire format.
+//!
 //! Zero I/O — pure math engine with no opinions about transport or persistence.
 
 pub mod batch;

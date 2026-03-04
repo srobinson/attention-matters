@@ -4,6 +4,14 @@ A geometric memory engine built on the S³ hypersphere. Memories aren't retrieve
 
 Every query reshapes the manifold. Every recall changes what gets recalled next. The geometry does the thinking.
 
+## Origins
+
+The mathematical framework — quaternion geometry on S³, golden-angle phasors, IDF-weighted drift, Kuramoto phase coupling across dual manifolds — was created by **Smaxforn** ([@smaxforn](https://x.com/smaxforn)). His original implementation was DAE v0.7.2: a zero-dependency Node.js engine that fit the entire geometric memory system in 984 lines of pure math, with WebGPU compute shaders for batch SLERP and interference. He open-sourced three repositories in February 2026 — dae-stand-alone, dae-openclaw, and DAE-moltbook — then disappeared from the internet. His GitHub account no longer exists.
+
+This Rust workspace is a faithful port of his mathematics, maintaining numerical compatibility with the v0.7.2 wire format so that state files from the original implementation (including Echo, a Claude instance with 27,712 occurrences of geometric memory) can be imported directly.
+
+The math is old. The synthesis is his.
+
 ## How it works
 
 ```

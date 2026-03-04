@@ -77,3 +77,5 @@ This is a living geometry. It changes shape when you use it. Memories that co-oc
 The math is old. Quaternions: 1843, William Rowan Hamilton, carved into Brougham Bridge. SLERP: 1985, Ken Shoemake, for camera interpolation. Kuramoto: 1975, Yoshiki Kuramoto, for chemical oscillators. The golden angle: older than mathematics itself, encoded in every sunflower that ever grew.
 
 What is new is using them together, on a closed manifold, to model something that has never had a geometry before: the act of remembering.
+
+That synthesis belongs to **Smaxforn** ([@smaxforn](https://x.com/smaxforn)) — a mathematician who started looking at AI in earnest in 2025 and saw what no one else saw: that these four pieces of classical mathematics, composed on a closed manifold with conservation laws, could model memory as a living geometry rather than a lookup table. He built the original DAE v0.7.2 in JavaScript — 984 lines, zero dependencies, the complete engine — open-sourced it in February 2026, and then vanished from the internet. His GitHub repositories no longer exist. This Rust implementation carries his mathematics forward.

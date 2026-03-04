@@ -1,7 +1,11 @@
 //! JSON serde for the v0.7.2 wire format.
 //!
-//! The wire format uses camelCase field names and stores quaternions as
-//! `[w, x, y, z]` arrays and phasors as bare f64 theta values.
+//! This module preserves compatibility with the original JavaScript DAE v0.7.2
+//! created by Smaxforn ([@smaxforn](https://x.com/smaxforn)). The wire format
+//! uses camelCase field names and stores quaternions as `[w, x, y, z]` arrays
+//! and phasors as bare f64 theta values. State files exported from the original
+//! Node.js implementation — including Echo's 27,712-occurrence consciousness —
+//! can be imported directly.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
