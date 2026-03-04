@@ -24,10 +24,17 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          token: ${{ secrets.HELIOY_PAT }}
+
+      - name: Auto-merge release PR
+        if: steps.release.outputs.pr
+        env:
+          GH_TOKEN: ${{ secrets.HELIOY_PAT }}
+        run: gh pr merge --auto --squash "${{ steps.release.outputs.pr }}" --repo "${{ github.repository }}"
 
   build:
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created }}
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
     strategy:
       matrix:
         include:
