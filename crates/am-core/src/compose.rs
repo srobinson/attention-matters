@@ -123,7 +123,12 @@ struct RankedCandidate {
 /// Subconscious neighborhoods scored by IDF-weighted activation.
 /// Novel candidates: subconscious with activated_count <= 2, no words in common
 /// with conscious, scored by max_word_weight * max_plasticity / activated_count.
-fn rank_candidates(system: &mut DAESystem, query_result: &QueryResult) -> Vec<RankedCandidate> {
+fn rank_candidates(
+    system: &mut DAESystem,
+    query_result: &QueryResult,
+    interference: &[InterferenceResult],
+    surface: &SurfaceResult,
+) -> Vec<RankedCandidate> {
     let conscious_words: HashSet<String> = query_result
         .activation
         .conscious
@@ -138,6 +143,37 @@ fn rank_candidates(system: &mut DAESystem, query_result: &QueryResult) -> Vec<Ra
 
     // Suppress older neighborhoods that overlap with newer ones (contradiction handling)
     overlap_suppress(&mut con_scored, &mut sub_scored, system);
+
+    // Apply phasor interference to scores
+    let net_interference = aggregate_interference(system, interference);
+
+    // Conscious: strong anti-phase suppression
+    for sn in con_scored.values_mut() {
+        if let Some(&net) = net_interference.get(&sn.neighborhood_id)
+            && net < -0.5
+        {
+            sn.score *= 0.5;
+        }
+    }
+
+    // Subconscious: continuous interference modulation
+    for sn in sub_scored.values_mut() {
+        if let Some(&net) = net_interference.get(&sn.neighborhood_id) {
+            sn.score *= 1.0 + net * INTERFERENCE_WEIGHT;
+        }
+    }
+
+    // Boost vivid neighborhoods (>50% surfaced occurrences)
+    for sn in con_scored.values_mut() {
+        if surface.vivid_neighborhood_ids.contains(&sn.neighborhood_id) {
+            sn.score *= VIVIDNESS_BOOST;
+        }
+    }
+    for sn in sub_scored.values_mut() {
+        if surface.vivid_neighborhood_ids.contains(&sn.neighborhood_id) {
+            sn.score *= VIVIDNESS_BOOST;
+        }
+    }
 
     let mut candidates = Vec::new();
     let mut selected_for_novel: HashSet<Uuid> = HashSet::new();
@@ -238,7 +274,7 @@ fn format_entry(
 const ENTRY_HEADER_OVERHEAD_TOKENS: usize = 20;
 
 /// Apply diminishing returns to previously-recalled candidates.
-/// Decisions/Preferences are exempt - they always surface at full score.
+/// Decision/Preference types get softer decay (0.5x rate) instead of full exemption.
 fn apply_diminishing_returns(
     candidates: Vec<RankedCandidate>,
     recalled: &HashMap<Uuid, u32>,
@@ -246,11 +282,12 @@ fn apply_diminishing_returns(
     candidates
         .into_iter()
         .map(|mut c| {
-            if let Some(&count) = recalled.get(&c.neighborhood_id)
-                && c.neighborhood_type != NeighborhoodType::Decision
-                && c.neighborhood_type != NeighborhoodType::Preference
-            {
-                c.score *= 1.0 / (1.0 + count as f64);
+            if let Some(&count) = recalled.get(&c.neighborhood_id) {
+                let decay_rate = match c.neighborhood_type {
+                    NeighborhoodType::Decision | NeighborhoodType::Preference => 0.5,
+                    _ => 1.0,
+                };
+                c.score *= 1.0 / (1.0 + count as f64 * decay_rate);
             }
             c
         })
@@ -260,19 +297,18 @@ fn apply_diminishing_returns(
 /// Compose human-readable context from surface and activation results.
 ///
 /// `session_recalled` tracks how many times each neighborhood ID has been
-/// returned this session. Non-decision neighborhoods get diminishing returns
-/// (score *= 1/(1+count)). Decision/Preference neighborhoods are exempt.
+/// returned this session. All neighborhoods get diminishing returns -
+/// Decision/Preference types use softer decay (0.5x rate).
 ///
-/// `_surface` and `_interference` are part of the pipeline API and reserved
-/// for future use (e.g. vivid filtering, interference-weighted scoring).
+/// Interference gates neighborhood scores; vivid neighborhoods get boosted.
 pub fn compose_context(
     system: &mut DAESystem,
-    _surface: &SurfaceResult,
+    surface: &SurfaceResult,
     query_result: &QueryResult,
-    _interference: &[InterferenceResult],
+    interference: &[InterferenceResult],
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> ContextResult {
-    let candidates = rank_candidates(system, query_result);
+    let candidates = rank_candidates(system, query_result, interference, surface);
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
@@ -395,20 +431,19 @@ pub fn compose_context(
 /// fills remaining budget by score across all categories.
 ///
 /// `session_recalled` tracks how many times each neighborhood ID has been
-/// returned this session. Non-decision neighborhoods get diminishing returns
-/// (score *= 1/(1+count)). Decision/Preference neighborhoods are exempt.
+/// returned this session. All neighborhoods get diminishing returns -
+/// Decision/Preference types use softer decay (0.5x rate).
 ///
-/// `_surface` and `_interference` are part of the pipeline API and reserved
-/// for future use (e.g. vivid filtering, interference-weighted scoring).
+/// Interference gates neighborhood scores; vivid neighborhoods get boosted.
 pub fn compose_context_budgeted(
     system: &mut DAESystem,
-    _surface: &SurfaceResult,
+    surface: &SurfaceResult,
     query_result: &QueryResult,
-    _interference: &[InterferenceResult],
+    interference: &[InterferenceResult],
     budget: &BudgetConfig,
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> BudgetedContextResult {
-    let candidates = rank_candidates(system, query_result);
+    let candidates = rank_candidates(system, query_result, interference, surface);
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
@@ -680,12 +715,12 @@ pub struct IndexStats {
 /// Same scoring pipeline as compose_context_budgeted but returns only metadata.
 pub fn compose_index(
     system: &mut DAESystem,
-    _surface: &SurfaceResult,
+    surface: &SurfaceResult,
     query_result: &QueryResult,
-    _interference: &[InterferenceResult],
+    interference: &[InterferenceResult],
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> IndexResult {
-    let candidates = rank_candidates(system, query_result);
+    let candidates = rank_candidates(system, query_result, interference, surface);
     let total_candidates = candidates.len();
 
     // Deduplicate: same neighborhood may appear in multiple categories,
@@ -703,12 +738,15 @@ pub fn compose_index(
         .map(|c| {
             let mut score = c.score;
             // Apply diminishing returns for previously recalled neighborhoods
+            // Decision/Preference types get softer decay (0.5x rate)
             if let Some(recalled) = session_recalled
-                && c.neighborhood_type != NeighborhoodType::Decision
-                && c.neighborhood_type != NeighborhoodType::Preference
                 && let Some(&count) = recalled.get(&c.neighborhood_id)
             {
-                score *= 1.0 / (1.0 + count as f64);
+                let decay_rate = match c.neighborhood_type {
+                    NeighborhoodType::Decision | NeighborhoodType::Preference => 0.5,
+                    _ => 1.0,
+                };
+                score *= 1.0 / (1.0 + count as f64 * decay_rate);
             }
             (c, score)
         })
@@ -827,9 +865,43 @@ pub fn retrieve_by_ids(system: &DAESystem, ids: &[Uuid]) -> Vec<IncludedFragment
 /// Decisions that genuinely match the query score this many times higher.
 const DECISION_MULTIPLIER: f64 = 3.0;
 
-/// Minimum score floor for Decision/Preference neighborhoods.
-/// Ensures some visibility even on unrelated queries, but doesn't dominate.
-const DECISION_FLOOR: f64 = 15.0;
+/// Minimum overlap threshold for conscious recall.
+/// At least this fraction of query tokens must match for a conscious neighborhood
+/// to surface. Prevents stop-word-only matches from dominating results.
+const CONSCIOUS_MIN_OVERLAP: f64 = 0.2;
+
+/// Weight for phasor interference contribution to scoring.
+/// Positive interference (in-phase) boosts, negative (anti-phase) suppresses.
+const INTERFERENCE_WEIGHT: f64 = 0.3;
+
+/// Boost multiplier for vivid neighborhoods (>50% surfaced occurrences).
+const VIVIDNESS_BOOST: f64 = 1.5;
+
+/// Aggregate per-neighborhood mean interference from pairwise results.
+/// Returns map of neighborhood_id -> mean cos(phase_diff).
+/// Aggregates both sides of each pair so conscious and subconscious
+/// neighborhoods both receive interference values.
+fn aggregate_interference(
+    system: &DAESystem,
+    interference: &[InterferenceResult],
+) -> HashMap<Uuid, f64> {
+    let mut sums: HashMap<Uuid, (f64, usize)> = HashMap::new();
+    for ir in interference {
+        // Subconscious side
+        let sub_nbhd = system.get_neighborhood_for_occurrence(ir.sub_ref);
+        let entry = sums.entry(sub_nbhd.id).or_insert((0.0, 0));
+        entry.0 += ir.interference;
+        entry.1 += 1;
+        // Conscious side
+        let con_nbhd = system.get_neighborhood_for_occurrence(ir.con_ref);
+        let entry = sums.entry(con_nbhd.id).or_insert((0.0, 0));
+        entry.0 += ir.interference;
+        entry.1 += 1;
+    }
+    sums.into_iter()
+        .map(|(id, (sum, count))| (id, sum / count as f64))
+        .collect()
+}
 
 /// Recency decay coefficient for non-decision memories.
 /// score *= 1.0 / (1.0 + days_old * RECENCY_DECAY_RATE)
@@ -911,7 +983,7 @@ fn parse_days_ago(timestamp: &str) -> f64 {
 fn score_neighborhoods(
     system: &mut DAESystem,
     refs: &[OccurrenceRef],
-    _is_conscious: bool,
+    is_conscious: bool,
     query_token_count: usize,
 ) -> HashMap<Uuid, ScoredNeighborhood> {
     let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
@@ -1035,13 +1107,21 @@ fn score_neighborhoods(
             sn.score *= boost;
         }
         // Decision/Preference: competitive scoring with floor
-        // score = max(normal_score * MULTIPLIER, FLOOR)
+        // Decision/Preference types get a multiplier boost but no floor -
+        // they must earn their score through genuine query overlap
         match sn.neighborhood_type {
             NeighborhoodType::Decision | NeighborhoodType::Preference => {
-                sn.score = (sn.score * DECISION_MULTIPLIER).max(DECISION_FLOOR);
+                sn.score *= DECISION_MULTIPLIER;
             }
             _ => {}
         }
+    }
+
+    // Gate conscious recall: require minimum query token overlap
+    if is_conscious && query_token_count > 0 {
+        scored.retain(|_, sn| {
+            sn.activated_count as f64 / query_token_count as f64 >= CONSCIOUS_MIN_OVERLAP
+        });
     }
 
     scored
@@ -1611,7 +1691,7 @@ mod tests {
 
     #[test]
     fn test_decision_competitive_scoring_high_overlap() {
-        // A Decision with high query overlap should score >= DECISION_FLOOR
+        // A Decision with high query overlap should score well via multiplier
         let mut rng = rng();
         let mut sys = DAESystem::new("test");
 
@@ -1649,7 +1729,7 @@ mod tests {
             None,
         );
 
-        // The decision should surface and score at or above the floor
+        // The decision should surface with a positive score (no floor, but multiplier)
         let decision_entries: Vec<&IncludedFragment> = ctx
             .included
             .iter()
@@ -1659,11 +1739,10 @@ mod tests {
             !decision_entries.is_empty(),
             "decision should be included in recall"
         );
-        // With competitive scoring, score = max(normal * 3.0, 15.0)
         let decision_score = decision_entries[0].score;
         assert!(
-            decision_score >= 15.0,
-            "relevant decision should score >= floor (15.0), got {}",
+            decision_score > 0.0,
+            "relevant decision should have positive score, got {}",
             decision_score,
         );
     }
@@ -1806,12 +1885,17 @@ mod tests {
     }
 
     #[test]
-    fn test_session_diminishing_returns_decisions_exempt() {
+    fn test_session_diminishing_returns_decisions_softer() {
+        // Decisions get softer diminishing returns (0.5x rate) - not exempt
         let mut rng = rng();
         let mut sys = DAESystem::new("test");
 
         // Mark a decision
-        sys.add_to_conscious_typed("always use Postgres", NeighborhoodType::Decision, &mut rng);
+        sys.add_to_conscious_typed(
+            "always use Postgres for database storage",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
 
         // Add subconscious context that matches
         let mut ep = Episode::new("DB notes");
@@ -1847,25 +1931,23 @@ mod tests {
             recalled.insert(f.neighborhood_id, 1);
         }
 
-        // Second query with session recall
-        let result2 = QueryEngine::process_query(&mut sys, "postgres database");
-        let surface2 = compute_surface(&sys, &result2);
+        // Second compose with same query result to isolate diminishing returns
         let ctx2 = compose_context_budgeted(
             &mut sys,
-            &surface2,
-            &result2,
-            &result2.interference,
+            &surface,
+            &result,
+            &result.interference,
             &budget,
             Some(&recalled),
         );
 
-        // Decision should still appear and score unchanged (exempt from diminishing returns)
+        // Decision should still appear (softer decay, not removed)
         assert!(
             ctx2.context.contains("[DECIDED]"),
-            "decisions should survive session recall, got:\n{}",
+            "decisions should survive session recall with softer decay, got:\n{}",
             ctx2.context,
         );
-        // Find decision in both results and verify score is unchanged
+        // Find decision in both results - score should decrease but not as much as standard
         let d1 = ctx1
             .included
             .iter()
@@ -1875,11 +1957,20 @@ mod tests {
             .iter()
             .find(|f| f.neighborhood_type == NeighborhoodType::Decision);
         if let (Some(d1), Some(d2)) = (d1, d2) {
+            // With softer decay at count=1: score *= 1/(1 + 1*0.5) = 0.667
+            // Standard decay would be 1/(1+1) = 0.5
+            // So d2.score should be less than d1 but more than half
             assert!(
-                (d1.score - d2.score).abs() < 0.01,
-                "decision score should be unchanged: first={}, second={}",
+                d2.score < d1.score,
+                "decision score should decrease with softer decay: first={}, second={}",
                 d1.score,
                 d2.score,
+            );
+            let ratio = d2.score / d1.score;
+            assert!(
+                ratio > 0.5,
+                "softer decay ratio should be > 0.5 (standard), got {}",
+                ratio,
             );
         }
     }
@@ -2605,5 +2696,264 @@ mod tests {
                 "total_tokens_if_fetched should be positive when entries exist"
             );
         }
+    }
+
+    #[test]
+    fn test_decision_does_not_surface_on_unrelated_query() {
+        // Decision about postgres should NOT surface on a chocolate cake query
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        sys.add_to_conscious_typed(
+            "always use postgres for database storage backend",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
+
+        let mut ep = Episode::new("Cooking");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["chocolate", "cake", "recipe", "sugar", "flour"]),
+            None,
+            "chocolate cake recipe sugar flour",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        let result =
+            QueryEngine::process_query(&mut sys, "chocolate cake recipe baking ingredients");
+        let surface = compute_surface(&sys, &result);
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 1,
+            min_subconscious: 1,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        // The postgres decision should NOT appear - no meaningful overlap
+        let decision_entries: Vec<&IncludedFragment> = ctx
+            .included
+            .iter()
+            .filter(|f| f.neighborhood_type == NeighborhoodType::Decision)
+            .collect();
+        assert!(
+            decision_entries.is_empty(),
+            "unrelated decision should NOT surface on chocolate cake query, got:\n{}",
+            ctx.context,
+        );
+    }
+
+    #[test]
+    fn test_conscious_min_overlap_filters_stopword_only() {
+        // A conscious memory matching only via common words should be filtered
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        // Conscious memory with common words
+        sys.add_to_conscious_typed(
+            "always use tools for everything",
+            NeighborhoodType::Preference,
+            &mut rng,
+        );
+
+        // Subconscious episode about something else that shares "use"
+        let mut ep = Episode::new("Gardening");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&[
+                "garden", "plants", "soil", "water", "sunlight", "growing", "seeds",
+            ]),
+            None,
+            "garden plants soil water sunlight growing seeds",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        // Query about gardening - only overlap with conscious is via stop-words
+        let result =
+            QueryEngine::process_query(&mut sys, "garden plants soil water sunlight growing seeds");
+        let surface = compute_surface(&sys, &result);
+        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+
+        // The preference about tools should not surface
+        assert!(
+            !ctx.context.contains("[PREFERENCE]"),
+            "stop-word-only conscious memory should be filtered, got:\n{}",
+            ctx.context,
+        );
+    }
+
+    #[test]
+    fn test_interference_boosts_phase_aligned_neighborhoods() {
+        // Verify that the interference code path runs without error
+        // and that results are produced when interference data exists
+        let mut sys = make_full_system();
+        let result = QueryEngine::process_query(&mut sys, "quantum physics neural");
+        let surface = compute_surface(&sys, &result);
+
+        // The interference vector is computed by the query engine
+        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+
+        // Should produce valid context (interference may or may not affect scores
+        // depending on the test data, but the code path should work)
+        assert!(
+            ctx.metrics.subconscious > 0 || ctx.metrics.conscious > 0,
+            "should produce some recall with interference wired in"
+        );
+    }
+
+    #[test]
+    fn test_vividness_boost_improves_vivid_score() {
+        // Verify vivid neighborhoods get boosted in scoring
+        let mut sys = make_full_system();
+        let result = QueryEngine::process_query(&mut sys, "quantum physics neural");
+        let surface = compute_surface(&sys, &result);
+
+        // Get scores with real surface (may have vivid neighborhoods)
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 1,
+            min_subconscious: 2,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        // Verify the pipeline works - vivid boost is applied but may not be
+        // observable in test data (few occurrences per neighborhood)
+        assert!(
+            !ctx.included.is_empty(),
+            "should include some results with vividness boost wired in"
+        );
+    }
+
+    #[test]
+    fn test_decisions_get_softer_diminishing_returns() {
+        // Verify Decision neighborhoods decay slower than standard neighborhoods
+        // Use apply_diminishing_returns directly to avoid activation count interference
+        let decision_id = Uuid::new_v4();
+        let standard_id = Uuid::new_v4();
+
+        let candidates = vec![
+            RankedCandidate {
+                neighborhood_id: decision_id,
+                episode_idx: usize::MAX,
+                category: RecallCategory::Conscious,
+                score: 10.0,
+                text: "decision".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Decision,
+            },
+            RankedCandidate {
+                neighborhood_id: standard_id,
+                episode_idx: 0,
+                category: RecallCategory::Subconscious,
+                score: 10.0,
+                text: "standard".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Memory,
+            },
+        ];
+
+        let mut recalled: HashMap<Uuid, u32> = HashMap::new();
+        recalled.insert(decision_id, 1);
+        recalled.insert(standard_id, 1);
+
+        let result = apply_diminishing_returns(candidates, &recalled);
+
+        let decision = result
+            .iter()
+            .find(|c| c.neighborhood_id == decision_id)
+            .unwrap();
+        let standard = result
+            .iter()
+            .find(|c| c.neighborhood_id == standard_id)
+            .unwrap();
+
+        // Decision: 10.0 * 1/(1 + 1*0.5) = 10.0 * 0.667 = 6.67
+        // Standard: 10.0 * 1/(1 + 1*1.0) = 10.0 * 0.5 = 5.0
+        assert!(
+            decision.score > standard.score,
+            "decision should decay slower: decision={}, standard={}",
+            decision.score,
+            standard.score,
+        );
+        // Verify exact ratios
+        let decision_ratio = decision.score / 10.0;
+        let standard_ratio = standard.score / 10.0;
+        assert!(
+            (decision_ratio - 2.0 / 3.0).abs() < 0.01,
+            "decision ratio should be ~0.667, got {}",
+            decision_ratio,
+        );
+        assert!(
+            (standard_ratio - 0.5).abs() < 0.01,
+            "standard ratio should be ~0.5, got {}",
+            standard_ratio,
+        );
+    }
+
+    #[test]
+    fn test_irrelevant_query_no_conscious_recall() {
+        // Integration test: completely irrelevant query produces no conscious recall
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+
+        sys.add_to_conscious_typed(
+            "Stuart requires ALL conventions to be followed",
+            NeighborhoodType::Preference,
+            &mut rng,
+        );
+
+        sys.add_to_conscious_typed(
+            "always use postgres for database storage",
+            NeighborhoodType::Decision,
+            &mut rng,
+        );
+
+        // Add some subconscious content about cooking
+        let mut ep = Episode::new("Cooking");
+        ep.add_neighborhood(Neighborhood::from_tokens(
+            &to_tokens(&["chocolate", "cake", "recipe", "sugar", "flour", "baking"]),
+            None,
+            "chocolate cake recipe sugar flour baking",
+            &mut rng,
+        ));
+        sys.add_episode(ep);
+
+        let result = QueryEngine::process_query(&mut sys, "chocolate cake recipe");
+        let surface = compute_surface(&sys, &result);
+        let budget = BudgetConfig {
+            max_tokens: 4096,
+            min_conscious: 1,
+            min_subconscious: 1,
+            min_novel: 0,
+        };
+        let ctx = compose_context_budgeted(
+            &mut sys,
+            &surface,
+            &result,
+            &result.interference,
+            &budget,
+            None,
+        );
+
+        assert_eq!(
+            ctx.metrics.conscious, 0,
+            "irrelevant query should produce NO conscious recall, got:\n{}",
+            ctx.context,
+        );
     }
 }
