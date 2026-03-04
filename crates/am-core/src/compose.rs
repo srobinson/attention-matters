@@ -123,7 +123,11 @@ struct RankedCandidate {
 /// Subconscious neighborhoods scored by IDF-weighted activation.
 /// Novel candidates: subconscious with activated_count <= 2, no words in common
 /// with conscious, scored by max_word_weight * max_plasticity / activated_count.
-fn rank_candidates(system: &mut DAESystem, query_result: &QueryResult) -> Vec<RankedCandidate> {
+fn rank_candidates(
+    system: &mut DAESystem,
+    query_result: &QueryResult,
+    interference: &[InterferenceResult],
+) -> Vec<RankedCandidate> {
     let conscious_words: HashSet<String> = query_result
         .activation
         .conscious
@@ -138,6 +142,24 @@ fn rank_candidates(system: &mut DAESystem, query_result: &QueryResult) -> Vec<Ra
 
     // Suppress older neighborhoods that overlap with newer ones (contradiction handling)
     overlap_suppress(&mut con_scored, &mut sub_scored, system);
+
+    // Apply phasor interference to scores
+    let net_interference = aggregate_interference(system, interference);
+
+    // Conscious: strong anti-phase suppression
+    for sn in con_scored.values_mut() {
+        if let Some(&net) = net_interference.get(&sn.neighborhood_id)
+            && net < -0.5 {
+                sn.score *= 0.5;
+            }
+    }
+
+    // Subconscious: continuous interference modulation
+    for sn in sub_scored.values_mut() {
+        if let Some(&net) = net_interference.get(&sn.neighborhood_id) {
+            sn.score *= 1.0 + net * INTERFERENCE_WEIGHT;
+        }
+    }
 
     let mut candidates = Vec::new();
     let mut selected_for_novel: HashSet<Uuid> = HashSet::new();
@@ -264,16 +286,15 @@ fn apply_diminishing_returns(
 /// returned this session. All neighborhoods get diminishing returns -
 /// Decision/Preference types use softer decay (0.5x rate).
 ///
-/// `_surface` and `_interference` are part of the pipeline API and reserved
-/// for future use (e.g. vivid filtering, interference-weighted scoring).
+/// `surface` is reserved for future vivid filtering (see ALP-724).
 pub fn compose_context(
     system: &mut DAESystem,
     _surface: &SurfaceResult,
     query_result: &QueryResult,
-    _interference: &[InterferenceResult],
+    interference: &[InterferenceResult],
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> ContextResult {
-    let candidates = rank_candidates(system, query_result);
+    let candidates = rank_candidates(system, query_result, interference);
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
@@ -399,17 +420,16 @@ pub fn compose_context(
 /// returned this session. All neighborhoods get diminishing returns -
 /// Decision/Preference types use softer decay (0.5x rate).
 ///
-/// `_surface` and `_interference` are part of the pipeline API and reserved
-/// for future use (e.g. vivid filtering, interference-weighted scoring).
+/// `surface` is reserved for future vivid filtering (see ALP-724).
 pub fn compose_context_budgeted(
     system: &mut DAESystem,
     _surface: &SurfaceResult,
     query_result: &QueryResult,
-    _interference: &[InterferenceResult],
+    interference: &[InterferenceResult],
     budget: &BudgetConfig,
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> BudgetedContextResult {
-    let candidates = rank_candidates(system, query_result);
+    let candidates = rank_candidates(system, query_result, interference);
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
@@ -683,10 +703,10 @@ pub fn compose_index(
     system: &mut DAESystem,
     _surface: &SurfaceResult,
     query_result: &QueryResult,
-    _interference: &[InterferenceResult],
+    interference: &[InterferenceResult],
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> IndexResult {
-    let candidates = rank_candidates(system, query_result);
+    let candidates = rank_candidates(system, query_result, interference);
     let total_candidates = candidates.len();
 
     // Deduplicate: same neighborhood may appear in multiple categories,
@@ -835,6 +855,28 @@ const DECISION_MULTIPLIER: f64 = 3.0;
 /// At least this fraction of query tokens must match for a conscious neighborhood
 /// to surface. Prevents stop-word-only matches from dominating results.
 const CONSCIOUS_MIN_OVERLAP: f64 = 0.2;
+
+/// Weight for phasor interference contribution to scoring.
+/// Positive interference (in-phase) boosts, negative (anti-phase) suppresses.
+const INTERFERENCE_WEIGHT: f64 = 0.3;
+
+/// Aggregate per-neighborhood mean interference from pairwise results.
+/// Returns map of neighborhood_id -> mean cos(phase_diff).
+fn aggregate_interference(
+    system: &DAESystem,
+    interference: &[InterferenceResult],
+) -> HashMap<Uuid, f64> {
+    let mut sums: HashMap<Uuid, (f64, usize)> = HashMap::new();
+    for ir in interference {
+        let nbhd = system.get_neighborhood_for_occurrence(ir.sub_ref);
+        let entry = sums.entry(nbhd.id).or_insert((0.0, 0));
+        entry.0 += ir.interference;
+        entry.1 += 1;
+    }
+    sums.into_iter()
+        .map(|(id, (sum, count))| (id, sum / count as f64))
+        .collect()
+}
 
 /// Recency decay coefficient for non-decision memories.
 /// score *= 1.0 / (1.0 + days_old * RECENCY_DECAY_RATE)
