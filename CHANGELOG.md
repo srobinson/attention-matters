@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.7](https://github.com/srobinson/attention-matters/compare/v0.1.6...v0.1.7) (2026-03-04)
+
+
+### Bug Fixes
+
+* automated release pipeline and update fmm language config ([19bbe37](https://github.com/srobinson/attention-matters/commit/19bbe37d63655dffb1fbe201a7a091abbbdc429e))
+* extract PR number from release-please JSON output ([ff8a267](https://github.com/srobinson/attention-matters/commit/ff8a267985703428b6ad424a3e1c5dc0d6b5b53a))
+
 ## [0.1.6](https://github.com/srobinson/attention-matters/compare/v0.1.5...v0.1.6) (2026-03-04)
 
 
