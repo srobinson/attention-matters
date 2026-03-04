@@ -127,6 +127,7 @@ fn rank_candidates(
     system: &mut DAESystem,
     query_result: &QueryResult,
     interference: &[InterferenceResult],
+    surface: &SurfaceResult,
 ) -> Vec<RankedCandidate> {
     let conscious_words: HashSet<String> = query_result
         .activation
@@ -149,15 +150,28 @@ fn rank_candidates(
     // Conscious: strong anti-phase suppression
     for sn in con_scored.values_mut() {
         if let Some(&net) = net_interference.get(&sn.neighborhood_id)
-            && net < -0.5 {
-                sn.score *= 0.5;
-            }
+            && net < -0.5
+        {
+            sn.score *= 0.5;
+        }
     }
 
     // Subconscious: continuous interference modulation
     for sn in sub_scored.values_mut() {
         if let Some(&net) = net_interference.get(&sn.neighborhood_id) {
             sn.score *= 1.0 + net * INTERFERENCE_WEIGHT;
+        }
+    }
+
+    // Boost vivid neighborhoods (>50% surfaced occurrences)
+    for sn in con_scored.values_mut() {
+        if surface.vivid_neighborhood_ids.contains(&sn.neighborhood_id) {
+            sn.score *= VIVIDNESS_BOOST;
+        }
+    }
+    for sn in sub_scored.values_mut() {
+        if surface.vivid_neighborhood_ids.contains(&sn.neighborhood_id) {
+            sn.score *= VIVIDNESS_BOOST;
         }
     }
 
@@ -286,15 +300,15 @@ fn apply_diminishing_returns(
 /// returned this session. All neighborhoods get diminishing returns -
 /// Decision/Preference types use softer decay (0.5x rate).
 ///
-/// `surface` is reserved for future vivid filtering (see ALP-724).
+/// Interference gates neighborhood scores; vivid neighborhoods get boosted.
 pub fn compose_context(
     system: &mut DAESystem,
-    _surface: &SurfaceResult,
+    surface: &SurfaceResult,
     query_result: &QueryResult,
     interference: &[InterferenceResult],
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> ContextResult {
-    let candidates = rank_candidates(system, query_result, interference);
+    let candidates = rank_candidates(system, query_result, interference, surface);
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
@@ -420,16 +434,16 @@ pub fn compose_context(
 /// returned this session. All neighborhoods get diminishing returns -
 /// Decision/Preference types use softer decay (0.5x rate).
 ///
-/// `surface` is reserved for future vivid filtering (see ALP-724).
+/// Interference gates neighborhood scores; vivid neighborhoods get boosted.
 pub fn compose_context_budgeted(
     system: &mut DAESystem,
-    _surface: &SurfaceResult,
+    surface: &SurfaceResult,
     query_result: &QueryResult,
     interference: &[InterferenceResult],
     budget: &BudgetConfig,
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> BudgetedContextResult {
-    let candidates = rank_candidates(system, query_result, interference);
+    let candidates = rank_candidates(system, query_result, interference, surface);
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
@@ -701,12 +715,12 @@ pub struct IndexStats {
 /// Same scoring pipeline as compose_context_budgeted but returns only metadata.
 pub fn compose_index(
     system: &mut DAESystem,
-    _surface: &SurfaceResult,
+    surface: &SurfaceResult,
     query_result: &QueryResult,
     interference: &[InterferenceResult],
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> IndexResult {
-    let candidates = rank_candidates(system, query_result, interference);
+    let candidates = rank_candidates(system, query_result, interference, surface);
     let total_candidates = candidates.len();
 
     // Deduplicate: same neighborhood may appear in multiple categories,
@@ -859,6 +873,9 @@ const CONSCIOUS_MIN_OVERLAP: f64 = 0.2;
 /// Weight for phasor interference contribution to scoring.
 /// Positive interference (in-phase) boosts, negative (anti-phase) suppresses.
 const INTERFERENCE_WEIGHT: f64 = 0.3;
+
+/// Boost multiplier for vivid neighborhoods (>50% surfaced occurrences).
+const VIVIDNESS_BOOST: f64 = 1.5;
 
 /// Aggregate per-neighborhood mean interference from pairwise results.
 /// Returns map of neighborhood_id -> mean cos(phase_diff).
