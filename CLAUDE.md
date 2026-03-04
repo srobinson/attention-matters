@@ -4,15 +4,15 @@ Rust workspace implementing the DAE (Daemon Attention Engine) geometric memory s
 
 ## Architecture
 
-- `am-core` — Pure math engine. Zero I/O. Models memory as S³ manifold with quaternion positions, golden-angle phasors, IDF-weighted drift, and Kuramoto phase coupling.
-- `am-store` — Persistence layer (SQLite-backed state storage).
-- `am-cli` — CLI interface for ingestion, querying, and import/export.
+- `am-core` - Pure math engine. Zero I/O. Models memory as S³ manifold with quaternion positions, golden-angle phasors, IDF-weighted drift, and Kuramoto phase coupling.
+- `am-store` - Persistence layer (SQLite-backed state storage).
+- `am-cli` - CLI interface for ingestion, querying, and import/export.
 
 ## Conventions
 
 - All floating point: `f64` (matches JS Number for numerical compatibility with v0.7.2 reference)
-- Quaternion is `#[derive(Clone, Copy)]` — lightweight value type
-- Constants derived from φ and π — no magic numbers
+- Quaternion is `#[derive(Clone, Copy)]` - lightweight value type
+- Constants derived from φ and π - no magic numbers
 - OpenClaw drift variant: `ratio / THRESHOLD` (2c/C)
 - SLERP near-parallel threshold: `0.9995`
 

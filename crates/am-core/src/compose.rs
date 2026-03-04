@@ -40,7 +40,7 @@ fn estimate_llm_tokens(text: &str) -> usize {
     text.len().div_ceil(4)
 }
 
-/// Neighborhood IDs categorized by recall type — for feedback tracking.
+/// Neighborhood IDs categorized by recall type - for feedback tracking.
 pub struct CategorizedIds {
     pub conscious: Vec<Uuid>,
     pub subconscious: Vec<Uuid>,
@@ -238,7 +238,7 @@ fn format_entry(
 const ENTRY_HEADER_OVERHEAD_TOKENS: usize = 20;
 
 /// Apply diminishing returns to previously-recalled candidates.
-/// Decisions/Preferences are exempt — they always surface at full score.
+/// Decisions/Preferences are exempt - they always surface at full score.
 fn apply_diminishing_returns(
     candidates: Vec<RankedCandidate>,
     recalled: &HashMap<Uuid, u32>,
@@ -525,7 +525,7 @@ pub fn compose_context_budgeted(
     }
 
     // Phase 2: Greedily fill remaining budget by score across all categories.
-    // Apply minimum score threshold here — category minimums are always filled,
+    // Apply minimum score threshold here - category minimums are always filled,
     // but overflow candidates must score above MIN_SCORE_THRESHOLD.
     let mut remaining: Vec<&RankedCandidate> = candidates
         .iter()
@@ -869,7 +869,7 @@ fn days_since_episode(system: &DAESystem, episode_idx: usize) -> f64 {
         return 0.0;
     }
     // Parse ISO-8601 timestamps like "2026-02-19T12:00:00Z" or "2026-02-19"
-    // Fall back to 0.0 if unparseable (no external chrono dep — simple parse).
+    // Fall back to 0.0 if unparseable (no external chrono dep - simple parse).
     parse_days_ago(timestamp)
 }
 
@@ -917,7 +917,7 @@ fn score_neighborhoods(
     let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
 
     // Pre-collect data to avoid borrow conflicts.
-    // Superseded neighborhoods are excluded — they've been explicitly replaced.
+    // Superseded neighborhoods are excluded - they've been explicitly replaced.
     struct OccData {
         nbhd_id: Uuid,
         episode_idx: usize,
@@ -1078,7 +1078,7 @@ fn overlap_suppress(
     sub_scored: &mut HashMap<Uuid, ScoredNeighborhood>,
     system: &mut DAESystem,
 ) {
-    // Collect references to word sets and epochs — no cloning needed since
+    // Collect references to word sets and epochs - no cloning needed since
     // we only read words during pairwise comparison, then mutate scores after.
     let mut info: Vec<(Uuid, &HashSet<String>, u64)> = Vec::new();
     let mut seen: HashSet<Uuid> = HashSet::new();
@@ -1092,7 +1092,7 @@ fn overlap_suppress(
         return;
     }
 
-    // Pairwise comparison — O(k²) but k is bounded (top candidates only)
+    // Pairwise comparison - O(k²) but k is bounded (top candidates only)
     let mut suppress: HashSet<Uuid> = HashSet::new();
     for i in 0..info.len() {
         for j in (i + 1)..info.len() {
@@ -1709,7 +1709,7 @@ mod tests {
             None,
         );
 
-        // Check if the decision even activates — it shares no words with the query
+        // Check if the decision even activates - it shares no words with the query
         let decision_entries: Vec<&IncludedFragment> = ctx
             .included
             .iter()
@@ -1823,7 +1823,7 @@ mod tests {
         ));
         sys.add_episode(ep);
 
-        // First query — get scores without session recall
+        // First query - get scores without session recall
         let result = QueryEngine::process_query(&mut sys, "postgres database");
         let surface = compute_surface(&sys, &result);
         let budget = BudgetConfig {
@@ -2065,7 +2065,7 @@ mod tests {
 
     #[test]
     fn test_overlap_suppresses_older_contradicting_memory() {
-        // Two conscious memories about the same topic — only the newer should surface.
+        // Two conscious memories about the same topic - only the newer should surface.
         let mut rng = rng();
         let mut sys = DAESystem::new("test");
 
@@ -2075,7 +2075,7 @@ mod tests {
             NeighborhoodType::Insight,
             &mut rng,
         );
-        // Newer memory (higher epoch) — contradicts the first
+        // Newer memory (higher epoch) - contradicts the first
         sys.add_to_conscious_typed(
             "deployment strategy uses microservices pattern for all services",
             NeighborhoodType::Insight,
@@ -2099,7 +2099,7 @@ mod tests {
 
     #[test]
     fn test_overlap_does_not_suppress_non_overlapping() {
-        // Two unrelated memories — both should surface normally.
+        // Two unrelated memories - both should surface normally.
         let mut rng = rng();
         let mut sys = DAESystem::new("test");
 
@@ -2135,7 +2135,7 @@ mod tests {
             ctx.context,
         );
         // The cake recipe should NOT surface (not relevant to query)
-        // This is a relevance check, not overlap — cake has no query overlap
+        // This is a relevance check, not overlap - cake has no query overlap
     }
 
     #[test]
@@ -2172,7 +2172,7 @@ mod tests {
 
     #[test]
     fn test_overlap_in_subconscious_episodes() {
-        // Contradicting subconscious memories — newer episode should win.
+        // Contradicting subconscious memories - newer episode should win.
         let mut rng = rng();
         let mut sys = DAESystem::new("test");
 
@@ -2267,7 +2267,7 @@ mod tests {
         ));
         sys.add_episode(ep2);
 
-        // Query with 5 words — 4 match neighborhood A, 1 matches neighborhood B
+        // Query with 5 words - 4 match neighborhood A, 1 matches neighborhood B
         let result = QueryEngine::process_query(&mut sys, "alpha beta gamma delta epsilon");
         let surface = compute_surface(&sys, &result);
         let budget = BudgetConfig {
@@ -2333,7 +2333,7 @@ mod tests {
         ));
         sys.add_episode(ep1);
 
-        // Weak match — shares only one common word with query
+        // Weak match - shares only one common word with query
         let mut ep2 = Episode::new("Weak");
         ep2.add_neighborhood(Neighborhood::from_tokens(
             &to_tokens(&["target", "unrelated1", "unrelated2", "unrelated3"]),

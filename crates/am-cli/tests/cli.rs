@@ -401,7 +401,7 @@ fn sync_ingests_sessions() {
         .success()
         .stdout(predicate::str::contains("episodes:   2"));
 
-    // Re-sync with --all replaces (not duplicates) — still 2 episodes
+    // Re-sync with --all replaces (not duplicates) - still 2 episodes
     am_cmd(&dir)
         .args(["sync", "--all", "--dir"])
         .arg(&claude_dir)
@@ -451,7 +451,7 @@ fn sync_stdin_hook() {
         transcript.display()
     );
 
-    // Pipe hook JSON on stdin — should ingest the session
+    // Pipe hook JSON on stdin - should ingest the session
     am_cmd(&dir)
         .args(["sync"])
         .write_stdin(hook_json.as_bytes())
@@ -467,7 +467,7 @@ fn sync_stdin_hook() {
         .success()
         .stdout(predicate::str::contains("episodes:   1"));
 
-    // Pipe the same hook JSON again — replace semantics, still 1 episode
+    // Pipe the same hook JSON again - replace semantics, still 1 episode
     am_cmd(&dir)
         .args(["sync"])
         .write_stdin(hook_json.as_bytes())

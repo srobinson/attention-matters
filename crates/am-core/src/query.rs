@@ -13,7 +13,7 @@ pub struct InterferenceResult {
     pub interference: f64,
 }
 
-/// Word group for Kuramoto coupling — a word present in both manifolds.
+/// Word group for Kuramoto coupling - a word present in both manifolds.
 pub struct WordGroup {
     pub word: String,
     pub sub_refs: Vec<OccurrenceRef>,

@@ -3,7 +3,7 @@
 //! When a recalled memory actually helped the user, the occurrences that
 //! contributed should drift closer to where they were needed (SLERP toward
 //! the query centroid). When a recall was unhelpful, those occurrences
-//! decay — their activation count is reduced, making them drift less in
+//! decay - their activation count is reduced, making them drift less in
 //! future queries and eventually become GC candidates.
 //!
 //! This is the geometric equivalent of reinforcement: the manifold reshapes
@@ -17,9 +17,9 @@ use crate::tokenizer::tokenize;
 /// Feedback signal: did the recalled content help?
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FeedbackSignal {
-    /// The recall was useful — drift occurrences toward the query region.
+    /// The recall was useful - drift occurrences toward the query region.
     Boost,
-    /// The recall was not useful — decay activation, let occurrences drift away.
+    /// The recall was not useful - decay activation, let occurrences drift away.
     Demote,
 }
 
@@ -35,18 +35,18 @@ pub struct FeedbackResult {
 }
 
 /// How much to SLERP toward the query centroid on a Boost signal.
-/// Moderate — we don't want to collapse the manifold, just nudge.
+/// Moderate - we don't want to collapse the manifold, just nudge.
 const BOOST_DRIFT_FACTOR: f64 = 0.15;
 
 /// How much activation to decay on a Demote signal.
-/// Floor at 0 — we never go negative.
+/// Floor at 0 - we never go negative.
 const DEMOTE_DECAY: u32 = 2;
 
 /// Apply relevance feedback to neighborhoods that were recalled for a query.
 ///
-/// `query` — the original query text (used to compute the centroid for boosting).
-/// `neighborhood_ids` — the neighborhood UUIDs that were actually shown to the user.
-/// `signal` — Boost or Demote.
+/// `query` - the original query text (used to compute the centroid for boosting).
+/// `neighborhood_ids` - the neighborhood UUIDs that were actually shown to the user.
+/// `signal` - Boost or Demote.
 ///
 /// For Boost: activated occurrences in the specified neighborhoods SLERP toward
 /// the IDF-weighted centroid of the query's activated occurrences. This pulls
@@ -156,7 +156,7 @@ fn apply_boost(
         .collect();
 
     // SLERP each target occurrence toward the centroid
-    // Factor scales with IDF weight — rare words get pulled harder
+    // Factor scales with IDF weight - rare words get pulled harder
     let mut boosted = 0usize;
     for (i, r) in target_refs.iter().enumerate() {
         let occ = system.get_occurrence(*r);
@@ -167,7 +167,7 @@ fn apply_boost(
             let new_pos = occ.position.slerp(centroid, factor);
             let occ = system.get_occurrence_mut(*r);
             occ.position = new_pos;
-            // Also bump activation — this memory proved useful
+            // Also bump activation - this memory proved useful
             occ.activation_count = occ.activation_count.saturating_add(1);
             boosted += 1;
         }
@@ -438,7 +438,7 @@ mod tests {
         let p1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let p2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
 
-        // Equal weights — centroid should be between them
+        // Equal weights - centroid should be between them
         let centroid = compute_weighted_centroid(&[p1, p2], &[1.0, 1.0]).unwrap();
         let d1 = p1.angular_distance(centroid);
         let d2 = p2.angular_distance(centroid);
@@ -453,7 +453,7 @@ mod tests {
         let p1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
         let p2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
 
-        // Heavy weight on p1 — centroid should be closer to p1
+        // Heavy weight on p1 - centroid should be closer to p1
         let centroid = compute_weighted_centroid(&[p1, p2], &[10.0, 1.0]).unwrap();
         let d1 = p1.angular_distance(centroid);
         let d2 = p2.angular_distance(centroid);

@@ -30,7 +30,7 @@ function getTarget() {
   if (!target) {
     console.error(
       `Unsupported platform: ${key}\n` +
-        `Supported: ${Object.keys(PLATFORM_MAP).join(", ")}`
+        `Supported: ${Object.keys(PLATFORM_MAP).join(", ")}`,
     );
     process.exit(1);
   }
@@ -39,7 +39,7 @@ function getTarget() {
 
 function getVersion() {
   const pkg = JSON.parse(
-    fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8")
+    fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"),
   );
   return pkg.version;
 }
@@ -48,18 +48,26 @@ function fetch(url) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith("https") ? https : http;
     mod
-      .get(url, { headers: { "User-Agent": "attention-matters-installer" } }, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return fetch(res.headers.location).then(resolve, reject);
-        }
-        if (res.statusCode !== 200) {
-          return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
-        }
-        const chunks = [];
-        res.on("data", (chunk) => chunks.push(chunk));
-        res.on("end", () => resolve(Buffer.concat(chunks)));
-        res.on("error", reject);
-      })
+      .get(
+        url,
+        { headers: { "User-Agent": "attention-matters-installer" } },
+        (res) => {
+          if (
+            res.statusCode >= 300 &&
+            res.statusCode < 400 &&
+            res.headers.location
+          ) {
+            return fetch(res.headers.location).then(resolve, reject);
+          }
+          if (res.statusCode !== 200) {
+            return reject(new Error(`HTTP ${res.statusCode} for ${url}`));
+          }
+          const chunks = [];
+          res.on("data", (chunk) => chunks.push(chunk));
+          res.on("end", () => resolve(Buffer.concat(chunks)));
+          res.on("error", reject);
+        },
+      )
       .on("error", reject);
   });
 }
@@ -99,9 +107,9 @@ async function install() {
         `  ${err.message}\n\n` +
         `You can install manually:\n` +
         `  cargo install am-cli\n` +
-        `  brew install srobinson/tap/am`
+        `  brew install srobinson/tap/am`,
     );
-    // Don't fail the install — the bin wrapper will show a helpful error
+    // Don't fail the install - the bin wrapper will show a helpful error
   }
 }
 

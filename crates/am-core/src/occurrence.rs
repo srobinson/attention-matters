@@ -56,7 +56,7 @@ impl Occurrence {
     }
 
     /// Plasticity: 1 / (1 + ln(1 + c))
-    /// Diminishing returns — each activation contributes less.
+    /// Diminishing returns - each activation contributes less.
     pub fn plasticity(&self) -> f64 {
         1.0 / (1.0 + (1.0 + self.activation_count as f64).ln())
     }

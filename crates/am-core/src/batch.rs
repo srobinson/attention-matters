@@ -6,7 +6,7 @@
 //! union of all query tokens once, drifts once, computes interference once,
 //! then partitions results per query.
 //!
-//! The IDF weights are a global property of the manifold — they don't change
+//! The IDF weights are a global property of the manifold - they don't change
 //! between queries in the same batch. This is where the amortization comes from.
 
 use std::collections::{HashMap, HashSet};
@@ -44,14 +44,14 @@ impl BatchQueryEngine {
     ///
     /// Strategy:
     /// 1. Collect union of all query tokens (deduplicated).
-    /// 2. Activate the union once — single index rebuild, single activation pass.
-    /// 3. Drift the union once — single O(n²) or O(n) pass.
+    /// 2. Activate the union once - single index rebuild, single activation pass.
+    /// 3. Drift the union once - single O(n²) or O(n) pass.
     /// 4. Compute interference once for the full activated set.
     /// 5. For each individual query, build a per-query activation subset,
     ///    compute surface, and compose context with its own budget.
     ///
     /// The IDF weights don't change between step 2 and step 5 because
-    /// activation doesn't modify the neighborhood index — it only bumps
+    /// activation doesn't modify the neighborhood index - it only bumps
     /// occurrence counters. So `get_word_weight()` returns the same value
     /// for all queries in the batch.
     pub fn batch_query(
@@ -365,7 +365,7 @@ mod tests {
     fn test_batch_overlapping_queries_share_activation() {
         let mut sys = make_batch_system();
 
-        // Two queries that share "quantum" — this word gets activated once
+        // Two queries that share "quantum" - this word gets activated once
         let requests = vec![
             BatchQueryRequest {
                 query: "quantum physics".to_string(),

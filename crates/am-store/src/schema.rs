@@ -9,12 +9,12 @@ pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
-    // Checkpoint every ~400KB instead of the default ~4MB — keeps WAL files small
+    // Checkpoint every ~400KB instead of the default ~4MB - keeps WAL files small
     conn.pragma_update(None, "wal_autocheckpoint", 100)?;
 
     // Force-checkpoint any stale WAL data into the main DB on startup.
     // Uses TRUNCATE mode to also remove the WAL file afterward.
-    // Errors are non-fatal — in-memory DBs and fresh files legitimately fail this.
+    // Errors are non-fatal - in-memory DBs and fresh files legitimately fail this.
     if conn
         .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
         .is_ok()
@@ -118,7 +118,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
 }
 
 /// Backfill empty timestamps on episodes using rowid ordering.
-/// Only runs once — skips if no episodes have empty timestamps.
+/// Only runs once - skips if no episodes have empty timestamps.
 fn backfill_empty_timestamps(conn: &Connection) -> Result<()> {
     let empty_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM episodes WHERE timestamp = '' OR timestamp IS NULL",

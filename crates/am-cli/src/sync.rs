@@ -333,7 +333,7 @@ mod tests {
         let path = dir.path().join("test.jsonl");
         let mut f = fs::File::create(&path).unwrap();
 
-        // Short message (< 20 chars) — should be filtered
+        // Short message (< 20 chars) - should be filtered
         writeln!(
             f,
             r#"{{"type":"user","message":{{"role":"user","content":"yes"}}}}"#

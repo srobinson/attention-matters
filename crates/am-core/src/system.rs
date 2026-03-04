@@ -254,7 +254,7 @@ impl DAESystem {
     /// that still have the default epoch 0 (i.e., freshly created).
     ///
     /// INVARIANT: Loaded neighborhoods (from Store or import) must not pass
-    /// through this method — they go via `episodes.push()` + `sync_next_epoch()`
+    /// through this method - they go via `episodes.push()` + `sync_next_epoch()`
     /// to preserve their original epochs. This method is only for new episodes
     /// created during the current session.
     pub fn add_episode(&mut self, mut episode: Episode) {

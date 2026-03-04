@@ -9,7 +9,7 @@ use crate::constants::{EPSILON, SLERP_THRESHOLD};
 ///
 /// Always normalized. Represents rotations and positions on the 3-sphere.
 /// Antipodal quaternions (q and -q) represent the same rotation but different
-/// points on S³ — the geodesic distance function handles this via abs(dot).
+/// points on S³ - the geodesic distance function handles this via abs(dot).
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Quaternion {
     pub w: f64,

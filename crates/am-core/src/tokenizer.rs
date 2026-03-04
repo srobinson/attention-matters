@@ -11,7 +11,7 @@ static APOSTROPHE_TRIM: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^'+|'+$"
 
 /// Tokenize text into lowercase words.
 /// Preserves apostrophes within words (e.g., "don't").
-/// No stemming, no stop-word removal — IDF handles frequency naturally.
+/// No stemming, no stop-word removal - IDF handles frequency naturally.
 pub fn tokenize(text: &str) -> Vec<String> {
     let cleaned = NON_WORD.replace_all(text, " ");
     cleaned

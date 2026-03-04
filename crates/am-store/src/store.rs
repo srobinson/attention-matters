@@ -86,7 +86,7 @@ impl Store {
             .map_err(StoreError::Sqlite)
     }
 
-    /// Run a TRUNCATE checkpoint — flushes WAL and removes the file.
+    /// Run a TRUNCATE checkpoint - flushes WAL and removes the file.
     /// Used during clean shutdown.
     pub fn checkpoint_truncate(&self) -> Result<()> {
         self.conn
@@ -148,7 +148,7 @@ impl Store {
         self.save_episode_on(&tx, &system.conscious_episode)?;
 
         tx.commit()?;
-        // PASSIVE checkpoint after bulk write — flushes WAL without blocking readers
+        // PASSIVE checkpoint after bulk write - flushes WAL without blocking readers
         let _ = self.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
         Ok(())
     }
@@ -869,7 +869,7 @@ impl Store {
             None => return Ok(0),
             Some(false) => {
                 return Err(StoreError::InvalidData(
-                    "neighborhood is not conscious — use forget_episode instead".into(),
+                    "neighborhood is not conscious - use forget_episode instead".into(),
                 ));
             }
             Some(true) => {}
@@ -1285,7 +1285,7 @@ mod tests {
     #[test]
     fn test_gc_noop_when_empty() {
         let store = Store::open_in_memory().unwrap();
-        // No data saved — empty DB
+        // No data saved - empty DB
         let result = store.gc_pass(0).unwrap();
         assert_eq!(result.evicted_occurrences, 0);
         assert_eq!(result.removed_episodes, 0);

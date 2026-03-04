@@ -16,13 +16,13 @@ use rmcp::{ServiceExt, transport::stdio};
 #[derive(Parser)]
 #[command(
     name = "am",
-    about = "Geometric memory for AI agents — persistent recall across sessions",
+    about = "Geometric memory for AI agents - persistent recall across sessions",
     long_about = "\
-\x1b[1mam\x1b[0m — Geometric memory for AI agents
+\x1b[1mam\x1b[0m - Geometric memory for AI agents
 
 Models memory as points on a 3-sphere (S³ manifold) using quaternion positions,
 golden-angle phasors, IDF-weighted drift, and Kuramoto phase coupling. Memories
-aren't stored in flat text — they're positioned in geometric space where related
+aren't stored in flat text - they're positioned in geometric space where related
 concepts naturally cluster through physics-inspired dynamics.
 
 \x1b[1mHow it works:\x1b[0m
@@ -54,7 +54,7 @@ concepts naturally cluster through physics-inspired dynamics.
   am stats                         # System diagnostics
 
 \x1b[1mData location:\x1b[0m  ~/.attention-matters/brain.db
-  Single unified brain — one product, one memory. Set AM_DATA_DIR to override.
+  Single unified brain - one product, one memory. Set AM_DATA_DIR to override.
 
 \x1b[2mhttps://github.com/srobinson/attention-matters\x1b[0m",
     version
@@ -73,7 +73,7 @@ enum Commands {
     /// Start MCP server on stdio transport
     #[command(
         long_about = "Start the MCP (Model Context Protocol) server on stdio transport.\n\n\
-            This is the primary mode — Claude Code launches this automatically\n\
+            This is the primary mode - Claude Code launches this automatically\n\
             when configured as an MCP server. The server exposes 8 tools that\n\
             the AI agent calls to build and query geometric memory.",
         after_help = "\x1b[1mSetup:\x1b[0m\n  \
@@ -163,11 +163,11 @@ enum Commands {
     #[command(
         long_about = "Inspect the contents of geometric memory.\n\n\
             Five modes let you see exactly what's stored:\n\
-            • overview (default) — summary with top words and recent episodes\n\
-            • conscious — list all conscious (salient) memories\n\
-            • episodes — list subconscious episodes with stats\n\
-            • neighborhoods — all neighborhoods ranked by activation\n\
-            • --query — run a query and show the full recall breakdown\n\n\
+            • overview (default) - summary with top words and recent episodes\n\
+            • conscious - list all conscious (salient) memories\n\
+            • episodes - list subconscious episodes with stats\n\
+            • neighborhoods - all neighborhoods ranked by activation\n\
+            • --query - run a query and show the full recall breakdown\n\n\
             Trust requires transparency. This command shows you\n\
             what the AI remembers and why.",
         after_help = "\x1b[1mExamples:\x1b[0m\n  \
@@ -372,7 +372,7 @@ fn acquire_pidfile() -> Option<PathBuf> {
     {
         if is_process_alive(pid) {
             tracing::warn!(
-                "another am serve (PID {pid}) is running — coexisting with busy_timeout"
+                "another am serve (PID {pid}) is running - coexisting with busy_timeout"
             );
         } else {
             tracing::info!("cleaned up stale pidfile (PID {pid} is dead)");
@@ -419,11 +419,11 @@ async fn cmd_serve(cli: &Cli) -> Result<()> {
     let pidfile = acquire_pidfile();
 
     let server = server::AmServer::new(store).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let server_handle = server.clone(); // Arc clone — cheap; used for shutdown checkpoint
+    let server_handle = server.clone(); // Arc clone - cheap; used for shutdown checkpoint
     let service = match server.serve(stdio()).await {
         Ok(s) => s,
         Err(e) => {
-            // stdin closed before MCP init completed — treat as clean shutdown
+            // stdin closed before MCP init completed - treat as clean shutdown
             tracing::info!("MCP server exited during init: {e}");
             if let Some(path) = pidfile {
                 release_pidfile(&path);
@@ -432,7 +432,7 @@ async fn cmd_serve(cli: &Cli) -> Result<()> {
         }
     };
 
-    // Race stdin EOF against OS signals — whichever fires first triggers shutdown
+    // Race stdin EOF against OS signals - whichever fires first triggers shutdown
     let shutdown_reason = tokio::select! {
         result = service.waiting() => {
             if let Err(e) = result {
@@ -446,7 +446,7 @@ async fn cmd_serve(cli: &Cli) -> Result<()> {
     };
     tracing::info!("shutdown triggered by {shutdown_reason}");
 
-    // Clean shutdown with 5s timeout — an orphan is worse than a dirty exit
+    // Clean shutdown with 5s timeout - an orphan is worse than a dirty exit
     let pidfile_clone = pidfile.clone();
     let clean = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
         // Explicit WAL checkpoint via the server's store (belt + suspenders with Drop)
@@ -762,7 +762,7 @@ fn inspect_overview(store: &BrainStore, limit: usize, json: bool) -> Result<()> 
                 &ep.name
             };
             println!(
-                "  {cyan}{}. {reset}{name} {dim}— {} neighborhoods, {} occurrences{reset}",
+                "  {cyan}{}. {reset}{name} {dim}- {} neighborhoods, {} occurrences{reset}",
                 i + 1,
                 ep.neighborhood_count,
                 ep.occurrence_count
@@ -1027,7 +1027,7 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
     Ok(())
 }
 
-/// Safe prefix slice — returns `&s[..n]` if ASCII-safe, otherwise
+/// Safe prefix slice - returns `&s[..n]` if ASCII-safe, otherwise
 /// falls back to char iteration to avoid panicking on UTF-8 boundaries.
 fn safe_prefix(s: &str, n: usize) -> &str {
     if s.len() <= n {
@@ -1072,7 +1072,7 @@ fn cmd_sync(
         // Discovery mode: bulk re-ingest via filesystem walk
         cmd_sync_discover(cli, dry_run, dir_override)
     } else {
-        // Interactive terminal, no --all flag — print usage hint
+        // Interactive terminal, no --all flag - print usage hint
         println!("Usage: pipe hook JSON on stdin, or use --all for bulk discovery.\n");
         println!("  echo '{{\"session_id\":\"...\",\"transcript_path\":\"...\"}}' | am sync");
         println!("  am sync --all");

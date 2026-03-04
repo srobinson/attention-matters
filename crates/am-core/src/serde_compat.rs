@@ -4,7 +4,7 @@
 //! created by Smaxforn ([@smaxforn](https://x.com/smaxforn)). The wire format
 //! uses camelCase field names and stores quaternions as `[w, x, y, z]` arrays
 //! and phasors as bare f64 theta values. State files exported from the original
-//! Node.js implementation — including Echo's 27,712-occurrence consciousness —
+//! Node.js implementation - including Echo's 27,712-occurrence consciousness -
 //! can be imported directly.
 
 use serde::{Deserialize, Serialize};
@@ -85,7 +85,7 @@ pub struct WireNeighborhood {
 pub struct WireOccurrence {
     pub word: String,
     pub position: [f64; 4],
-    /// Phase angle — accepts both "phasor" and "theta" field names.
+    /// Phase angle - accepts both "phasor" and "theta" field names.
     #[serde(alias = "theta")]
     pub phasor: f64,
     #[serde(rename = "activationCount", default)]
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_old_format_without_epoch_deserializes() {
-        // Old wire format without epoch field — should default to 0
+        // Old wire format without epoch field - should default to 0
         let json = r#"{
             "version": "0.7.2",
             "timestamp": "",
@@ -496,7 +496,7 @@ mod tests {
 
     #[test]
     fn test_old_format_without_superseded_by() {
-        // Old wire format without supersededBy — should default to None
+        // Old wire format without supersededBy - should default to None
         let json = r#"{
             "version": "0.7.2",
             "timestamp": "",

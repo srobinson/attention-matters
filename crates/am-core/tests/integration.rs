@@ -84,7 +84,7 @@ fn ingest_query_roundtrip() {
     );
 }
 
-/// Test 2: Conscious memory flow — mark salient, verify it appears in composed context.
+/// Test 2: Conscious memory flow - mark salient, verify it appears in composed context.
 #[test]
 fn conscious_memory_flow() {
     let mut rng = rng();
@@ -128,7 +128,7 @@ fn conscious_memory_flow() {
     );
 }
 
-/// Test 3: Multi-episode recall — ingest 3 documents, query spanning multiple.
+/// Test 3: Multi-episode recall - ingest 3 documents, query spanning multiple.
 #[test]
 fn multi_episode_recall() {
     let mut rng = rng();
@@ -165,7 +165,7 @@ fn multi_episode_recall() {
     );
 }
 
-/// Test 4: Drift mechanics — verify occurrences actually move after query.
+/// Test 4: Drift mechanics - verify occurrences actually move after query.
 #[test]
 fn drift_moves_occurrences() {
     let mut rng = rng();
@@ -210,7 +210,7 @@ fn drift_moves_occurrences() {
     );
 }
 
-/// Test 5: Serde roundtrip with query — export, import, verify identical results.
+/// Test 5: Serde roundtrip with query - export, import, verify identical results.
 #[test]
 fn serde_roundtrip_with_query() {
     let mut rng = rng();

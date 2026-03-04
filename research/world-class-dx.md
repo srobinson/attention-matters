@@ -12,13 +12,13 @@ Date: 2026-02-14
 
 The gold standard in 2025/2026 developer tools follows a pattern: **one command, zero config, immediate value**.
 
-| Tool | Install | Time to working |
-|------|---------|----------------|
-| Tailwind | `npm i tailwindcss` | Write first class in ~30s |
-| Supabase | `npx supabase init` | Database running in ~60s |
-| Vercel | `npx vercel` | Deployed in ~90s |
-| Cursor | Download, open, start typing | ~2 minutes |
-| Stripe | Create account, copy API key, paste snippet | ~5 minutes |
+| Tool     | Install                                     | Time to working           |
+| -------- | ------------------------------------------- | ------------------------- |
+| Tailwind | `npm i tailwindcss`                         | Write first class in ~30s |
+| Supabase | `npx supabase init`                         | Database running in ~60s  |
+| Vercel   | `npx vercel`                                | Deployed in ~90s          |
+| Cursor   | Download, open, start typing                | ~2 minutes                |
+| Stripe   | Create account, copy API key, paste snippet | ~5 minutes                |
 
 The pattern: **zero decisions at install time**. Sane defaults for everything. Configuration is progressive disclosure -- you only learn about options when you need them.
 
@@ -44,20 +44,24 @@ The critical insight from Neon's `add-mcp` tool: a single `npx add-mcp` command 
 
 ### Recommended distribution stack
 
-**Layer 1 — Rust developers (smallest audience, earliest adopters):**
+**Layer 1 - Rust developers (smallest audience, earliest adopters):**
+
 - `cargo install am-cli` on crates.io
 - `cargo binstall am-cli` for pre-built binaries via cargo-binstall
 
-**Layer 2 — macOS developers (biggest early audience):**
+**Layer 2 - macOS developers (biggest early audience):**
+
 - `brew install srobinson/tap/am` via Homebrew tap
 - This is non-negotiable. Most Claude Code users are on macOS.
 
-**Layer 3 — Cross-platform pre-built binaries:**
+**Layer 3 - Cross-platform pre-built binaries:**
+
 - Use `cargo-dist` to automate GitHub Releases with platform binaries
 - Provide a `curl | sh` installer script that detects platform and downloads the right binary
 - Support: `x86_64-linux`, `aarch64-linux`, `x86_64-darwin`, `arm64-darwin`
 
-**Layer 4 — Zero-install for MCP (aspirational):**
+**Layer 4 - Zero-install for MCP (aspirational):**
+
 - npm wrapper package `@attention-matters/cli` that downloads the correct binary on `postinstall`
 - Enables `npx @attention-matters/cli serve` without any permanent installation
 - This is how non-Rust developers expect to consume MCP servers (the `npx -y @package/server` pattern)
@@ -95,18 +99,18 @@ $ am serve
 # Developer: "...how did it know that?"
 ```
 
-The problem: this aha moment requires *two sessions*. That's a retention cliff. We need to compress it.
+The problem: this aha moment requires _two sessions_. That's a retention cliff. We need to compress it.
 
-**Strategy: Seed the first session.** On first run, if the project has a README, CLAUDE.md, or package.json, automatically ingest them as the initial episode. Now the *very first query* has context to surface. The agent isn't starting from zero -- it already "knows" the project.
+**Strategy: Seed the first session.** On first run, if the project has a README, CLAUDE.md, or package.json, automatically ingest them as the initial episode. Now the _very first query_ has context to surface. The agent isn't starting from zero -- it already "knows" the project.
 
 **Strategy: Echo what was learned.** After each session, print a brief summary to stderr:
 
 ```
-[am] session complete — learned 47 new terms across 3 neighborhoods
+[am] session complete - learned 47 new terms across 3 neighborhoods
 [am] strongest new memories: "JWT authentication", "middleware pattern", "httpOnly cookies"
 ```
 
-This creates anticipation for the next session. The developer *knows* something was stored and wonders if it'll come back.
+This creates anticipation for the next session. The developer _knows_ something was stored and wonders if it'll come back.
 
 **Strategy: Make memory visible.** Provide `am stats` and `am query <term>` as CLI commands that let developers peek into what the engine knows. This demystifies the geometry and builds trust.
 
@@ -123,20 +127,15 @@ Don't require the developer to manually ingest documents, configure memory categ
 Based on analysis of successful open-source READMEs (awesome-readme, makeareadme.com patterns):
 
 **Always read:**
+
 1. The first 3 lines (what is this + why should I care)
 2. Install commands (copy-paste target)
 3. The first code example
 4. Badges (is this maintained? how popular?)
 
-**Sometimes read:**
-5. Architecture overview (if they're evaluating)
-6. Configuration reference (when they need it)
-7. FAQ / Troubleshooting (when something breaks)
+**Sometimes read:** 5. Architecture overview (if they're evaluating) 6. Configuration reference (when they need it) 7. FAQ / Troubleshooting (when something breaks)
 
-**Almost never read:**
-8. Contribution guidelines (at install time)
-9. Long explanations of internals
-10. License details
+**Almost never read:** 8. Contribution guidelines (at install time) 9. Long explanations of internals 10. License details
 
 ### README structure for attention-matters
 
@@ -169,7 +168,7 @@ The key insight: **the README is not documentation, it's a landing page.** Its j
 
 ### The "show, don't tell" section
 
-This is where attention-matters can differentiate. Instead of explaining quaternions and manifolds (which will scare people off), show the *output*:
+This is where attention-matters can differentiate. Instead of explaining quaternions and manifolds (which will scare people off), show the _output_:
 
 ```
 You: "How does auth work in this project?"
@@ -193,17 +192,18 @@ That's the screenshot that sells the tool.
 
 ### Primary channels (in priority order)
 
-**1. GitHub Releases** — The source of truth. Use `cargo-dist` to automate cross-platform binary builds on every tagged release. Include:
+**1. GitHub Releases** - The source of truth. Use `cargo-dist` to automate cross-platform binary builds on every tagged release. Include:
+
 - Pre-built binaries for all platforms
 - SHA256 checksums
 - Install script (`install.sh`)
 - Changelog
 
-**2. Homebrew Tap** — `brew install srobinson/tap/am`. This is table stakes for macOS developer tools. Set up a `homebrew-am` repository with a formula that downloads the GitHub Release binary.
+**2. Homebrew Tap** - `brew install srobinson/tap/am`. This is table stakes for macOS developer tools. Set up a `homebrew-am` repository with a formula that downloads the GitHub Release binary.
 
-**3. crates.io** — `cargo install am-cli`. Reaches Rust developers directly. Low effort, high signal (Rust developers are the initial champions).
+**3. crates.io** - `cargo install am-cli`. Reaches Rust developers directly. Low effort, high signal (Rust developers are the initial champions).
 
-**4. npm wrapper (for MCP ecosystem)** — `npx @attention-matters/cli serve`. This deserves its own section because it's the key distribution innovation.
+**4. npm wrapper (for MCP ecosystem)** - `npx @attention-matters/cli serve`. This deserves its own section because it's the key distribution innovation.
 
 ### The npm wrapper strategy
 
@@ -234,7 +234,7 @@ Or even simpler with the CLI helper:
 claude mcp add am -- npx -y @attention-matters/cli serve
 ```
 
-**5. add-mcp integration** — Register with Neon's `add-mcp` ecosystem so users can do:
+**5. add-mcp integration** - Register with Neon's `add-mcp` ecosystem so users can do:
 
 ```bash
 npx add-mcp @attention-matters/cli
@@ -265,7 +265,7 @@ Research confirms three virality drivers for developer tools:
 **The "memory flex" screenshot:** Design the `am stats` output to be visually interesting and screenshot-worthy:
 
 ```
-attention-matters v0.1.0 — project: my-saas-app
+attention-matters v0.1.0 - project: my-saas-app
 
   manifold:   S3 (3-sphere)
   memories:   1,247 occurrences across 23 episodes
@@ -285,6 +285,7 @@ attention-matters v0.1.0 — project: my-saas-app
 This is the thing developers will screenshot. "It remembered my auth pattern from a month ago with 89% confidence."
 
 **Launch week / Show HN:**
+
 - Hacker News `Show HN` posts generate an average 289 GitHub stars within a week for technically interesting projects
 - The pitch: "No embeddings, no vectors, no RAG -- just quaternion geometry on a 3-sphere"
 - HN loves novel math + practical utility. This is catnip for that audience.
@@ -292,6 +293,7 @@ This is the thing developers will screenshot. "It remembered my auth pattern fro
 - Product Hunt is declining in effectiveness for dev tools -- skip or deprioritize
 
 **The demo video:** A 60-second terminal recording (asciinema or VHS) showing:
+
 1. Install (10 seconds)
 2. First session: work on something (15 seconds, sped up)
 3. Close session, see the "learned N memories" output (5 seconds)
@@ -324,6 +326,7 @@ The MCP ecosystem in 2025/2026 has settled on clear patterns:
 ```
 
 **Discovery:** MCP servers are discovered through:
+
 - awesome-mcp-servers (3,500+ stars on GitHub, curated list)
 - mcpservers.org (submission-based directory)
 - LobeHub MCP catalog
@@ -331,12 +334,12 @@ The MCP ecosystem in 2025/2026 has settled on clear patterns:
 
 **The competitive landscape for MCP memory servers:**
 
-| Server | Approach | Install Complexity | Stars |
-|--------|----------|-------------------|-------|
-| mcp-memory-service | ChromaDB + sentence transformers | High (Python, pip, config) | ~1,200 |
-| mcp-memory-keeper | JSON file-based context | Medium (Node.js, npm) | ~200 |
-| knowledge-graph MCP | Neo4j graph | Very high (Neo4j + Node) | ~500 |
-| modelcontextprotocol/server-memory | Simple key-value | Low (npx one-liner) | ~2,000 |
+| Server                             | Approach                         | Install Complexity         | Stars  |
+| ---------------------------------- | -------------------------------- | -------------------------- | ------ |
+| mcp-memory-service                 | ChromaDB + sentence transformers | High (Python, pip, config) | ~1,200 |
+| mcp-memory-keeper                  | JSON file-based context          | Medium (Node.js, npm)      | ~200   |
+| knowledge-graph MCP                | Neo4j graph                      | Very high (Neo4j + Node)   | ~500   |
+| modelcontextprotocol/server-memory | Simple key-value                 | Low (npx one-liner)        | ~2,000 |
 
 Every single one of these uses embeddings, vectors, or simple key-value storage. None uses geometric memory. attention-matters would be the only one doing anything mathematically novel -- that's both the selling point and the explanation challenge.
 
@@ -345,10 +348,11 @@ Every single one of these uses embeddings, vectors, or simple key-value storage.
 **Tool naming convention:** MCP tools should be prefixed consistently. The current `am_query`, `am_ingest`, `am_salient` pattern is good. Tools should have descriptive `description` fields because that's how the agent decides when to use them.
 
 **Minimal tool surface:** The agent should not need to know about quaternions, manifolds, or phasors. From the agent's perspective, it's:
-- `am_query` — "recall relevant context"
-- `am_buffer` — "store this conversation exchange"
-- `am_salient` — "mark this as important"
-- `am_stats` — "how much do I know?"
+
+- `am_query` - "recall relevant context"
+- `am_buffer` - "store this conversation exchange"
+- `am_salient` - "mark this as important"
+- `am_stats` - "how much do I know?"
 
 The internal geometry is an implementation detail. The agent interface should be as simple as a key-value store from the outside, but radically better in what it surfaces.
 
@@ -358,6 +362,7 @@ The internal geometry is an implementation detail. The agent interface should be
 ## Memory
 
 This project uses attention-matters for persistent memory.
+
 - Call `am_query` at the start of complex tasks to check for relevant context
 - Call `am_buffer` after completing significant work to store the exchange
 - Call `am_salient` when discovering key architectural decisions or patterns
@@ -372,6 +377,7 @@ This is the "configuration" that makes the memory passive and automatic. Without
 ### The competitive landscape
 
 **Mem0** (the market leader in AI memory):
+
 - Apache 2.0 open source core
 - Raised $24M Series A (October 2025)
 - Free tier: 10K memories
@@ -380,11 +386,13 @@ This is the "configuration" that makes the memory passive and automatic. Without
 - Revenue model: hosted API (convenience + scale)
 
 **Zep:**
+
 - Open source core (Apache 2.0)
 - Cloud offering for managed service
 - Revenue model: hosted infrastructure
 
 **Letta (MemGPT):**
+
 - Open source (Apache 2.0)
 - VC-backed (Berkeley AI research spinout)
 - Revenue model: enterprise platform

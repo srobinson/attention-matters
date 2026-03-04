@@ -19,7 +19,7 @@ fn dirs_home() -> PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// Startup GC — automatic size management
+// Startup GC - automatic size management
 // ---------------------------------------------------------------------------
 
 /// Run automatic GC if the project DB exceeds the soft size limit.
@@ -30,7 +30,7 @@ fn startup_gc(store: &Store) {
     }
 
     tracing::info!(
-        "DB size {}MB exceeds {}MB soft limit — running GC",
+        "DB size {}MB exceeds {}MB soft limit - running GC",
         db_size / (1024 * 1024),
         am_core::DB_SOFT_LIMIT_BYTES / (1024 * 1024),
     );
@@ -72,14 +72,14 @@ fn startup_gc(store: &Store) {
 }
 
 // ---------------------------------------------------------------------------
-// Migration — one-time merge from old multi-DB layout to single brain.db
+// Migration - one-time merge from old multi-DB layout to single brain.db
 // ---------------------------------------------------------------------------
 
 /// Migrate the old `projects/*.db` + `global.db` layout into a single `brain.db`.
 ///
 /// Only runs when `projects/` exists and `brain.db` does not. After merging,
 /// renames `projects/` to `projects.migrated/` and `global.db` to
-/// `global.db.migrated` (belt and suspenders — never deletes).
+/// `global.db.migrated` (belt and suspenders - never deletes).
 fn migrate_old_layout(base: &Path, brain_path: &Path) {
     let projects_dir = base.join("projects");
     let global_path = base.join("global.db");
@@ -171,7 +171,7 @@ fn migrate_old_layout(base: &Path, brain_path: &Path) {
         return;
     }
 
-    // Rename old dirs to .migrated (don't delete — belt and suspenders)
+    // Rename old dirs to .migrated (don't delete - belt and suspenders)
     let migrated_dir = base.join("projects.migrated");
     if let Err(e) = fs::rename(&projects_dir, &migrated_dir) {
         tracing::warn!("failed to rename projects/ → projects.migrated/: {e}");
@@ -191,7 +191,7 @@ fn migrate_old_layout(base: &Path, brain_path: &Path) {
 }
 
 // ---------------------------------------------------------------------------
-// BrainStore — single brain.db for all developer memory
+// BrainStore - single brain.db for all developer memory
 // ---------------------------------------------------------------------------
 
 /// Single-database store for all developer memory.
@@ -199,7 +199,7 @@ fn migrate_old_layout(base: &Path, brain_path: &Path) {
 /// Layout:
 /// ```text
 /// ~/.attention-matters/
-/// └── brain.db          # unified brain — one product, one memory
+/// └── brain.db          # unified brain - one product, one memory
 /// ```
 pub struct BrainStore {
     store: Store,

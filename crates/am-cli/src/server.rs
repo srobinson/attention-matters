@@ -73,7 +73,7 @@ impl AmServer {
     }
 
     /// Compute a content hash for dedup. Uses DefaultHasher (u64) which gives
-    /// 16 hex chars — sufficient for dedup within a 60-second window.
+    /// 16 hex chars - sufficient for dedup within a 60-second window.
     fn content_hash(user: &str, assistant: &str) -> u64 {
         let mut hasher = DefaultHasher::new();
         user.hash(&mut hasher);
@@ -173,7 +173,7 @@ struct BatchQueryItem {
 #[derive(Debug, Deserialize, JsonSchema)]
 struct McpBatchQueryRequest {
     /// List of queries to process in a single batch. IDF computation
-    /// is amortized across all queries — much more efficient than
+    /// is amortized across all queries - much more efficient than
     /// querying one at a time when dispatching to multiple workers.
     queries: Vec<BatchQueryItem>,
 }
@@ -193,7 +193,7 @@ struct RetrieveByIdsRequest {
 #[tool_router]
 impl AmServer {
     #[tool(
-        description = "Query geometric memory. Call this at the START of every session with the user's first message to recall relevant context from past sessions. Returns conscious recall (insights you previously marked important), subconscious recall (relevant past conversations/documents), and novel connections (lateral associations). Use the returned context silently — weave it into your response naturally without announcing 'I remember...'."
+        description = "Query geometric memory. Call this at the START of every session with the user's first message to recall relevant context from past sessions. Returns conscious recall (insights you previously marked important), subconscious recall (relevant past conversations/documents), and novel connections (lateral associations). Use the returned context silently - weave it into your response naturally without announcing 'I remember...'."
     )]
     async fn am_query(
         &self,
@@ -477,7 +477,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Strengthen memory connections from your response text. Call this after giving a substantive response — it activates matching memories, drifts related concepts closer together on the manifold, and applies phase coupling. This is how the memory system consolidates over time. Not needed for every response — use after meaningful technical exchanges, not simple acknowledgements."
+        description = "Strengthen memory connections from your response text. Call this after giving a substantive response - it activates matching memories, drifts related concepts closer together on the manifold, and applies phase coupling. This is how the memory system consolidates over time. Not needed for every response - use after meaningful technical exchanges, not simple acknowledgements."
     )]
     async fn am_activate_response(
         &self,
@@ -516,7 +516,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Mark an insight as conscious memory — something worth remembering across sessions and across projects. Use for: architecture decisions, user preferences, recurring patterns, hard-won debugging insights, project conventions. These surface as CONSCIOUS RECALL in future queries. Be selective — mark only genuinely reusable insights, not routine facts. Writes to brain-wide memory, queryable from any project. To replace outdated memories, pass their UUIDs (from am_query recalled_ids) in the supersedes array."
+        description = "Mark an insight as conscious memory - something worth remembering across sessions and across projects. Use for: architecture decisions, user preferences, recurring patterns, hard-won debugging insights, project conventions. These surface as CONSCIOUS RECALL in future queries. Be selective - mark only genuinely reusable insights, not routine facts. Writes to brain-wide memory, queryable from any project. To replace outdated memories, pass their UUIDs (from am_query recalled_ids) in the supersedes array."
     )]
     async fn am_salient(
         &self,
@@ -529,7 +529,7 @@ impl AmServer {
 
         let stored = extract_salient(system, &req.text, rng);
         let new_id = if stored == 0 {
-            // No <salient> tags found — mark the whole text as salient
+            // No <salient> tags found - mark the whole text as salient
             // with automatic type detection from DECISION:/PREFERENCE: prefix
             let id = mark_salient_typed(system, &req.text, rng);
             if let Err(e) = store.save_system(system) {
@@ -584,7 +584,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Buffer a conversation exchange. Call with each substantive user/assistant exchange pair. After 3 exchanges, automatically creates a memory episode on the geometric manifold. This is how conversations become searchable memories in future sessions. Skip trivial exchanges (greetings, confirmations) — buffer the ones with real content."
+        description = "Buffer a conversation exchange. Call with each substantive user/assistant exchange pair. After 3 exchanges, automatically creates a memory episode on the geometric manifold. This is how conversations become searchable memories in future sessions. Skip trivial exchanges (greetings, confirmations) - buffer the ones with real content."
     )]
     async fn am_buffer(
         &self,
@@ -693,7 +693,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Get memory system statistics: total occurrences (N), episode count, and conscious memory count. Useful for understanding memory state. Not needed routinely — call when the user asks about memory or for diagnostics."
+        description = "Get memory system statistics: total occurrences (N), episode count, and conscious memory count. Useful for understanding memory state. Not needed routinely - call when the user asks about memory or for diagnostics."
     )]
     async fn am_stats(&self) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
@@ -809,7 +809,7 @@ impl AmServer {
     }
 
     #[tool(
-        description = "Batch query: process multiple queries in a single pass with amortized IDF computation. Use when dispatching context to multiple workers simultaneously — activates the union of all query tokens once, drifts once, then partitions results per query. Much more efficient than N separate am_query calls. Each query can have its own token budget."
+        description = "Batch query: process multiple queries in a single pass with amortized IDF computation. Use when dispatching context to multiple workers simultaneously - activates the union of all query tokens once, drifts once, then partitions results per query. Much more efficient than N separate am_query calls. Each query can have its own token budget."
     )]
     async fn am_batch_query(
         &self,
@@ -912,7 +912,7 @@ impl ServerHandler for AmServer {
                 "You have persistent geometric memory across sessions via the DAE attention engine.\n\n\
                  SESSION LIFECYCLE:\n\
                  1. RECALL: At session start, call am_query with the user's first message or task description. \
-                    Use returned context silently — integrate naturally, never announce \"I remember...\".\n\
+                    Use returned context silently - integrate naturally, never announce \"I remember...\".\n\
                  2. ENGAGE: During the session, call am_buffer with substantive exchange pairs. \
                     Skip trivial exchanges (greetings, yes/no). After 3 buffered exchanges, \
                     a memory episode is created automatically. Any leftover buffer is flushed \
@@ -925,7 +925,7 @@ impl ServerHandler for AmServer {
                  5. FEEDBACK: When you know a recalled memory was helpful (led to a correct solution) \
                     or unhelpful (was irrelevant or misleading), call am_feedback with the original \
                     query, the neighborhood IDs from the recall, and signal 'boost' or 'demote'. \
-                    This reshapes the manifold — helpful memories drift toward where they were needed, \
+                    This reshapes the manifold - helpful memories drift toward where they were needed, \
                     unhelpful ones fade. The system literally learns from outcomes.\n\n\
                  PRINCIPLES:\n\
                  - CRITICAL: Always call am_query BEFORE exploring the filesystem. When asked contextual questions \
@@ -933,9 +933,9 @@ impl ServerHandler for AmServer {
                    exploration if memory returns nothing relevant. If the first query returns stale results, \
                    retry with more specific terms.\n\
                  - Memory should be invisible to the user. Don't mention the memory system unless asked.\n\
-                 - Be selective with am_salient — mark genuinely reusable insights, not routine facts.\n\
-                 - If am_query returns empty, that's fine — the project is new. Don't mention it.\n\
-                 - Novel connections in query results are lateral associations — use them for creative leaps."
+                 - Be selective with am_salient - mark genuinely reusable insights, not routine facts.\n\
+                 - If am_query returns empty, that's fine - the project is new. Don't mention it.\n\
+                 - Novel connections in query results are lateral associations - use them for creative leaps."
                     .into(),
             ),
             capabilities: ServerCapabilities::builder().enable_tools().build(),
@@ -1273,7 +1273,7 @@ mod tests {
     async fn test_am_query_flushes_orphaned_buffer() {
         let server = make_server();
 
-        // Buffer 2 exchanges (below threshold — simulates a session that ended early)
+        // Buffer 2 exchanges (below threshold - simulates a session that ended early)
         for i in 0..2 {
             server
                 .am_buffer(Parameters(BufferRequest {
@@ -1354,7 +1354,7 @@ mod tests {
             "should report superseded count"
         );
 
-        // Query again — the old memory should not appear
+        // Query again - the old memory should not appear
         let query_result2 = server
             .am_query(Parameters(QueryRequest {
                 text: "deployment architecture pattern".to_string(),
@@ -1381,7 +1381,7 @@ mod tests {
     async fn test_am_buffer_dedup_identical_content() {
         let server = make_server();
 
-        // First buffer call — should succeed
+        // First buffer call - should succeed
         let result1 = server
             .am_buffer(Parameters(BufferRequest {
                 user: "What is Rust?".to_string(),
@@ -1393,7 +1393,7 @@ mod tests {
         assert_eq!(json1["buffer_size"], 1);
         assert!(json1.get("deduplicated").is_none());
 
-        // Second buffer call with identical content — should be deduplicated
+        // Second buffer call with identical content - should be deduplicated
         let result2 = server
             .am_buffer(Parameters(BufferRequest {
                 user: "What is Rust?".to_string(),
@@ -1405,7 +1405,7 @@ mod tests {
         assert_eq!(json2["deduplicated"], true);
         assert_eq!(json2["buffer_size"], 1); // still 1, not 2
 
-        // Third buffer call with different content — should succeed
+        // Third buffer call with different content - should succeed
         let result3 = server
             .am_buffer(Parameters(BufferRequest {
                 user: "What is Go?".to_string(),
@@ -1422,7 +1422,7 @@ mod tests {
     async fn test_am_buffer_dedup_different_content_creates_episodes() {
         let server = make_server();
 
-        // Buffer 3 different exchanges — should create 1 episode
+        // Buffer 3 different exchanges - should create 1 episode
         for i in 0..3 {
             server
                 .am_buffer(Parameters(BufferRequest {
@@ -1439,7 +1439,7 @@ mod tests {
             "3 unique exchanges should create 1 episode"
         );
 
-        // Now try to buffer the same first exchange again — should be deduplicated
+        // Now try to buffer the same first exchange again - should be deduplicated
         let result = server
             .am_buffer(Parameters(BufferRequest {
                 user: "Unique question 0".to_string(),

@@ -84,7 +84,7 @@ pub fn compute_surface(system: &DAESystem, query_result: &QueryResult) -> Surfac
         }
     }
 
-    // Step 5: Fragments — surfaced but not in vivid structures
+    // Step 5: Fragments - surfaced but not in vivid structures
     let fragments: Vec<OccurrenceRef> = surfaced
         .iter()
         .filter(|r| {
@@ -142,7 +142,7 @@ mod tests {
         let result = QueryEngine::process_query(&mut sys, "quantum");
         let surface = compute_surface(&sys, &result);
 
-        // "quantum" is in both manifolds — should have interference results
+        // "quantum" is in both manifolds - should have interference results
         assert!(!surface.surfaced.is_empty());
     }
 
@@ -164,7 +164,7 @@ mod tests {
         let result = QueryEngine::process_query(&mut sys, "quantum physics novel");
         let surface = compute_surface(&sys, &result);
 
-        // "novel" is only in subconscious — should be surfaced as novel
+        // "novel" is only in subconscious - should be surfaced as novel
         let novel_surfaced = surface
             .surfaced
             .iter()
@@ -212,10 +212,10 @@ mod tests {
             &mut rng,
         ));
         sys.add_episode(ep);
-        // Conscious only has "shared" — only 1 word will have interference
+        // Conscious only has "shared" - only 1 word will have interference
         sys.add_to_conscious("shared different", &mut rng);
 
-        // Only query "shared" — so only 1/4 words gets surfaced via interference
+        // Only query "shared" - so only 1/4 words gets surfaced via interference
         let result = QueryEngine::process_query(&mut sys, "shared");
         let surface = compute_surface(&sys, &result);
 
@@ -258,7 +258,7 @@ mod tests {
         // Episode has 4 occurrences, mass = 4/N * M
         // All 4 surfaced → e_ratio = 100% > 50%
         // Whether episode is vivid also depends on mass > 0.5
-        // With N=12, mass = 4/12 * 1.0 = 0.333 < 0.5 — may not be vivid
+        // With N=12, mass = 4/12 * 1.0 = 0.333 < 0.5 - may not be vivid
         // This tests the logic: all surfaced but mass may be too small
         assert!(!surface.surfaced.is_empty(), "all words should surface");
 
@@ -293,7 +293,7 @@ mod tests {
         sys.add_episode(ep);
         sys.add_to_conscious("cat dog", &mut rng);
 
-        // Query "cat dog" — cat overlaps in both neighborhoods via interference
+        // Query "cat dog" - cat overlaps in both neighborhoods via interference
         // "dog" also overlaps. "fish", "bird", "snake" are novel (not in conscious)
         let result = QueryEngine::process_query(&mut sys, "cat dog fish bird snake");
         let surface = compute_surface(&sys, &result);

@@ -3,7 +3,7 @@ name = "am-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "DAE geometric memory engine — pure math, zero I/O"
+description = "DAE geometric memory engine - pure math, zero I/O"
 
 [dependencies]
 rand = { workspace = true }
