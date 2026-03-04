@@ -831,6 +831,11 @@ pub fn retrieve_by_ids(system: &DAESystem, ids: &[Uuid]) -> Vec<IncludedFragment
 /// Decisions that genuinely match the query score this many times higher.
 const DECISION_MULTIPLIER: f64 = 3.0;
 
+/// Minimum overlap threshold for conscious recall.
+/// At least this fraction of query tokens must match for a conscious neighborhood
+/// to surface. Prevents stop-word-only matches from dominating results.
+const CONSCIOUS_MIN_OVERLAP: f64 = 0.2;
+
 /// Recency decay coefficient for non-decision memories.
 /// score *= 1.0 / (1.0 + days_old * RECENCY_DECAY_RATE)
 const RECENCY_DECAY_RATE: f64 = 0.01;
@@ -911,7 +916,7 @@ fn parse_days_ago(timestamp: &str) -> f64 {
 fn score_neighborhoods(
     system: &mut DAESystem,
     refs: &[OccurrenceRef],
-    _is_conscious: bool,
+    is_conscious: bool,
     query_token_count: usize,
 ) -> HashMap<Uuid, ScoredNeighborhood> {
     let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
@@ -1043,6 +1048,13 @@ fn score_neighborhoods(
             }
             _ => {}
         }
+    }
+
+    // Gate conscious recall: require minimum query token overlap
+    if is_conscious && query_token_count > 0 {
+        scored.retain(|_, sn| {
+            sn.activated_count as f64 / query_token_count as f64 >= CONSCIOUS_MIN_OVERLAP
+        });
     }
 
     scored
