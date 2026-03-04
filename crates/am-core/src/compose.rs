@@ -879,14 +879,22 @@ const VIVIDNESS_BOOST: f64 = 1.5;
 
 /// Aggregate per-neighborhood mean interference from pairwise results.
 /// Returns map of neighborhood_id -> mean cos(phase_diff).
+/// Aggregates both sides of each pair so conscious and subconscious
+/// neighborhoods both receive interference values.
 fn aggregate_interference(
     system: &DAESystem,
     interference: &[InterferenceResult],
 ) -> HashMap<Uuid, f64> {
     let mut sums: HashMap<Uuid, (f64, usize)> = HashMap::new();
     for ir in interference {
-        let nbhd = system.get_neighborhood_for_occurrence(ir.sub_ref);
-        let entry = sums.entry(nbhd.id).or_insert((0.0, 0));
+        // Subconscious side
+        let sub_nbhd = system.get_neighborhood_for_occurrence(ir.sub_ref);
+        let entry = sums.entry(sub_nbhd.id).or_insert((0.0, 0));
+        entry.0 += ir.interference;
+        entry.1 += 1;
+        // Conscious side
+        let con_nbhd = system.get_neighborhood_for_occurrence(ir.con_ref);
+        let entry = sums.entry(con_nbhd.id).or_insert((0.0, 0));
         entry.0 += ir.interference;
         entry.1 += 1;
     }
@@ -1923,14 +1931,12 @@ mod tests {
             recalled.insert(f.neighborhood_id, 1);
         }
 
-        // Second query with session recall
-        let result2 = QueryEngine::process_query(&mut sys, "postgres database");
-        let surface2 = compute_surface(&sys, &result2);
+        // Second compose with same query result to isolate diminishing returns
         let ctx2 = compose_context_budgeted(
             &mut sys,
-            &surface2,
-            &result2,
-            &result2.interference,
+            &surface,
+            &result,
+            &result.interference,
             &budget,
             Some(&recalled),
         );
