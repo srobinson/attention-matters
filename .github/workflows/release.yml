@@ -30,7 +30,8 @@ jobs:
         if: steps.release.outputs.pr
         env:
           GH_TOKEN: ${{ secrets.HELIOY_PAT }}
-        run: gh pr merge --auto --squash "${{ steps.release.outputs.pr }}" --repo "${{ github.repository }}"
+          PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+        run: gh pr merge --auto --squash "$PR_NUMBER" --repo "${{ github.repository }}"
 
   build:
     needs: release-please
