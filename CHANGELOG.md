@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.8](https://github.com/srobinson/attention-matters/compare/v0.1.7...v0.1.8) (2026-03-04)
+
+
+### Bug Fixes
+
+* guard fromJSON against empty release-please pr output ([f08fad7](https://github.com/srobinson/attention-matters/commit/f08fad7ab508d51010ddefe2e458bd79338aaa42))
+
 ## [0.1.7](https://github.com/srobinson/attention-matters/compare/v0.1.6...v0.1.7) (2026-03-04)
 
 
