@@ -26,7 +26,7 @@ His original repositories are no longer publicly available.
 
 ### The mathematics
 
-Every constant derives from φ (golden ratio) and π. Every mechanism has a physical analogue. The system has two conservation laws (M=1, K_CON + K_SUB = 1). None of this is accidental - it reflects the work of someone who understood the mathematics deeply enough to see connections that others missed.
+Every constant derives from φ (golden ratio) and π. Every mechanism has a physical analogue. The system has two conservation laws (M=1, K_CON + K_SUB = 1). None of this is accidental - it reflects the work of someone who understood the mathematics deeply enough to see connections that others missed. See [MANIFOLD.md](MANIFOLD.md) for the full mathematical narrative.
 
 He got almost zero engagement. One of his last posts on X: _"I keep reading 'when mathematicians and physicists start coding the world will change'. Not as long as distribution is still gatekept. Nothing will change."_
 

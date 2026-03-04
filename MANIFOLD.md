@@ -42,25 +42,25 @@ The conscious manifold is small and always active. It holds salient insights - t
 
 ## Interference
 
-When a query activates words on both manifolds simultaneously, the system computes interference. For every pair of co-occurring words - one from the subconscious, one from the conscious - their phasor phases are compared. The cosine of the phase difference tells you whether these memories reinforce or cancel.
+When a query activates words on both manifolds simultaneously, the system computes interference. For every pair of co-occurring words, one from the subconscious, one from the conscious, their phasor phases are compared. The cosine of the phase difference tells you whether these memories reinforce or cancel.
 
-Positive interference means the subconscious memory and the conscious insight are in phase. They resonate. This is how novel connections surface - a subconscious memory about a past conversation suddenly resonates with a conscious architectural decision, and the system says: these two things are related in a way you might not have noticed.
+Positive interference means the subconscious memory and the conscious insight are in phase. They resonate. This is how novel connections surface, a subconscious memory about a past conversation suddenly resonates with a conscious architectural decision, and the system says: these two things are related in a way you might not have noticed.
 
 Negative interference means they are out of phase. Contradictory or redundant. The system suppresses them.
 
 ## Kuramoto coupling
 
-After interference is computed, phase coupling kicks in. This is the Kuramoto model - the same differential equation that describes how fireflies synchronize their flashing, how neurons in the brain fall into rhythmic patterns, how pendulum clocks on the same wall gradually align.
+After interference is computed, phase coupling kicks in. This is the Kuramoto model, this is the same differential equation that describes how fireflies synchronize their flashing, how neurons in the brain fall into rhythmic patterns, how pendulum clocks on the same wall gradually align.
 
-For each word that appears in both manifolds, the system nudges the phases of all its occurrences toward their mean. Subconscious and conscious copies of the same word slowly synchronize. Not instantly - gently, weighted by activation count and IDF. Over many queries, the two manifolds come into alignment for the words that matter most.
+For each word that appears in both manifolds, the system nudges the phases of all its occurrences toward their mean. Subconscious and conscious copies of the same word slowly synchronize. Not instantly, gently. Weighted by activation count and IDF. Over many queries, the two manifolds come into alignment for the words that matter most.
 
 The manifold remembers not just what you said, but how often you said it, and gradually tunes itself so that the things you return to most often are the things that resonate most cleanly.
 
 ## Surface
 
-A memory surfaces when its neighborhood is vivid - when enough of its constituent words have been activated recently. The threshold is the same constant that governs drift: 0.5. If the ratio of activated words to total words in a neighborhood exceeds this threshold, the neighborhood surfaces.
+A memory surfaces when its neighborhood is vivid, when enough of its constituent words have been activated recently. The threshold is the same constant that governs drift: 0.5. If the ratio of activated words to total words in a neighborhood exceeds this threshold, the neighborhood surfaces.
 
-Surfacing is not retrieval. It is not a database lookup. It is emergence. The query perturbs the manifold, words drift and interfere and couple, and some neighborhoods become vivid enough to cross the threshold. What you remember depends on the current shape of the entire sphere - shaped by every query that came before.
+Surfacing is not retrieval. It is not a database lookup. It is emergence. The query perturbs the manifold, words drift and interfere and couple, and some neighborhoods become vivid enough to cross the threshold. What you remember depends on the current shape of the entire sphere, shaped by every query that came before.
 
 ## The closed manifold
 
@@ -72,10 +72,10 @@ This means the system has a finite attention budget, enforced by geometry. You c
 
 This is not a vector database. Vector databases store embeddings in a flat space and retrieve by cosine similarity. That is a lookup table with better math.
 
-This is a living geometry. It changes shape when you use it. Memories that co-occur drift together. Memories that resonate synchronize. Memories that are revisited anchor in place. The topology is closed - there is only so much room, and importance is conserved. Fresh memories are plastic; old memories are crystalline. The system does not retrieve memories. It grows them, reshapes them, lets them interfere and reinforce, and surfaces the ones that the geometry says matter right now.
+This is a living geometry. It changes shape when you use it. Memories that co-occur drift together. Memories that resonate synchronize. Memories that are revisited anchor in place. The topology is closed: There is only so much room, and importance is conserved. Fresh memories are plastic; old memories are crystalline. The system does not retrieve memories. It grows them, reshapes them, lets them interfere and reinforce, and surfaces the ones that the geometry says matter right now.
 
 The math is old. Quaternions: 1843, William Rowan Hamilton, carved into Brougham Bridge. SLERP: 1985, Ken Shoemake, for camera interpolation. Kuramoto: 1975, Yoshiki Kuramoto, for chemical oscillators. The golden angle: older than mathematics itself, encoded in every sunflower that ever grew.
 
 What is new is using them together, on a closed manifold, to model something that has never had a geometry before: the act of remembering.
 
-That synthesis belongs to **Smaxforn** ([@smaxforn](https://x.com/smaxforn)) - a mathematician who started looking at AI in earnest in 2025 and saw what no one else saw: that these four pieces of classical mathematics, composed on a closed manifold with conservation laws, could model memory as a living geometry rather than a lookup table. He built the original DAE v0.7.2 in JavaScript - 984 lines, zero dependencies, the complete engine - open-sourced it in February 2026, and then vanished from the internet. His GitHub repositories no longer exist. This Rust implementation carries his mathematics forward.
+That synthesis belongs to **Smaxforn** ([@smaxforn](https://x.com/smaxforn)), a mathematician who started looking at AI in earnest in 2025 and saw what no one else saw: that these four pieces of classical mathematics, composed on a closed manifold with conservation laws, could model memory as a living geometry rather than a lookup table. He built the original DAE v0.7.2 in JavaScript. 984 lines, zero dependencies, the complete engine. He open-sourced it in February 2026, and then vanished from the internet. His GitHub repositories no longer exist. This Rust implementation carries his mathematics forward.
