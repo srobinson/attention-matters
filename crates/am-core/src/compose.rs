@@ -238,7 +238,7 @@ fn format_entry(
 const ENTRY_HEADER_OVERHEAD_TOKENS: usize = 20;
 
 /// Apply diminishing returns to previously-recalled candidates.
-/// Decisions/Preferences are exempt - they always surface at full score.
+/// Decision/Preference types get softer decay (0.5x rate) instead of full exemption.
 fn apply_diminishing_returns(
     candidates: Vec<RankedCandidate>,
     recalled: &HashMap<Uuid, u32>,
@@ -246,11 +246,12 @@ fn apply_diminishing_returns(
     candidates
         .into_iter()
         .map(|mut c| {
-            if let Some(&count) = recalled.get(&c.neighborhood_id)
-                && c.neighborhood_type != NeighborhoodType::Decision
-                && c.neighborhood_type != NeighborhoodType::Preference
-            {
-                c.score *= 1.0 / (1.0 + count as f64);
+            if let Some(&count) = recalled.get(&c.neighborhood_id) {
+                let decay_rate = match c.neighborhood_type {
+                    NeighborhoodType::Decision | NeighborhoodType::Preference => 0.5,
+                    _ => 1.0,
+                };
+                c.score *= 1.0 / (1.0 + count as f64 * decay_rate);
             }
             c
         })
@@ -260,8 +261,8 @@ fn apply_diminishing_returns(
 /// Compose human-readable context from surface and activation results.
 ///
 /// `session_recalled` tracks how many times each neighborhood ID has been
-/// returned this session. Non-decision neighborhoods get diminishing returns
-/// (score *= 1/(1+count)). Decision/Preference neighborhoods are exempt.
+/// returned this session. All neighborhoods get diminishing returns -
+/// Decision/Preference types use softer decay (0.5x rate).
 ///
 /// `_surface` and `_interference` are part of the pipeline API and reserved
 /// for future use (e.g. vivid filtering, interference-weighted scoring).
@@ -395,8 +396,8 @@ pub fn compose_context(
 /// fills remaining budget by score across all categories.
 ///
 /// `session_recalled` tracks how many times each neighborhood ID has been
-/// returned this session. Non-decision neighborhoods get diminishing returns
-/// (score *= 1/(1+count)). Decision/Preference neighborhoods are exempt.
+/// returned this session. All neighborhoods get diminishing returns -
+/// Decision/Preference types use softer decay (0.5x rate).
 ///
 /// `_surface` and `_interference` are part of the pipeline API and reserved
 /// for future use (e.g. vivid filtering, interference-weighted scoring).
@@ -703,12 +704,15 @@ pub fn compose_index(
         .map(|c| {
             let mut score = c.score;
             // Apply diminishing returns for previously recalled neighborhoods
+            // Decision/Preference types get softer decay (0.5x rate)
             if let Some(recalled) = session_recalled
-                && c.neighborhood_type != NeighborhoodType::Decision
-                && c.neighborhood_type != NeighborhoodType::Preference
                 && let Some(&count) = recalled.get(&c.neighborhood_id)
             {
-                score *= 1.0 / (1.0 + count as f64);
+                let decay_rate = match c.neighborhood_type {
+                    NeighborhoodType::Decision | NeighborhoodType::Preference => 0.5,
+                    _ => 1.0,
+                };
+                score *= 1.0 / (1.0 + count as f64 * decay_rate);
             }
             (c, score)
         })
@@ -826,10 +830,6 @@ pub fn retrieve_by_ids(system: &DAESystem, ids: &[Uuid]) -> Vec<IncludedFragment
 /// Multiplier for Decision/Preference neighborhoods.
 /// Decisions that genuinely match the query score this many times higher.
 const DECISION_MULTIPLIER: f64 = 3.0;
-
-/// Minimum score floor for Decision/Preference neighborhoods.
-/// Ensures some visibility even on unrelated queries, but doesn't dominate.
-const DECISION_FLOOR: f64 = 15.0;
 
 /// Recency decay coefficient for non-decision memories.
 /// score *= 1.0 / (1.0 + days_old * RECENCY_DECAY_RATE)
@@ -1035,10 +1035,11 @@ fn score_neighborhoods(
             sn.score *= boost;
         }
         // Decision/Preference: competitive scoring with floor
-        // score = max(normal_score * MULTIPLIER, FLOOR)
+        // Decision/Preference types get a multiplier boost but no floor -
+        // they must earn their score through genuine query overlap
         match sn.neighborhood_type {
             NeighborhoodType::Decision | NeighborhoodType::Preference => {
-                sn.score = (sn.score * DECISION_MULTIPLIER).max(DECISION_FLOOR);
+                sn.score *= DECISION_MULTIPLIER;
             }
             _ => {}
         }
