@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.10](https://github.com/srobinson/attention-matters/compare/v0.1.9...v0.1.10) (2026-03-07)
+
+
+### Features
+
+* epoch-aware retention policy for GC ([9cce14f](https://github.com/srobinson/attention-matters/commit/9cce14f0389500f405ae7e104b81474a0fbb7d2f))
+
 ## [0.1.9](https://github.com/srobinson/attention-matters/compare/v0.1.8...v0.1.9) (2026-03-07)
 
 
