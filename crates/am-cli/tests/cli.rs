@@ -545,6 +545,13 @@ fn gc_dry_run() {
 fn gc_evicts_cold_occurrences() {
     let dir = TempDir::new().unwrap();
 
+    // Disable retention protections so GC works on small test data
+    std::fs::write(
+        dir.path().join(".am.config.toml"),
+        "[retention]\nmin_neighborhoods = 0\ngrace_epochs = 0\nretention_days = 0\n",
+    )
+    .unwrap();
+
     let input = dir.path().join("gc-cold.txt");
     std::fs::write(
         &input,

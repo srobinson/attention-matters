@@ -650,21 +650,66 @@ impl Store {
     /// Run a GC pass: evict cold occurrences, clean empty structures, VACUUM.
     /// Returns (evicted_occurrences, removed_episodes).
     /// Conscious episodes (is_conscious = 1) are never touched.
-    pub fn gc_pass(&self, activation_floor: u32) -> Result<GcResult> {
+    /// Respects retention policy: grace epoch window and retention days.
+    pub fn gc_pass(
+        &self,
+        activation_floor: u32,
+        retention: &crate::config::RetentionPolicy,
+    ) -> Result<GcResult> {
+        // Early return if below min_neighborhoods floor
+        let total_nbhds = self.neighborhood_count()?;
+        if total_nbhds < retention.min_neighborhoods {
+            return Ok(GcResult {
+                evicted_occurrences: 0,
+                removed_neighborhoods: 0,
+                removed_episodes: 0,
+                before_occurrences: self.occurrence_count()?,
+                before_size: self.db_size(),
+                after_size: self.db_size(),
+            });
+        }
+
         let before_occs = self.occurrence_count()?;
         let before_size = self.db_size();
+
+        // Build retention filter clauses
+        let mut retention_clauses = String::new();
+        if retention.grace_epochs > 0 {
+            let max_epoch: u64 = self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(MAX(epoch), 0) FROM neighborhoods",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+            let epoch_floor = max_epoch.saturating_sub(retention.grace_epochs);
+            retention_clauses.push_str(&format!(
+                "\n                     AND n.epoch < {epoch_floor}"
+            ));
+        }
+        if retention.retention_days > 0 {
+            let retention_secs = retention.retention_days * 86400;
+            retention_clauses.push_str(&format!(
+                "\n                     AND (e.timestamp = ''
+                          OR REPLACE(REPLACE(e.timestamp, 'T', ' '), 'Z', '')
+                             < datetime('now', '-{retention_secs} seconds'))"
+            ));
+        }
 
         let tx = self.conn.unchecked_transaction()?;
 
         // 1. Delete occurrences at or below the activation floor,
-        //    but only from non-conscious episodes
+        //    but only from non-conscious episodes, and respecting retention.
         let evicted_occs: u64 = tx.execute(
-            "DELETE FROM occurrences WHERE activation_count <= ?1
-             AND neighborhood_id IN (
-                 SELECT n.id FROM neighborhoods n
-                 JOIN episodes e ON n.episode_id = e.id
-                 WHERE e.is_conscious = 0
-             )",
+            &format!(
+                "DELETE FROM occurrences WHERE activation_count <= ?1
+                 AND neighborhood_id IN (
+                     SELECT n.id FROM neighborhoods n
+                     JOIN episodes e ON n.episode_id = e.id
+                     WHERE e.is_conscious = 0{retention_clauses}
+                 )"
+            ),
             [activation_floor],
         )? as u64;
 
@@ -709,18 +754,52 @@ impl Store {
     /// Aggressive GC: evict coldest occurrences until DB is under target size.
     /// Only used when activation-floor eviction wasn't sufficient.
     /// Conscious episodes are never touched.
-    pub fn gc_to_target_size(&self, target_bytes: u64) -> Result<GcResult> {
+    /// Uses composite eviction score: lower activation and older epoch = evicted first.
+    pub fn gc_to_target_size(
+        &self,
+        target_bytes: u64,
+        retention: &crate::config::RetentionPolicy,
+    ) -> Result<GcResult> {
         let before_occs = self.occurrence_count()?;
         let before_size = self.db_size();
 
-        // Get activation counts in ascending order (coldest first), non-conscious only
-        let mut stmt = self.conn.prepare(
+        // Build retention filter clauses
+        let max_epoch: u64 = self
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(epoch), 0) FROM neighborhoods",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let max_epoch_f = (max_epoch as f64).max(1.0);
+
+        let mut retention_clauses = String::new();
+        if retention.grace_epochs > 0 {
+            let epoch_floor = max_epoch.saturating_sub(retention.grace_epochs);
+            retention_clauses.push_str(&format!("\n                 AND n.epoch < {epoch_floor}"));
+        }
+        if retention.retention_days > 0 {
+            let retention_secs = retention.retention_days * 86400;
+            retention_clauses.push_str(&format!(
+                "\n                 AND (e.timestamp = ''
+                      OR REPLACE(REPLACE(e.timestamp, 'T', ' '), 'Z', '')
+                         < datetime('now', '-{retention_secs} seconds'))"
+            ));
+        }
+
+        // Get occurrences sorted by composite eviction score (most evictable first).
+        // Score = activation_count - (epoch / max_epoch) * recency_weight
+        // Lower score = higher eviction priority.
+        let query = format!(
             "SELECT o.id, o.activation_count FROM occurrences o
-             JOIN neighborhoods n ON o.neighborhood_id = n.id
-             JOIN episodes e ON n.episode_id = e.id
-             WHERE e.is_conscious = 0
-             ORDER BY o.activation_count ASC",
-        )?;
+                 JOIN neighborhoods n ON o.neighborhood_id = n.id
+                 JOIN episodes e ON n.episode_id = e.id
+                 WHERE e.is_conscious = 0{retention_clauses}
+                 ORDER BY (o.activation_count - (CAST(n.epoch AS REAL) / {max_epoch_f}) * {w}) ASC",
+            w = retention.recency_weight,
+        );
+        let mut stmt = self.conn.prepare(&query)?;
 
         let rows: Vec<(String, u32)> = stmt
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
@@ -1182,6 +1261,16 @@ mod tests {
 
     // --- GC tests ---
 
+    /// Permissive retention policy that disables all protection for testing.
+    fn no_retention() -> crate::config::RetentionPolicy {
+        crate::config::RetentionPolicy {
+            grace_epochs: 0,
+            retention_days: 0,
+            min_neighborhoods: 0,
+            recency_weight: 0.0,
+        }
+    }
+
     fn make_system_with_activations() -> DAESystem {
         let mut rng = rng();
         let mut sys = DAESystem::new("test-agent");
@@ -1219,7 +1308,7 @@ mod tests {
         assert!(before >= 5);
 
         // Evict occurrences with activation_count <= 0
-        let result = store.gc_pass(0).unwrap();
+        let result = store.gc_pass(0, &no_retention()).unwrap();
         assert_eq!(
             result.evicted_occurrences, 3,
             "should evict 3 cold occurrences"
@@ -1245,7 +1334,7 @@ mod tests {
         sys.add_to_conscious("precious insight", &mut rng);
         store.save_system(&sys).unwrap();
 
-        let result = store.gc_pass(0).unwrap();
+        let result = store.gc_pass(0, &no_retention()).unwrap();
         assert_eq!(
             result.evicted_occurrences, 0,
             "conscious should never be evicted"
@@ -1264,9 +1353,49 @@ mod tests {
         let sys = make_system_with_activations();
         store.save_system(&sys).unwrap();
 
-        let result = store.gc_pass(0).unwrap();
+        let result = store.gc_pass(0, &no_retention()).unwrap();
         assert_eq!(result.removed_episodes, 1, "episode-cold should be removed");
         assert_eq!(result.removed_neighborhoods, 1);
+    }
+
+    #[test]
+    fn test_gc_grace_epochs_protects_fresh_data() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system_with_activations();
+        store.save_system(&sys).unwrap();
+
+        // Grace window of 100 epochs covers everything - nothing should be evicted
+        let policy = crate::config::RetentionPolicy {
+            grace_epochs: 100,
+            retention_days: 0,
+            min_neighborhoods: 0,
+            recency_weight: 0.0,
+        };
+        let result = store.gc_pass(0, &policy).unwrap();
+        assert_eq!(
+            result.evicted_occurrences, 0,
+            "grace window should protect all neighborhoods"
+        );
+    }
+
+    #[test]
+    fn test_gc_min_neighborhoods_prevents_gc() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system_with_activations();
+        store.save_system(&sys).unwrap();
+
+        // min_neighborhoods higher than what exists - GC should be skipped
+        let policy = crate::config::RetentionPolicy {
+            grace_epochs: 0,
+            retention_days: 0,
+            min_neighborhoods: 1000,
+            recency_weight: 0.0,
+        };
+        let result = store.gc_pass(0, &policy).unwrap();
+        assert_eq!(
+            result.evicted_occurrences, 0,
+            "min_neighborhoods floor should prevent GC"
+        );
     }
 
     #[test]
@@ -1286,7 +1415,7 @@ mod tests {
     fn test_gc_noop_when_empty() {
         let store = Store::open_in_memory().unwrap();
         // No data saved - empty DB
-        let result = store.gc_pass(0).unwrap();
+        let result = store.gc_pass(0, &no_retention()).unwrap();
         assert_eq!(result.evicted_occurrences, 0);
         assert_eq!(result.removed_episodes, 0);
     }

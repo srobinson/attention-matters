@@ -62,7 +62,8 @@ pub fn ingest_text(text: &str, name: Option<&str>, rng: &mut impl Rng) -> Episod
         let combined = chunk.join(" ");
         let tokens = tokenize(&combined);
         if !tokens.is_empty() {
-            let neighborhood = Neighborhood::from_tokens(&tokens, None, &combined, rng);
+            let mut neighborhood = Neighborhood::from_tokens(&tokens, None, &combined, rng);
+            neighborhood.neighborhood_type = crate::neighborhood::NeighborhoodType::Ingested;
             episode.add_neighborhood(neighborhood);
         }
     }

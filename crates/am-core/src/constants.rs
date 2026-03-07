@@ -28,3 +28,20 @@ pub const DB_SOFT_LIMIT_BYTES: u64 = 50 * 1024 * 1024;
 
 /// GC: target ratio of soft limit after aggressive eviction (80%)
 pub const DB_GC_TARGET_RATIO: f64 = 0.8;
+
+/// GC: grace window in epochs. Neighborhoods within this many epochs of the
+/// current max are exempt from garbage collection regardless of activation.
+pub const DEFAULT_GRACE_EPOCHS: u64 = 50;
+
+/// GC: minimum neighborhood count below which GC is skipped entirely.
+pub const DEFAULT_MIN_NEIGHBORHOODS: u64 = 100;
+
+/// GC: timestamp backstop in days. Neighborhoods newer than this are exempt
+/// from GC even if outside the epoch grace window. Protects idle projects.
+pub const DEFAULT_RETENTION_DAYS: u64 = 3;
+
+/// GC: recency weight for composite eviction scoring. Higher values give
+/// newer neighborhoods more protection in aggressive GC. A value of 2.0
+/// means a neighborhood at the current epoch gets a bonus equivalent to
+/// 2 activation counts.
+pub const DEFAULT_RECENCY_WEIGHT: f64 = 2.0;

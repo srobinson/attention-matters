@@ -13,6 +13,40 @@ struct FileConfig {
     data_dir: Option<String>,
     gc_enabled: Option<bool>,
     db_size_mb: Option<u64>,
+    retention: Option<FileRetentionConfig>,
+}
+
+/// Partial retention config from TOML.
+#[derive(Deserialize, Default)]
+struct FileRetentionConfig {
+    grace_epochs: Option<u64>,
+    retention_days: Option<u64>,
+    min_neighborhoods: Option<u64>,
+    recency_weight: Option<f64>,
+}
+
+/// Resolved retention policy with concrete values.
+#[derive(Debug, Clone)]
+pub struct RetentionPolicy {
+    /// Neighborhoods within this many epochs of the max are GC-exempt.
+    pub grace_epochs: u64,
+    /// Neighborhoods newer than this many days are GC-exempt.
+    pub retention_days: u64,
+    /// Skip GC entirely if total neighborhoods are below this count.
+    pub min_neighborhoods: u64,
+    /// Recency bonus weight in composite eviction scoring.
+    pub recency_weight: f64,
+}
+
+impl Default for RetentionPolicy {
+    fn default() -> Self {
+        Self {
+            grace_epochs: am_core::DEFAULT_GRACE_EPOCHS,
+            retention_days: am_core::DEFAULT_RETENTION_DAYS,
+            min_neighborhoods: am_core::DEFAULT_MIN_NEIGHBORHOODS,
+            recency_weight: am_core::DEFAULT_RECENCY_WEIGHT,
+        }
+    }
 }
 
 /// Resolved configuration with concrete values.
@@ -21,6 +55,7 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub gc_enabled: bool,
     pub db_size_mb: u64,
+    pub retention: RetentionPolicy,
 }
 
 impl Default for Config {
@@ -29,6 +64,7 @@ impl Default for Config {
             data_dir: crate::project::default_base_dir(),
             gc_enabled: false,
             db_size_mb: DEFAULT_DB_SIZE_MB,
+            retention: RetentionPolicy::default(),
         }
     }
 }
@@ -89,6 +125,20 @@ fn apply_file_config(cfg: &mut Config, path: &Path) {
         if let Some(size) = file_cfg.db_size_mb {
             cfg.db_size_mb = size;
         }
+        if let Some(ret) = file_cfg.retention {
+            if let Some(v) = ret.grace_epochs {
+                cfg.retention.grace_epochs = v;
+            }
+            if let Some(v) = ret.retention_days {
+                cfg.retention.retention_days = v;
+            }
+            if let Some(v) = ret.min_neighborhoods {
+                cfg.retention.min_neighborhoods = v;
+            }
+            if let Some(v) = ret.recency_weight {
+                cfg.retention.recency_weight = v;
+            }
+        }
     }
 }
 
@@ -146,5 +196,42 @@ mod tests {
         assert_eq!(file_cfg.gc_enabled, Some(true));
         assert_eq!(file_cfg.data_dir, None);
         assert_eq!(file_cfg.db_size_mb, None);
+    }
+
+    #[test]
+    fn parse_toml_retention() {
+        let content = r#"
+[retention]
+grace_epochs = 25
+retention_days = 7
+min_neighborhoods = 200
+recency_weight = 3.0
+"#;
+        let file_cfg: FileConfig = toml::from_str(content).unwrap();
+        let ret = file_cfg.retention.unwrap();
+        assert_eq!(ret.grace_epochs, Some(25));
+        assert_eq!(ret.retention_days, Some(7));
+        assert_eq!(ret.min_neighborhoods, Some(200));
+        assert!((ret.recency_weight.unwrap() - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn parse_toml_retention_partial() {
+        let content = "[retention]\ngrace_epochs = 10\n";
+        let file_cfg: FileConfig = toml::from_str(content).unwrap();
+        let ret = file_cfg.retention.unwrap();
+        assert_eq!(ret.grace_epochs, Some(10));
+        assert_eq!(ret.retention_days, None);
+        assert_eq!(ret.min_neighborhoods, None);
+        assert_eq!(ret.recency_weight, None);
+    }
+
+    #[test]
+    fn retention_defaults() {
+        let policy = RetentionPolicy::default();
+        assert_eq!(policy.grace_epochs, am_core::DEFAULT_GRACE_EPOCHS);
+        assert_eq!(policy.retention_days, am_core::DEFAULT_RETENTION_DAYS);
+        assert_eq!(policy.min_neighborhoods, am_core::DEFAULT_MIN_NEIGHBORHOODS);
+        assert!((policy.recency_weight - am_core::DEFAULT_RECENCY_WEIGHT).abs() < 1e-10);
     }
 }

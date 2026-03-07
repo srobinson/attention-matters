@@ -1314,7 +1314,8 @@ fn cmd_gc(cli: &Cli, floor: u32, target_mb: Option<u64>, dry_run: bool) -> Resul
     }
 
     // Run activation-floor GC pass
-    let result = db.gc_pass(floor).context("GC failed")?;
+    let config = load_config();
+    let result = db.gc_pass(floor, &config.retention).context("GC failed")?;
 
     println!("{bold}GC complete{reset}\n");
     println!("  evicted occurrences:    {}", result.evicted_occurrences);
@@ -1327,7 +1328,7 @@ fn cmd_gc(cli: &Cli, floor: u32, target_mb: Option<u64>, dry_run: bool) -> Resul
         let current_size = db.db_size();
         if current_size > target_bytes {
             let aggressive = db
-                .gc_to_target_size(target_bytes)
+                .gc_to_target_size(target_bytes, &config.retention)
                 .context("aggressive GC failed")?;
             println!(
                 "\n  {bold}aggressive pass:{reset} evicted {} more occurrences",
@@ -1392,6 +1393,9 @@ fn cmd_forget(
 }
 
 fn cmd_export(cli: &Cli, path: &std::path::Path) -> Result<()> {
+    if path.extension().is_none_or(|ext| ext != "json") {
+        anyhow::bail!("export path must end in .json (got {})", path.display());
+    }
     let store = open_store(cli)?;
     let system = store.load_system().context("failed to load system")?;
 

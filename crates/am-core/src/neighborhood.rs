@@ -21,6 +21,8 @@ pub enum NeighborhoodType {
     Preference,
     /// A marked insight (default for am_salient without prefix).
     Insight,
+    /// Bulk-imported reference material (via am_ingest).
+    Ingested,
 }
 
 impl NeighborhoodType {
@@ -30,6 +32,7 @@ impl NeighborhoodType {
             Self::Decision => "decision",
             Self::Preference => "preference",
             Self::Insight => "insight",
+            Self::Ingested => "ingested",
         }
     }
 
@@ -38,6 +41,7 @@ impl NeighborhoodType {
             "decision" => Self::Decision,
             "preference" => Self::Preference,
             "insight" => Self::Insight,
+            "ingested" => Self::Ingested,
             _ => Self::Memory,
         }
     }

@@ -38,7 +38,7 @@ pub(crate) fn run_gc(store: &Store, config: &Config) {
     );
 
     // Phase 1: evict occurrences with zero activation
-    match store.gc_pass(am_core::ACTIVATION_FLOOR) {
+    match store.gc_pass(am_core::ACTIVATION_FLOOR, &config.retention) {
         Ok(result) => {
             tracing::info!(
                 "GC phase 1: evicted {} occurrences (activation <= {}), \
@@ -53,7 +53,7 @@ pub(crate) fn run_gc(store: &Store, config: &Config) {
             // Phase 2: if still over limit, aggressively evict coldest
             if result.after_size >= limit {
                 let target = (limit as f64 * am_core::DB_GC_TARGET_RATIO) as u64;
-                match store.gc_to_target_size(target) {
+                match store.gc_to_target_size(target, &config.retention) {
                     Ok(r2) => {
                         tracing::info!(
                             "GC phase 2 (aggressive): evicted {} more occurrences, \
