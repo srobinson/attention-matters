@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::io::Write;
 
 use am_core::{QueryEngine, compose_context, compute_surface, export_json, ingest_text};
-use am_store::BrainStore;
+use am_store::{BrainStore, Config};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use rand::SeedableRng;
@@ -54,7 +54,13 @@ concepts naturally cluster through physics-inspired dynamics.
   am stats                         # System diagnostics
 
 \x1b[1mData location:\x1b[0m  ~/.attention-matters/brain.db
-  Single unified brain - one product, one memory. Set AM_DATA_DIR to override.
+  Single unified brain - one product, one memory.
+
+\x1b[1mConfiguration:\x1b[0m  ~/.attention-matters/.am.config.toml
+  Environment variables override file values:
+    AM_DATA_DIR     Base directory for brain.db and config
+    AM_GC_ENABLED   Enable automatic GC on startup (default: false)
+    AM_DB_SIZE_MB   DB size limit in MB for GC threshold (default: 50)
 
 \x1b[2mhttps://github.com/srobinson/attention-matters\x1b[0m",
     version
@@ -292,11 +298,13 @@ enum InspectMode {
     Neighborhoods,
 }
 
+fn load_config() -> Config {
+    am_store::config::load()
+}
+
 fn open_store(_cli: &Cli) -> Result<BrainStore> {
-    let base_dir = std::env::var("AM_DATA_DIR")
-        .ok()
-        .map(std::path::PathBuf::from);
-    BrainStore::open(base_dir.as_deref()).context("failed to open brain store")
+    let config = load_config();
+    BrainStore::open(&config).context("failed to open brain store")
 }
 
 fn init_tracing(verbose: bool) {

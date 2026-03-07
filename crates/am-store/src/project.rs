@@ -3,6 +3,7 @@ use std::{env, fs};
 
 use am_core::DAESystem;
 
+use crate::config::Config;
 use crate::error::{Result, StoreError};
 use crate::store::Store;
 
@@ -22,25 +23,26 @@ fn dirs_home() -> PathBuf {
 // Startup GC - automatic size management
 // ---------------------------------------------------------------------------
 
-/// Run automatic GC if the project DB exceeds the soft size limit.
-fn startup_gc(store: &Store) {
+/// Run GC if the project DB exceeds the configured size limit.
+pub(crate) fn run_gc(store: &Store, config: &Config) {
+    let limit = config.db_size_limit_bytes();
     let db_size = store.db_size();
-    if db_size < am_core::DB_SOFT_LIMIT_BYTES {
+    if db_size < limit {
         return;
     }
 
     tracing::info!(
-        "DB size {}MB exceeds {}MB soft limit - running GC",
+        "DB size {}MB exceeds {}MB limit - running GC",
         db_size / (1024 * 1024),
-        am_core::DB_SOFT_LIMIT_BYTES / (1024 * 1024),
+        config.db_size_mb,
     );
 
-    // Phase 1: evict occurrences at or below the activation floor
+    // Phase 1: evict occurrences with zero activation
     match store.gc_pass(am_core::ACTIVATION_FLOOR) {
         Ok(result) => {
             tracing::info!(
                 "GC phase 1: evicted {} occurrences (activation <= {}), \
-                 removed {} empty episodes. DB: {}MB → {}MB",
+                 removed {} empty episodes. DB: {}MB -> {}MB",
                 result.evicted_occurrences,
                 am_core::ACTIVATION_FLOOR,
                 result.removed_episodes,
@@ -49,14 +51,13 @@ fn startup_gc(store: &Store) {
             );
 
             // Phase 2: if still over limit, aggressively evict coldest
-            if result.after_size >= am_core::DB_SOFT_LIMIT_BYTES {
-                let target =
-                    (am_core::DB_SOFT_LIMIT_BYTES as f64 * am_core::DB_GC_TARGET_RATIO) as u64;
+            if result.after_size >= limit {
+                let target = (limit as f64 * am_core::DB_GC_TARGET_RATIO) as u64;
                 match store.gc_to_target_size(target) {
                     Ok(r2) => {
                         tracing::info!(
                             "GC phase 2 (aggressive): evicted {} more occurrences, \
-                             removed {} episodes. DB: {}MB → {}MB",
+                             removed {} episodes. DB: {}MB -> {}MB",
                             r2.evicted_occurrences,
                             r2.removed_episodes,
                             r2.before_size / (1024 * 1024),
@@ -206,11 +207,10 @@ pub struct BrainStore {
 }
 
 impl BrainStore {
-    /// Open the brain store, creating directories as needed.
-    /// `base_dir`: override the base directory (for testing).
-    pub fn open(base_dir: Option<&Path>) -> Result<Self> {
-        let base = base_dir.map(PathBuf::from).unwrap_or_else(default_base_dir);
-        fs::create_dir_all(&base).map_err(|e| {
+    /// Open the brain store using the provided configuration.
+    pub fn open(config: &Config) -> Result<Self> {
+        let base = &config.data_dir;
+        fs::create_dir_all(base).map_err(|e| {
             StoreError::InvalidData(format!("failed to create {}: {e}", base.display()))
         })?;
 
@@ -219,11 +219,14 @@ impl BrainStore {
         // Startup migration: if old layout exists, merge into brain.db
         let projects_dir = base.join("projects");
         if projects_dir.exists() {
-            migrate_old_layout(&base, &brain_path);
+            migrate_old_layout(base, &brain_path);
         }
 
         let store = Store::open(&brain_path)?;
-        startup_gc(&store);
+
+        if config.gc_enabled {
+            run_gc(&store, config);
+        }
 
         Ok(Self { store })
     }
@@ -333,7 +336,11 @@ mod tests {
         let dir = std::env::temp_dir().join("am-brain-store-test-dirs");
         let _ = fs::remove_dir_all(&dir);
 
-        let _bs = BrainStore::open(Some(&dir)).unwrap();
+        let config = Config {
+            data_dir: dir.clone(),
+            ..Config::default()
+        };
+        let _bs = BrainStore::open(&config).unwrap();
 
         assert!(dir.join("brain.db").exists());
 
