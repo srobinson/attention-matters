@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.9](https://github.com/srobinson/attention-matters/compare/v0.1.8...v0.1.9) (2026-03-07)
+
+
+### Bug Fixes
+
+* disable automatic GC, add configurable .am.config.toml ([f94664e](https://github.com/srobinson/attention-matters/commit/f94664edb785ed3cb16b9dddd9141105cb797928))
+
 ## [0.1.8](https://github.com/srobinson/attention-matters/compare/v0.1.7...v0.1.8) (2026-03-04)
 
 
