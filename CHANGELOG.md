@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.14](https://github.com/srobinson/attention-matters/compare/v0.1.13...v0.1.14) (2026-03-08)
+
+
+### Features
+
+* location-based config resolution for .am.config.toml ([3cb7b10](https://github.com/srobinson/attention-matters/commit/3cb7b105b3972b9ef460ee76f50a81e6cb5bfee1))
+
 ## [0.1.13](https://github.com/srobinson/attention-matters/compare/v0.1.12...v0.1.13) (2026-03-08)
 
 
