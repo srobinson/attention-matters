@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::{env, fs};
 
 use anyhow::{Context, Result};
+use pulldown_cmark::{Event, Options, Parser, TagEnd};
 use serde::Deserialize;
 
 /// How many user turns per main-chain episode.
@@ -158,7 +159,7 @@ fn extract_main_entry(
                     let finished = std::mem::replace(current, Exchange::new());
                     exchanges.push(finished);
                 }
-                current.push(format!("[user]\n{text}"));
+                current.push(format!("[user]\n{}", strip_markdown(&text)));
             }
         }
         "assistant" => {
@@ -197,7 +198,7 @@ fn extract_sidechain_entry(
                 sidechains
                     .entry(agent_key)
                     .or_default()
-                    .push(format!("[user]\n{text}"));
+                    .push(format!("[user]\n{}", strip_markdown(&text)));
             }
         }
         "assistant" => {
@@ -278,6 +279,38 @@ fn build_episodes(
 }
 
 // ---------------------------------------------------------------------------
+// Markdown stripping
+// ---------------------------------------------------------------------------
+
+/// Strip markdown formatting to plain text.
+///
+/// Uses pulldown-cmark to parse and extract only text content.
+/// Tables, headers, bold/italic, links, lists, and code spans are
+/// all reduced to their text content with structural whitespace.
+fn strip_markdown(md: &str) -> String {
+    let mut opts = Options::empty();
+    opts.insert(Options::ENABLE_TABLES);
+    opts.insert(Options::ENABLE_STRIKETHROUGH);
+
+    let mut out = String::with_capacity(md.len());
+
+    for event in Parser::new_ext(md, opts) {
+        match event {
+            Event::Text(t) | Event::Code(t) => out.push_str(&t),
+            Event::SoftBreak | Event::HardBreak => out.push('\n'),
+            Event::End(TagEnd::TableCell) => out.push(' '),
+            Event::End(TagEnd::TableRow)
+            | Event::End(TagEnd::Heading(_))
+            | Event::End(TagEnd::Paragraph)
+            | Event::End(TagEnd::Item) => out.push('\n'),
+            _ => {}
+        }
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
 // Content extraction helpers
 // ---------------------------------------------------------------------------
 
@@ -331,11 +364,12 @@ fn extract_content_blocks(obj: &serde_json::Value) -> Vec<String> {
         .iter()
         .filter_map(|block| {
             let block_type = block.get("type")?.as_str()?;
-            let text = match block_type {
+            let raw = match block_type {
                 "text" => block.get("text")?.as_str()?,
                 "thinking" => block.get("thinking")?.as_str()?,
                 _ => return None,
             };
+            let text = strip_markdown(raw);
             let trimmed = text.trim();
             if trimmed.is_empty() {
                 None
@@ -388,7 +422,7 @@ pub fn extract_session_text(path: &Path) -> Result<String> {
                     && text.len() >= MIN_TEXT_LEN
                     && !is_system_prompt(&text)
                 {
-                    parts.push(format!("[user]\n{text}"));
+                    parts.push(format!("[user]\n{}", strip_markdown(&text)));
                 }
             }
             "assistant" => {
@@ -604,7 +638,11 @@ mod tests {
         let episodes = extract_episodes(&path, "role1234").unwrap();
         assert_eq!(episodes.len(), 1);
         assert!(episodes[0].text.contains("[user]\nHow does authentication"));
-        assert!(episodes[0].text.contains("[assistant]\nThe auth middleware"));
+        assert!(
+            episodes[0]
+                .text
+                .contains("[assistant]\nThe auth middleware")
+        );
     }
 
     #[test]
@@ -623,6 +661,71 @@ mod tests {
         let text = extract_session_text(&path).unwrap();
         assert!(text.contains("[user]\nExplain quaternion"));
         assert!(text.contains("[assistant]\nSLERP produces"));
+    }
+
+    /// Build a properly escaped assistant text JSONL line.
+    fn main_assistant_text_raw(text: &str) -> String {
+        serde_json::json!({
+            "type": "assistant",
+            "isSidechain": false,
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": text}]
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn test_markdown_table_stripped() {
+        let dir = TempDir::new().unwrap();
+        let table_md = "Here are the results:\n\n| Module | LOC | Exports |\n|--------|-----|--------|\n| core | 500 | 12 |\n| store | 300 | 8 |\n\nThat covers the workspace.";
+        let path = write_transcript(
+            &dir,
+            &[
+                main_user("Show me the module stats in a table."),
+                main_assistant_text_raw(table_md),
+            ],
+        );
+
+        let episodes = extract_episodes(&path, "table123").unwrap();
+        assert_eq!(episodes.len(), 1);
+        let text = &episodes[0].text;
+        // Table pipes and separator rows should be gone
+        assert!(!text.contains('|'), "pipes still present: {text}");
+        assert!(!text.contains("---"), "separator still present: {text}");
+        // Cell content should remain
+        assert!(text.contains("core"));
+        assert!(text.contains("500"));
+        assert!(text.contains("store"));
+    }
+
+    #[test]
+    fn test_markdown_formatting_stripped() {
+        let dir = TempDir::new().unwrap();
+        let md = "## Architecture\n\nThe **query engine** uses `SLERP` for *drift*.\n\n- Step one\n- Step two\n\nSee [the docs](https://example.com) for details.";
+        let path = write_transcript(
+            &dir,
+            &[
+                main_user("Explain the architecture with formatting."),
+                main_assistant_text_raw(md),
+            ],
+        );
+
+        let episodes = extract_episodes(&path, "fmt12345").unwrap();
+        let text = &episodes[0].text;
+        // Markdown syntax should be gone
+        assert!(!text.contains("##"), "heading markers present: {text}");
+        assert!(!text.contains("**"), "bold markers present: {text}");
+        assert!(!text.contains('`'), "backticks present: {text}");
+        assert!(!text.contains("]("), "link syntax present: {text}");
+        // Content should remain
+        assert!(text.contains("Architecture"));
+        assert!(text.contains("query engine"));
+        assert!(text.contains("SLERP"));
+        assert!(text.contains("drift"));
+        assert!(text.contains("Step one"));
+        assert!(text.contains("the docs"));
     }
 
     #[test]
