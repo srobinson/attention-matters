@@ -1089,13 +1089,20 @@ fn cmd_sync(
     }
 }
 
-/// Ingest a single session from hook stdin input.
+/// Ingest a session transcript as one or more episodes.
+///
+/// SessionEnd is the canonical episode boundary. The transcript is the sole
+/// source of truth. Main-chain content is chunked into episodes of 5 exchanges.
+/// Each subagent's work becomes its own episode. Thinking blocks are captured
+/// alongside text. Tool interactions are excluded.
 fn cmd_sync_single(cli: &Cli, hook: sync::HookInput, dry_run: bool) -> Result<()> {
     let bold = "\x1b[1m";
     let dim = "\x1b[2m";
     let reset = "\x1b[0m";
 
-    // Expand ~ in transcript path
+    let session_prefix = safe_prefix(&hook.session_id, 8);
+
+    // Resolve transcript path
     let raw_path = if hook.transcript_path.starts_with("~/") {
         let home = std::env::var("HOME")
             .or_else(|_| std::env::var("USERPROFILE"))
@@ -1111,27 +1118,27 @@ fn cmd_sync_single(cli: &Cli, hook: sync::HookInput, dry_run: bool) -> Result<()
         return Ok(());
     }
 
-    let text = sync::extract_session_text(&path)
+    let extracted = sync::extract_episodes(&path, session_prefix)
         .with_context(|| format!("failed to parse {}", path.display()))?;
 
-    if text.is_empty() {
-        println!(
-            "  {dim}skip{reset} {} (no substantive content)",
-            safe_prefix(&hook.session_id, 8)
-        );
+    if extracted.is_empty() {
+        println!("  {dim}skip{reset} {session_prefix} (no substantive content)",);
         return Ok(());
     }
 
-    let episode_name = format!("session-{}", safe_prefix(&hook.session_id, 8));
-    let text_preview = truncate_text(&text, 60);
-
     if dry_run {
+        for ep in &extracted {
+            let preview = truncate_text(&ep.text, 60);
+            println!(
+                "  {bold}episode{reset} {} ({} chars) {dim}{preview}{reset}",
+                ep.name,
+                ep.text.len()
+            );
+        }
         println!(
-            "  {bold}sync{reset} {} ({} chars) {dim}{text_preview}{reset}",
-            safe_prefix(&hook.session_id, 8),
-            text.len()
+            "\n{dim}Dry run: {} episode(s), no changes made.{reset}",
+            extracted.len()
         );
-        println!("\n{dim}Dry run: no changes made.{reset}");
         return Ok(());
     }
 
@@ -1139,27 +1146,81 @@ fn cmd_sync_single(cli: &Cli, hook: sync::HookInput, dry_run: bool) -> Result<()
     let mut system = store.load_system().context("failed to load system")?;
     let mut rng = SmallRng::from_os_rng();
 
-    // Replace semantics: remove existing episode with same name
-    system.episodes.retain(|e| e.name != episode_name);
+    // Drain any leftover conversation buffer (from am_buffer calls during
+    // this session). The transcript is the canonical source, so we discard
+    // the buffer to avoid double-counting.
+    let _ = store.store().drain_buffer();
 
-    let episode = ingest_text(&text, Some(&episode_name), &mut rng);
-    let nbhd_count = episode.neighborhoods.len();
-    system.add_episode(episode);
+    let mut total_neighborhoods = 0usize;
+
+    for ep in &extracted {
+        // Replace semantics: remove existing episode with same name
+        system.episodes.retain(|e| e.name != ep.name);
+
+        let episode = ingest_text(&ep.text, Some(&ep.name), &mut rng);
+        let nbhd_count = episode.neighborhoods.len();
+        total_neighborhoods += nbhd_count;
+        system.add_episode(episode);
+
+        let preview = truncate_text(&ep.text, 60);
+        println!(
+            "  {bold}episode{reset} {} -> {nbhd_count} neighborhoods {dim}{preview}{reset}",
+            ep.name,
+        );
+    }
 
     store
         .save_system(&system)
         .context("failed to save system")?;
 
     println!(
-        "  {bold}synced{reset} {} → {} neighborhoods {dim}{text_preview}{reset}",
-        safe_prefix(&hook.session_id, 8),
-        nbhd_count,
-    );
-    println!(
-        "\n{bold}Done.{reset} N={}, episodes={}",
+        "\n{bold}Done.{reset} {} episode(s), {total_neighborhoods} neighborhoods, N={}, total episodes={}",
+        extracted.len(),
         system.n(),
         system.episodes.len()
     );
+
+    // Write debug log if AM_SYNC_LOG_DIR is set
+    if let Ok(log_dir) = std::env::var("AM_SYNC_LOG_DIR") {
+        let log_dir = std::path::PathBuf::from(log_dir);
+        if let Err(e) = write_sync_log(&log_dir, session_prefix, &extracted) {
+            eprintln!("sync log failed: {e}");
+        }
+    }
+
+    Ok(())
+}
+
+/// Write sync results to a debug log file.
+fn write_sync_log(
+    log_dir: &std::path::Path,
+    session_prefix: &str,
+    episodes: &[sync::ExtractedEpisode],
+) -> Result<()> {
+    std::fs::create_dir_all(log_dir)
+        .with_context(|| format!("failed to create {}", log_dir.display()))?;
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let filename = format!("sync-{session_prefix}-{timestamp}.log");
+    let path = log_dir.join(filename);
+
+    let mut out = String::new();
+    use std::fmt::Write;
+    writeln!(out, "session: {session_prefix}")?;
+    writeln!(out, "timestamp: {timestamp}")?;
+    writeln!(out, "episodes: {}", episodes.len())?;
+    writeln!(out)?;
+
+    for ep in episodes {
+        writeln!(out, "--- {} ({} chars) ---", ep.name, ep.text.len())?;
+        writeln!(out, "{}", ep.text)?;
+        writeln!(out)?;
+    }
+
+    std::fs::write(&path, &out).with_context(|| format!("failed to write {}", path.display()))?;
 
     Ok(())
 }

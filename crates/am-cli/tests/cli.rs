@@ -391,7 +391,7 @@ fn sync_ingests_sessions() {
         .assert()
         .success()
         .stdout(predicate::str::contains("Found 2"))
-        .stdout(predicate::str::contains("synced"))
+        .stdout(predicate::str::contains("episode"))
         .stdout(predicate::str::contains("Done."));
 
     // Stats should show 2 episodes
@@ -457,7 +457,7 @@ fn sync_stdin_hook() {
         .write_stdin(hook_json.as_bytes())
         .assert()
         .success()
-        .stdout(predicate::str::contains("synced"))
+        .stdout(predicate::str::contains("episode"))
         .stdout(predicate::str::contains("Done."));
 
     // Verify 1 episode created
@@ -473,7 +473,7 @@ fn sync_stdin_hook() {
         .write_stdin(hook_json.as_bytes())
         .assert()
         .success()
-        .stdout(predicate::str::contains("synced"))
+        .stdout(predicate::str::contains("episode"))
         .stdout(predicate::str::contains("Done."));
 
     am_cmd(&dir)

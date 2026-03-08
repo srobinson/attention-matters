@@ -913,16 +913,12 @@ impl ServerHandler for AmServer {
                  SESSION LIFECYCLE:\n\
                  1. RECALL: At session start, call am_query with the user's first message or task description. \
                     Use returned context silently - integrate naturally, never announce \"I remember...\".\n\
-                 2. ENGAGE: During the session, call am_buffer with substantive exchange pairs. \
-                    Skip trivial exchanges (greetings, yes/no). After 3 buffered exchanges, \
-                    a memory episode is created automatically. Any leftover buffer is flushed \
-                    into an episode at the start of the next session.\n\
-                 3. STRENGTHEN: After giving a meaningful technical response, call am_activate_response \
+                 2. STRENGTHEN: After giving a meaningful technical response, call am_activate_response \
                     with your response text to consolidate related memories.\n\
-                 4. MARK INSIGHTS: When you discover architecture decisions, user preferences, \
+                 3. MARK INSIGHTS: When you discover architecture decisions, user preferences, \
                     recurring patterns, or hard-won insights, call am_salient to store them as \
                     conscious memory. These persist globally across all projects.\n\
-                 5. FEEDBACK: When you know a recalled memory was helpful (led to a correct solution) \
+                 4. FEEDBACK: When you know a recalled memory was helpful (led to a correct solution) \
                     or unhelpful (was irrelevant or misleading), call am_feedback with the original \
                     query, the neighborhood IDs from the recall, and signal 'boost' or 'demote'. \
                     This reshapes the manifold - helpful memories drift toward where they were needed, \
