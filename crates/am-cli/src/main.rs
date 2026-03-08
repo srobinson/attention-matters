@@ -1180,12 +1180,12 @@ fn cmd_sync_single(cli: &Cli, hook: sync::HookInput, dry_run: bool) -> Result<()
         system.episodes.len()
     );
 
-    // Write debug log if AM_SYNC_LOG_DIR is set
-    if let Ok(log_dir) = std::env::var("AM_SYNC_LOG_DIR") {
-        let log_dir = std::path::PathBuf::from(log_dir);
-        if let Err(e) = write_sync_log(&log_dir, session_prefix, &extracted) {
-            eprintln!("sync log failed: {e}");
-        }
+    // Write debug log if sync_log_dir is configured
+    let config = load_config();
+    if let Some(ref log_dir) = config.sync_log_dir
+        && let Err(e) = write_sync_log(log_dir, session_prefix, &extracted)
+    {
+        eprintln!("sync log failed: {e}");
     }
 
     Ok(())

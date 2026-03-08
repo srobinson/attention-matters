@@ -13,6 +13,7 @@ struct FileConfig {
     data_dir: Option<String>,
     gc_enabled: Option<bool>,
     db_size_mb: Option<u64>,
+    sync_log_dir: Option<String>,
     retention: Option<FileRetentionConfig>,
 }
 
@@ -55,6 +56,7 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub gc_enabled: bool,
     pub db_size_mb: u64,
+    pub sync_log_dir: Option<PathBuf>,
     pub retention: RetentionPolicy,
 }
 
@@ -64,6 +66,7 @@ impl Default for Config {
             data_dir: crate::project::default_base_dir(),
             gc_enabled: false,
             db_size_mb: DEFAULT_DB_SIZE_MB,
+            sync_log_dir: None,
             retention: RetentionPolicy::default(),
         }
     }
@@ -78,7 +81,7 @@ impl Config {
 
 /// Load configuration with the following precedence (highest wins):
 ///
-/// 1. Environment variables (`AM_DATA_DIR`, `AM_GC_ENABLED`, `AM_DB_SIZE_MB`)
+/// 1. Environment variables (`AM_DATA_DIR`, `AM_GC_ENABLED`, `AM_DB_SIZE_MB`, `AM_SYNC_LOG_DIR`)
 /// 2. Project config (`$AM_DATA_DIR/.am.config.toml`, if AM_DATA_DIR is set)
 /// 3. Global config (`~/.attention-matters/.am.config.toml`)
 /// 4. Compiled defaults
@@ -110,6 +113,9 @@ pub fn load() -> Config {
     {
         cfg.db_size_mb = mb;
     }
+    if let Ok(val) = env::var("AM_SYNC_LOG_DIR") {
+        cfg.sync_log_dir = Some(expand_tilde(&val));
+    }
 
     cfg
 }
@@ -124,6 +130,9 @@ fn apply_file_config(cfg: &mut Config, path: &Path) {
         }
         if let Some(size) = file_cfg.db_size_mb {
             cfg.db_size_mb = size;
+        }
+        if let Some(dir) = file_cfg.sync_log_dir {
+            cfg.sync_log_dir = Some(expand_tilde(&dir));
         }
         if let Some(ret) = file_cfg.retention {
             if let Some(v) = ret.grace_epochs {
@@ -224,6 +233,13 @@ recency_weight = 3.0
         assert_eq!(ret.retention_days, None);
         assert_eq!(ret.min_neighborhoods, None);
         assert_eq!(ret.recency_weight, None);
+    }
+
+    #[test]
+    fn parse_toml_sync_log_dir() {
+        let content = "sync_log_dir = \"~/logs/am-sync\"\n";
+        let file_cfg: FileConfig = toml::from_str(content).unwrap();
+        assert_eq!(file_cfg.sync_log_dir.as_deref(), Some("~/logs/am-sync"));
     }
 
     #[test]
