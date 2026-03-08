@@ -158,14 +158,17 @@ fn extract_main_entry(
                     let finished = std::mem::replace(current, Exchange::new());
                     exchanges.push(finished);
                 }
-                current.push(text);
+                current.push(format!("[user]\n{text}"));
             }
         }
         "assistant" => {
-            for part in extract_content_blocks(obj) {
-                if part.len() >= MIN_TEXT_LEN {
-                    current.push(part);
-                }
+            let parts = extract_content_blocks(obj);
+            let parts: Vec<String> = parts
+                .into_iter()
+                .filter(|p| p.len() >= MIN_TEXT_LEN)
+                .collect();
+            if !parts.is_empty() {
+                current.push(format!("[assistant]\n{}", parts.join("\n")));
             }
         }
         _ => {}
@@ -191,14 +194,23 @@ fn extract_sidechain_entry(
                 && text.len() >= MIN_TEXT_LEN
                 && !is_system_prompt(&text)
             {
-                sidechains.entry(agent_key).or_default().push(text);
+                sidechains
+                    .entry(agent_key)
+                    .or_default()
+                    .push(format!("[user]\n{text}"));
             }
         }
         "assistant" => {
-            for part in extract_content_blocks(obj) {
-                if part.len() >= MIN_TEXT_LEN {
-                    sidechains.entry(agent_key.clone()).or_default().push(part);
-                }
+            let parts = extract_content_blocks(obj);
+            let parts: Vec<String> = parts
+                .into_iter()
+                .filter(|p| p.len() >= MIN_TEXT_LEN)
+                .collect();
+            if !parts.is_empty() {
+                sidechains
+                    .entry(agent_key)
+                    .or_default()
+                    .push(format!("[assistant]\n{}", parts.join("\n")));
             }
         }
         _ => {}
@@ -376,14 +388,16 @@ pub fn extract_session_text(path: &Path) -> Result<String> {
                     && text.len() >= MIN_TEXT_LEN
                     && !is_system_prompt(&text)
                 {
-                    parts.push(text);
+                    parts.push(format!("[user]\n{text}"));
                 }
             }
             "assistant" => {
-                for part in extract_content_blocks(&obj) {
-                    if part.len() >= MIN_TEXT_LEN {
-                        parts.push(part);
-                    }
+                let blocks: Vec<String> = extract_content_blocks(&obj)
+                    .into_iter()
+                    .filter(|p| p.len() >= MIN_TEXT_LEN)
+                    .collect();
+                if !blocks.is_empty() {
+                    parts.push(format!("[assistant]\n{}", blocks.join("\n")));
                 }
             }
             _ => continue,
@@ -572,6 +586,43 @@ mod tests {
         assert!(episodes[0].text.contains("authentication"));
         assert!(episodes[0].text.contains("JWT tokens"));
         assert!(episodes[0].text.contains("refresh token"));
+    }
+
+    #[test]
+    fn test_role_headers_in_episodes() {
+        let dir = TempDir::new().unwrap();
+        let path = write_transcript(
+            &dir,
+            &[
+                main_user("How does authentication work in this codebase?"),
+                main_assistant_text(
+                    "The auth middleware uses JWT tokens stored in HTTP-only cookies.",
+                ),
+            ],
+        );
+
+        let episodes = extract_episodes(&path, "role1234").unwrap();
+        assert_eq!(episodes.len(), 1);
+        assert!(episodes[0].text.contains("[user]\nHow does authentication"));
+        assert!(episodes[0].text.contains("[assistant]\nThe auth middleware"));
+    }
+
+    #[test]
+    fn test_role_headers_in_session_text() {
+        let dir = TempDir::new().unwrap();
+        let path = write_transcript(
+            &dir,
+            &[
+                main_user("Explain quaternion SLERP interpolation in detail."),
+                main_assistant_text(
+                    "SLERP produces constant-speed rotation between two quaternions.",
+                ),
+            ],
+        );
+
+        let text = extract_session_text(&path).unwrap();
+        assert!(text.contains("[user]\nExplain quaternion"));
+        assert!(text.contains("[assistant]\nSLERP produces"));
     }
 
     #[test]
