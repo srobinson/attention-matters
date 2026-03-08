@@ -1,9 +1,10 @@
+.claude/
 .DS_Store
+.fmm.db
 *.fmm
 *.swo
 *.swp
 *~
 /.nancy
 /target
-.claude/
 npm/*/scripts/am
