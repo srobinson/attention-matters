@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.13](https://github.com/srobinson/attention-matters/compare/v0.1.12...v0.1.13) (2026-03-08)
+
+
+### Features
+
+* add `am init` command to generate default config ([31210cf](https://github.com/srobinson/attention-matters/commit/31210cfdf3edb778820e06a7dfc7c0f4f804f291))
+
 ## [0.1.12](https://github.com/srobinson/attention-matters/compare/v0.1.11...v0.1.12) (2026-03-08)
 
 
