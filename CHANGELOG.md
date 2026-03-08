@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.15](https://github.com/srobinson/attention-matters/compare/v0.1.14...v0.1.15) (2026-03-08)
+
+
+### Features
+
+* add role headers to sync episode text ([2527659](https://github.com/srobinson/attention-matters/commit/25276599af8037651f04ffe95b692322226541c7))
+* strip markdown formatting from sync episode text ([36623ee](https://github.com/srobinson/attention-matters/commit/36623eef102f6b472b976c736a46ca149d08ce88))
+
 ## [0.1.14](https://github.com/srobinson/attention-matters/compare/v0.1.13...v0.1.14) (2026-03-08)
 
 
