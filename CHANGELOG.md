@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.12](https://github.com/srobinson/attention-matters/compare/v0.1.11...v0.1.12) (2026-03-08)
+
+
+### Features
+
+* add sync_log_dir to config ([95c13eb](https://github.com/srobinson/attention-matters/commit/95c13ebb0d3a263c0726e3285cd19377d8635be8))
+
 ## [0.1.11](https://github.com/srobinson/attention-matters/compare/v0.1.10...v0.1.11) (2026-03-08)
 
 

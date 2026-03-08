@@ -1,6 +1,6 @@
 {
   "name": "attention-matters",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Geometric memory for AI coding agents. No embeddings, no vectors, no cloud - just math.",
   "license": "MIT",
   "repository": {
