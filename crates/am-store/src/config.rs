@@ -162,6 +162,66 @@ fn read_config_file(path: &Path) -> Option<FileConfig> {
     }
 }
 
+/// Generate a fully commented default config file.
+pub fn generate_default_toml() -> String {
+    let defaults = Config::default();
+    let ret = &defaults.retention;
+    let data_dir = defaults
+        .data_dir
+        .to_string_lossy()
+        .replace(&std::env::var("HOME").unwrap_or_default(), "~");
+
+    format!(
+        r#"# attention-matters configuration
+#
+# This file is loaded from $AM_DATA_DIR/.am.config.toml (or
+# ~/.attention-matters/.am.config.toml for the global config).
+#
+# Precedence (highest wins):
+#   1. Environment variables (AM_DATA_DIR, AM_GC_ENABLED, AM_DB_SIZE_MB, AM_SYNC_LOG_DIR)
+#   2. Project config ($AM_DATA_DIR/.am.config.toml)
+#   3. Global config (~/.attention-matters/.am.config.toml)
+#   4. Compiled defaults (shown below)
+
+# Directory where the database and state files are stored.
+# Override with AM_DATA_DIR env var.
+# data_dir = "{data_dir}"
+
+# Enable automatic garbage collection.
+# Override with AM_GC_ENABLED env var.
+# gc_enabled = {gc_enabled}
+
+# Database size limit in MB for GC target sizing.
+# Override with AM_DB_SIZE_MB env var.
+# db_size_mb = {db_size_mb}
+
+# Directory to write sync logs into. Disabled when unset.
+# Override with AM_SYNC_LOG_DIR env var.
+# sync_log_dir = "{data_dir}/sync-logs"
+
+[retention]
+# Neighborhoods within this many epochs of the max are GC-exempt.
+# grace_epochs = {grace_epochs}
+
+# Neighborhoods newer than this many days are GC-exempt.
+# retention_days = {retention_days}
+
+# Skip GC entirely if total neighborhoods are below this count.
+# min_neighborhoods = {min_neighborhoods}
+
+# Recency bonus weight in composite eviction scoring.
+# recency_weight = {recency_weight}
+"#,
+        data_dir = data_dir,
+        gc_enabled = defaults.gc_enabled,
+        db_size_mb = defaults.db_size_mb,
+        grace_epochs = ret.grace_epochs,
+        retention_days = ret.retention_days,
+        min_neighborhoods = ret.min_neighborhoods,
+        recency_weight = ret.recency_weight,
+    )
+}
+
 fn expand_tilde(path: &str) -> PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         let home = env::var("HOME")

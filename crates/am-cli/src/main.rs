@@ -284,6 +284,22 @@ enum Commands {
         #[arg(long, conflicts_with = "term", conflicts_with = "episode")]
         conscious: Option<String>,
     },
+
+    /// Generate a default .am.config.toml in the data directory
+    #[command(
+        long_about = "Generate a fully commented .am.config.toml with all fields\n\
+            and their compiled defaults. Writes to $AM_DATA_DIR (or\n\
+            ~/.attention-matters/ if unset). If a config file already\n\
+            exists, prompts before overwriting.",
+        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+            am init                 # Write config to default location\n  \
+            am init --force         # Overwrite without prompting"
+    )]
+    Init {
+        /// Overwrite existing config without prompting
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -357,6 +373,7 @@ async fn main() -> Result<()> {
             episode.as_deref(),
             conscious.as_deref(),
         ),
+        Commands::Init { force } => cmd_init(*force),
     }
 }
 
@@ -1450,6 +1467,36 @@ fn cmd_forget(
         anyhow::bail!("specify a term, --episode <id>, or --conscious <id> to forget");
     }
 
+    Ok(())
+}
+
+fn cmd_init(force: bool) -> Result<()> {
+    let cfg = load_config();
+    let config_path = cfg.data_dir.join(".am.config.toml");
+
+    // Ensure the data directory exists
+    std::fs::create_dir_all(&cfg.data_dir)
+        .with_context(|| format!("failed to create {}", cfg.data_dir.display()))?;
+
+    if config_path.exists() && !force {
+        eprint!(
+            "{} already exists. Overwrite? [y/N] ",
+            config_path.display()
+        );
+        std::io::stderr().flush()?;
+        let mut answer = String::new();
+        std::io::stdin().read_line(&mut answer)?;
+        if !answer.trim().eq_ignore_ascii_case("y") {
+            println!("aborted");
+            return Ok(());
+        }
+    }
+
+    let content = am_store::config::generate_default_toml();
+    std::fs::write(&config_path, &content)
+        .with_context(|| format!("failed to write {}", config_path.display()))?;
+
+    println!("wrote {}", config_path.display());
     Ok(())
 }
 
