@@ -25,7 +25,7 @@ dependencies = [
 
 [[package]]
 name = "am-cli"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "am-core",
  "am-store",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "am-core"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "approx",
  "rand",
@@ -60,7 +60,7 @@ dependencies = [
 
 [[package]]
 name = "am-store"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "am-core",
  "rand",

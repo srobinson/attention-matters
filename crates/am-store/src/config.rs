@@ -82,27 +82,27 @@ impl Config {
 /// Load configuration with the following precedence (highest wins):
 ///
 /// 1. Environment variables (`AM_DATA_DIR`, `AM_GC_ENABLED`, `AM_DB_SIZE_MB`, `AM_SYNC_LOG_DIR`)
-/// 2. Project config (`$AM_DATA_DIR/.am.config.toml`, if AM_DATA_DIR is set)
-/// 3. Global config (`~/.attention-matters/.am.config.toml`)
-/// 4. Compiled defaults
+/// 2. Config file (first found wins):
+///    a. `$CWD/.am.config.toml` (project-local)
+///    b. `$AM_DATA_DIR/.am.config.toml` (if env var is set)
+///    c. `~/.attention-matters/.am.config.toml` (global fallback)
+/// 3. Compiled defaults
+///
+/// The config file's `data_dir` field controls where the database lives.
+/// `AM_DATA_DIR` overrides `data_dir` from the file.
 pub fn load() -> Config {
     let mut cfg = Config::default();
-    let default_dir = cfg.data_dir.clone();
 
-    // Layer 1: global config (~/.attention-matters/.am.config.toml)
-    apply_file_config(&mut cfg, &default_dir.join(".am.config.toml"));
-
-    // Layer 2: project config ($AM_DATA_DIR/.am.config.toml)
-    // Only read if AM_DATA_DIR points somewhere different from the default.
-    if let Ok(dir) = env::var("AM_DATA_DIR") {
-        let project_dir = expand_tilde(&dir);
-        if project_dir != default_dir {
-            apply_file_config(&mut cfg, &project_dir.join(".am.config.toml"));
-        }
-        cfg.data_dir = project_dir;
+    // Find config file: CWD first, then global fallback
+    let config_path = find_config_file();
+    if let Some(path) = &config_path {
+        apply_file_config(&mut cfg, path);
     }
 
-    // Layer 3: env vars override everything
+    // Env vars override everything
+    if let Ok(dir) = env::var("AM_DATA_DIR") {
+        cfg.data_dir = expand_tilde(&dir);
+    }
     if let Ok(val) = env::var("AM_GC_ENABLED")
         && let Ok(b) = val.parse::<bool>()
     {
@@ -118,6 +118,38 @@ pub fn load() -> Config {
     }
 
     cfg
+}
+
+/// Find the config file (first match wins):
+///   1. CWD/.am.config.toml
+///   2. $AM_DATA_DIR/.am.config.toml (if set)
+///   3. ~/.attention-matters/.am.config.toml
+fn find_config_file() -> Option<PathBuf> {
+    const CONFIG_NAME: &str = ".am.config.toml";
+
+    // Check CWD
+    if let Ok(cwd) = env::current_dir() {
+        let local = cwd.join(CONFIG_NAME);
+        if local.exists() {
+            return Some(local);
+        }
+    }
+
+    // Check AM_DATA_DIR
+    if let Ok(dir) = env::var("AM_DATA_DIR") {
+        let project = expand_tilde(&dir).join(CONFIG_NAME);
+        if project.exists() {
+            return Some(project);
+        }
+    }
+
+    // Fall back to global
+    let global = crate::project::default_base_dir().join(CONFIG_NAME);
+    if global.exists() {
+        return Some(global);
+    }
+
+    None
 }
 
 fn apply_file_config(cfg: &mut Config, path: &Path) {
@@ -174,16 +206,15 @@ pub fn generate_default_toml() -> String {
     format!(
         r#"# attention-matters configuration
 #
-# This file is loaded from $AM_DATA_DIR/.am.config.toml (or
-# ~/.attention-matters/.am.config.toml for the global config).
+# Config file resolution (first found wins):
+#   1. $CWD/.am.config.toml   (project-local)
+#   2. ~/.attention-matters/.am.config.toml  (global fallback)
 #
-# Precedence (highest wins):
-#   1. Environment variables (AM_DATA_DIR, AM_GC_ENABLED, AM_DB_SIZE_MB, AM_SYNC_LOG_DIR)
-#   2. Project config ($AM_DATA_DIR/.am.config.toml)
-#   3. Global config (~/.attention-matters/.am.config.toml)
-#   4. Compiled defaults (shown below)
+# Environment variables override all file settings:
+#   AM_DATA_DIR, AM_GC_ENABLED, AM_DB_SIZE_MB, AM_SYNC_LOG_DIR
 
 # Directory where the database and state files are stored.
+# This is how you point a project at a specific brain.
 # Override with AM_DATA_DIR env var.
 # data_dir = "{data_dir}"
 

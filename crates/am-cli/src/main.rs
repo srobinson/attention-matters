@@ -285,17 +285,22 @@ enum Commands {
         conscious: Option<String>,
     },
 
-    /// Generate a default .am.config.toml in the data directory
+    /// Generate a default .am.config.toml
     #[command(
         long_about = "Generate a fully commented .am.config.toml with all fields\n\
-            and their compiled defaults. Writes to $AM_DATA_DIR (or\n\
-            ~/.attention-matters/ if unset). If a config file already\n\
-            exists, prompts before overwriting.",
+            and their compiled defaults. Writes to the current directory\n\
+            by default, or to ~/.attention-matters/ with --global.\n\
+            If a config file already exists, prompts before overwriting.",
         after_help = "\x1b[1mExamples:\x1b[0m\n  \
-            am init                 # Write config to default location\n  \
+            am init                 # Write config to current directory\n  \
+            am init --global        # Write config to ~/.attention-matters/\n  \
             am init --force         # Overwrite without prompting"
     )]
     Init {
+        /// Write to ~/.attention-matters/ instead of the current directory
+        #[arg(long)]
+        global: bool,
+
         /// Overwrite existing config without prompting
         #[arg(long)]
         force: bool,
@@ -373,7 +378,7 @@ async fn main() -> Result<()> {
             episode.as_deref(),
             conscious.as_deref(),
         ),
-        Commands::Init { force } => cmd_init(*force),
+        Commands::Init { global, force } => cmd_init(*global, *force),
     }
 }
 
@@ -1470,13 +1475,16 @@ fn cmd_forget(
     Ok(())
 }
 
-fn cmd_init(force: bool) -> Result<()> {
-    let cfg = load_config();
-    let config_path = cfg.data_dir.join(".am.config.toml");
+fn cmd_init(global: bool, force: bool) -> Result<()> {
+    let dir = if global {
+        am_store::project::default_base_dir()
+    } else {
+        std::env::current_dir().context("failed to get current directory")?
+    };
+    let config_path = dir.join(".am.config.toml");
 
-    // Ensure the data directory exists
-    std::fs::create_dir_all(&cfg.data_dir)
-        .with_context(|| format!("failed to create {}", cfg.data_dir.display()))?;
+    // Ensure the target directory exists (relevant for --global)
+    std::fs::create_dir_all(&dir).with_context(|| format!("failed to create {}", dir.display()))?;
 
     if config_path.exists() && !force {
         eprint!(
