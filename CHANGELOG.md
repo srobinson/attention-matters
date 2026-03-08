@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.11](https://github.com/srobinson/attention-matters/compare/v0.1.10...v0.1.11) (2026-03-08)
+
+
+### Features
+
+* transcript-based episode extraction on SessionEnd ([8b6cece](https://github.com/srobinson/attention-matters/commit/8b6ceceb33255e0521f714772f64dc32c0aa8bb3))
+
 ## [0.1.10](https://github.com/srobinson/attention-matters/compare/v0.1.9...v0.1.10) (2026-03-07)
 
 
