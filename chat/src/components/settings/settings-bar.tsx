@@ -8,18 +8,22 @@ import {
   loadSettings,
   saveSettings,
 } from "@/lib/settings";
+import { UploadButton } from "@/components/upload/upload-button";
+import { UploadModal } from "@/components/upload/upload-modal";
 
 interface SettingsBarProps {
   onSettingsChange: () => void;
+  onIngestComplete?: () => void;
 }
 
 /**
  * Header settings bar with model selector, mode toggle, and settings access.
  * Replaces the plain Header when API key is configured.
  */
-export function SettingsBar({ onSettingsChange }: SettingsBarProps) {
+export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarProps) {
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showDrawer, setShowDrawer] = useState(false);
+  const [showUpload, setShowUpload] = useState(false);
 
   // Reload settings when component mounts (SSR safety)
   useEffect(() => {
@@ -107,6 +111,9 @@ export function SettingsBar({ onSettingsChange }: SettingsBarProps) {
             style={{ background: "var(--color-novel)" }}
           />
 
+          {/* Upload button */}
+          <UploadButton onClick={() => setShowUpload(true)} />
+
           {/* Gear icon */}
           <button
             onClick={() => setShowDrawer(!showDrawer)}
@@ -127,6 +134,13 @@ export function SettingsBar({ onSettingsChange }: SettingsBarProps) {
           onClose={() => setShowDrawer(false)}
         />
       )}
+
+      {/* Upload modal */}
+      <UploadModal
+        open={showUpload}
+        onClose={() => setShowUpload(false)}
+        onIngestComplete={onIngestComplete}
+      />
     </>
   );
 }

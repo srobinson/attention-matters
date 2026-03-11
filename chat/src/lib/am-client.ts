@@ -9,7 +9,10 @@ import type {
   Episode,
   FeedbackRequest,
   HealthResponse,
+  ImportRequest,
+  ImportResponse,
   IngestRequest,
+  IngestResponse,
   QueryIndexRequest,
   QueryIndexResponse,
   QueryRequest,
@@ -145,8 +148,15 @@ export function amBuffer(
 export function amIngest(
   req: IngestRequest,
   apiKey?: string
-): Promise<unknown> {
+): Promise<IngestResponse> {
   return post("/api/am/ingest", req, apiKey);
+}
+
+export function amImport(
+  req: ImportRequest,
+  apiKey?: string
+): Promise<ImportResponse> {
+  return post("/api/am/import", req, apiKey);
 }
 
 export function amActivate(

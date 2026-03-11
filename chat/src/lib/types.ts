@@ -111,6 +111,22 @@ export interface IngestRequest {
   name?: string;
 }
 
+export interface IngestResponse {
+  episode_name: string;
+  neighborhoods: number;
+  occurrences: number;
+}
+
+export interface ImportRequest {
+  state: unknown;
+}
+
+export interface ImportResponse {
+  episodes: number;
+  neighborhoods: number;
+  occurrences: number;
+}
+
 export interface SalientRequest {
   text: string;
   supersedes?: string[];
