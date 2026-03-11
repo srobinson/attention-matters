@@ -14,6 +14,8 @@ type UploadState =
 
 const ACCEPTED_EXTENSIONS = [".txt", ".md", ".json"];
 const ACCEPT_STRING = ".txt,.md,.json";
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+const MAX_FILE_SIZE_LABEL = "5 MB";
 
 /**
  * Detects whether a JSON object is an AM v0.7.2 export format.
@@ -66,6 +68,17 @@ export function UploadModal({ open, onClose, onIngestComplete }: UploadModalProp
   }, [open, onClose]);
 
   const processFile = useCallback(async (file: File) => {
+    // Size limit check (client-side, before any upload)
+    if (file.size > MAX_FILE_SIZE_BYTES) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+      setState({
+        status: "error",
+        fileName: file.name,
+        message: `File too large (${sizeMB} MB). Maximum size is ${MAX_FILE_SIZE_LABEL}.`,
+      });
+      return;
+    }
+
     const ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
     if (!ACCEPTED_EXTENSIONS.includes(ext)) {
       setState({
@@ -242,7 +255,7 @@ export function UploadModal({ open, onClose, onIngestComplete }: UploadModalProp
             className="mt-1 text-xs"
             style={{ color: "var(--color-text-secondary)" }}
           >
-            Supports .txt, .md, and .json files
+            .txt, .md, .json (max {MAX_FILE_SIZE_LABEL})
           </p>
         </div>
 
@@ -308,7 +321,7 @@ export function UploadModal({ open, onClose, onIngestComplete }: UploadModalProp
                   className="text-[11px]"
                   style={{ color: "var(--color-text-secondary)" }}
                 >
-                  Uploading to AM...
+                  Ingesting into memory...
                 </p>
               )}
               {(state.status === "success" || state.status === "error") && (
