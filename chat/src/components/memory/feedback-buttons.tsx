@@ -97,20 +97,32 @@ export function FeedbackButtons({
     );
   }
 
-  // Post-action confirmation
+  // Post-action confirmation with effect description
   if (state === "boosted" || state === "demoted") {
     return (
-      <span
-        className="text-[10px] font-medium"
-        style={{
-          color:
-            state === "boosted"
-              ? "var(--color-novel)"
-              : "var(--color-text-secondary)",
-        }}
-      >
-        Memory updated
-      </span>
+      <div className="flex flex-col gap-0.5">
+        <span
+          className="text-[10px] font-medium"
+          style={{
+            color:
+              state === "boosted"
+                ? "var(--color-novel)"
+                : "var(--color-text-secondary)",
+          }}
+        >
+          {state === "boosted"
+            ? "Marked helpful"
+            : "Marked not relevant"}
+        </span>
+        <span
+          className="text-[10px]"
+          style={{ color: "var(--color-text-secondary)", opacity: 0.7 }}
+        >
+          {state === "boosted"
+            ? "AM will recall this topic cluster more often"
+            : "AM will recall this topic cluster less often"}
+        </span>
+      </div>
     );
   }
 
@@ -157,37 +169,45 @@ export function FeedbackButtons({
     );
   }
 
-  // Default neutral state
+  // Default neutral state with scope label
   return (
-    <div className="flex items-center gap-1">
-      <button
-        onClick={handleBoost}
-        disabled={disabled}
-        className="flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
-        style={{
-          color: "var(--color-text-secondary)",
-          background: "var(--color-surface-raised)",
-        }}
-        title="Tell AM this memory was useful. It will surface more often in future conversations."
-        aria-label="Mark as helpful"
+    <div className="flex flex-col gap-1">
+      <span
+        className="text-[10px]"
+        style={{ color: "var(--color-text-secondary)" }}
       >
-        <ThumbsUp className="h-3 w-3" />
-        <span>Helpful</span>
-      </button>
-      <button
-        onClick={handleDemoteIntent}
-        disabled={disabled}
-        className="flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
-        style={{
-          color: "var(--color-text-secondary)",
-          background: "var(--color-surface-raised)",
-        }}
-        title="Tell AM this memory was not relevant. It will surface less often."
-        aria-label="Mark as not relevant"
-      >
-        <ThumbsDown className="h-3 w-3" />
-        <span>Not relevant</span>
-      </button>
+        Rate this topic cluster
+      </span>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={handleBoost}
+          disabled={disabled}
+          className="flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
+          style={{
+            color: "var(--color-text-secondary)",
+            background: "var(--color-surface-raised)",
+          }}
+          title="Mark this topic cluster as helpful. AM will surface it more often in future sessions."
+          aria-label="Mark this topic cluster as helpful"
+        >
+          <ThumbsUp className="h-3 w-3" />
+          <span>Helpful</span>
+        </button>
+        <button
+          onClick={handleDemoteIntent}
+          disabled={disabled}
+          className="flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-40"
+          style={{
+            color: "var(--color-text-secondary)",
+            background: "var(--color-surface-raised)",
+          }}
+          title="Mark this topic cluster as not relevant. AM will surface it less often in future sessions."
+          aria-label="Mark this topic cluster as not relevant"
+        >
+          <ThumbsDown className="h-3 w-3" />
+          <span>Not relevant</span>
+        </button>
+      </div>
     </div>
   );
 }
