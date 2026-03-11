@@ -25,48 +25,23 @@ async function fetchEpisodeNeighborhoods(
 
   // Phase 1: query index by episode name
   const indexResult = await amQueryIndex({ text: episodeName }, apiKey);
-
-  // The index result has entries with IDs
-  interface IndexEntry {
-    id: string;
-    score: number;
-    summary: string;
-    epoch: number;
-    type: string;
-  }
-
-  const indexData = indexResult as { entries?: IndexEntry[] };
-  const entries = indexData.entries ?? [];
+  const entries = indexResult.entries ?? [];
 
   if (entries.length === 0) return [];
 
-  const ids = entries.map((e: IndexEntry) => e.id);
+  const ids = entries.map((e) => e.id);
 
   // Phase 2: retrieve full content
   const retrieveResult = await amRetrieve({ ids }, apiKey);
 
-  interface RetrieveEntry {
-    id: string;
-    category: string;
-    type: string;
-    episode: string;
-    tokens: number;
-    text: string;
-  }
-
-  const retrieveData = retrieveResult as { entries?: RetrieveEntry[] };
-  const neighborhoods: NeighborhoodEntry[] = (retrieveData.entries ?? []).map(
-    (e: RetrieveEntry) => ({
-      id: e.id,
-      category: e.category,
-      type: e.type,
-      episode: e.episode,
-      tokens: e.tokens,
-      text: e.text,
-    })
-  );
-
-  return neighborhoods;
+  return (retrieveResult.entries ?? []).map((e) => ({
+    id: e.id,
+    category: e.category,
+    type: e.type,
+    episode: e.episode,
+    tokens: e.tokens,
+    text: e.text,
+  }));
 }
 
 /**

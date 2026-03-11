@@ -10,6 +10,7 @@ import { Layers, Search } from "lucide-react";
 import { StatsHeader } from "./stats-header";
 import { EpisodeList } from "./episode-list";
 import { EpisodeDetail } from "./episode-detail";
+import { MemorySearch } from "./memory-search";
 import type { Episode } from "@/lib/types";
 
 type SidebarTab = "episodes" | "search";
@@ -29,8 +30,6 @@ function loadTab(): SidebarTab {
 
 interface SidebarProps {
   onUploadClick?: () => void;
-  /** Controlled search content from parent. Null when no search panel exists yet. */
-  searchContent?: React.ReactNode;
 }
 
 /**
@@ -42,7 +41,7 @@ interface SidebarProps {
  *
  * Responsive: hidden below 1024px, accessible via toggle.
  */
-export function Sidebar({ onUploadClick, searchContent }: SidebarProps) {
+export function Sidebar({ onUploadClick }: SidebarProps) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<SidebarTab>(loadTab);
   const [width, setWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
@@ -173,18 +172,7 @@ export function Sidebar({ onUploadClick, searchContent }: SidebarProps) {
                 onUploadClick={onUploadClick}
               />
             )}
-            {tab === "search" && (
-              searchContent ?? (
-                <div className="px-3 py-4">
-                  <p
-                    className="text-center text-xs"
-                    style={{ color: "var(--color-text-secondary)" }}
-                  >
-                    Memory search
-                  </p>
-                </div>
-              )
-            )}
+            {tab === "search" && <MemorySearch />}
           </div>
         </div>
       )}

@@ -18,6 +18,7 @@ import type {
   QueryRequest,
   QueryResponse,
   RetrieveRequest,
+  RetrieveResponse,
   SalientRequest,
   StatsResponse,
 } from "./types";
@@ -134,7 +135,7 @@ export function amQueryIndex(
 export function amRetrieve(
   req: RetrieveRequest,
   apiKey?: string
-): Promise<unknown> {
+): Promise<RetrieveResponse> {
   return post("/api/am/retrieve", req, apiKey);
 }
 

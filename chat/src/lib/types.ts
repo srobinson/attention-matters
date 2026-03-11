@@ -87,14 +87,33 @@ export interface QueryIndexRequest {
   text: string;
 }
 
+export interface QueryIndexEntry {
+  id: string;
+  category: string;
+  type: string;
+  score: number;
+  epoch: number;
+  summary: string;
+  token_estimate: number;
+}
+
 export interface QueryIndexResponse {
-  results: Array<{
-    id: string;
-    score: number;
-    summary: string;
-    epoch: number;
-    type: string;
-  }>;
+  entries: QueryIndexEntry[];
+  total_candidates: number;
+  total_tokens_if_fetched: number;
+}
+
+export interface RetrieveEntry {
+  id: string;
+  category: string;
+  type: string;
+  episode: string;
+  tokens: number;
+  text: string;
+}
+
+export interface RetrieveResponse {
+  entries: RetrieveEntry[];
 }
 
 export interface RetrieveRequest {
