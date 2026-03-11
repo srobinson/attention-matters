@@ -5,7 +5,7 @@
 
 import type { ChatModelAdapter } from "@assistant-ui/react";
 
-export { createAMAdapter, useAMRuntime, getContextForMessage } from "./am-runtime";
+export { createAMAdapter, useAMRuntime, getContextForMessage, getQueryForMessage } from "./am-runtime";
 
 /**
  * Mock adapter for development without a running AM backend.

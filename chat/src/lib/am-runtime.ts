@@ -16,6 +16,7 @@ import type { ChatMessage, ContextMetadata } from "./types";
  * Stored in a module-level Map so the memory panel can access it.
  */
 const contextStore = new Map<string, ContextMetadata>();
+const queryStore = new Map<string, string>();
 
 export function getContextForMessage(
   messageId: string
@@ -23,8 +24,15 @@ export function getContextForMessage(
   return contextStore.get(messageId);
 }
 
+export function getQueryForMessage(
+  messageId: string
+): string {
+  return queryStore.get(messageId) ?? "";
+}
+
 export function clearContextStore(): void {
   contextStore.clear();
+  queryStore.clear();
 }
 
 interface AMAdapterOptions {
@@ -85,9 +93,10 @@ export function createAMAdapter(options: AMAdapterOptions): ChatModelAdapter {
 
         switch (event.type) {
           case "context": {
-            // Store context metadata for the memory panel
+            // Store context metadata and user query for the memory panel
             if (unstable_assistantMessageId) {
               contextStore.set(unstable_assistantMessageId, event.json);
+              queryStore.set(unstable_assistantMessageId, lastUserText);
             }
             break;
           }

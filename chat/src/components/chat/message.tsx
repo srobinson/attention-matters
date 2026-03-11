@@ -1,7 +1,9 @@
 "use client";
 
-import { MessagePrimitive } from "@assistant-ui/react";
+import { MessagePrimitive, useAuiState } from "@assistant-ui/react";
 import { StreamdownTextPrimitive } from "@assistant-ui/react-streamdown";
+import { getContextForMessage, getQueryForMessage } from "@/lib/am-runtime";
+import { MemoryPanel } from "./memory-panel";
 
 export function UserMessage() {
   return (
@@ -35,6 +37,10 @@ function UserTextPart() {
 }
 
 export function AssistantMessage() {
+  const messageId = useAuiState((s) => s.message.id);
+  const context = getContextForMessage(messageId);
+  const userQuery = getQueryForMessage(messageId);
+
   return (
     <MessagePrimitive.Root className="w-full max-w-2xl px-4 py-3">
       <div className="flex flex-col gap-1">
@@ -57,6 +63,7 @@ export function AssistantMessage() {
             }}
           />
         </div>
+        <MemoryPanel context={context} userQuery={userQuery} />
       </div>
     </MessagePrimitive.Root>
   );
