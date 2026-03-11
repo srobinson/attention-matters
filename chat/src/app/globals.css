@@ -181,15 +181,65 @@ salient:focus {
   overflow: hidden;
 }
 
+/* ═══════════════════════════════════════════════
+ * Thinking indicator: scanning gold border
+ * Conic gradient rotates around the message border.
+ * Two light points staggered 180 degrees apart
+ * for a richer scanner effect.
+ * ═══════════════════════════════════════════════ */
+@property --border-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+.thinking-border {
+  --border-dim: rgba(212, 168, 83, 0.2);
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--color-surface), var(--color-surface)) padding-box,
+    conic-gradient(
+      from var(--border-angle),
+      var(--border-dim) 0%,
+      var(--color-salient) 8%,
+      var(--border-dim) 16%,
+      var(--border-dim) 45%,
+      var(--color-salient) 53%,
+      var(--border-dim) 61%,
+      var(--border-dim) 100%
+    ) border-box;
+  animation: thinking-rotate 1.8s linear infinite;
+}
+
+@keyframes thinking-rotate {
+  to {
+    --border-angle: 360deg;
+  }
+}
+
+/* Transition out: fade animation to static border */
+.thinking-border-out {
+  border-color: var(--color-assistant-border);
+  transition: border-color 200ms ease-out;
+  animation: none;
+}
+
 /* Reduced motion: disable all motion-based animations */
 @media (prefers-reduced-motion: reduce) {
   .animate-message-enter,
   .animate-fade-in,
   .animate-fade-slide-down,
-  .animate-expand {
+  .animate-expand,
+  .thinking-border {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
+  }
+
+  /* For reduced motion, show a static gold border instead of animation */
+  .thinking-border {
+    border: 1px solid var(--color-salient);
+    background: var(--color-surface);
   }
 }
 

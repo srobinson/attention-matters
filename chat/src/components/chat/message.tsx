@@ -44,6 +44,7 @@ function UserTextPart() {
 export function AssistantMessage() {
   const messageId = useAuiState((s) => s.message.id);
   const status = useAuiState((s) => s.message.status);
+  const content = useAuiState((s) => s.message.content);
   const context = getContextForMessage(messageId);
   const userQuery = getQueryForMessage(messageId);
 
@@ -52,9 +53,24 @@ export function AssistantMessage() {
     status?.type === "incomplete" && status.reason === "error"
       ? status
       : null;
-  const borderColor = errorStatus
-    ? "var(--color-error-muted)"
-    : "var(--color-assistant-border)";
+
+  // Thinking state: message is running but has no text content yet
+  const isRunning = status?.type === "running";
+  const hasContent = content.some(
+    (part) => part.type === "text" && part.text.length > 0
+  );
+  const isThinking = isRunning && !hasContent;
+
+  // Border class: thinking animation, error, or static gold
+  const borderClass = isThinking
+    ? "thinking-border"
+    : errorStatus
+      ? ""
+      : "";
+
+  const borderStyle = isThinking
+    ? {} // thinking-border class handles border via CSS
+    : { borderColor: errorStatus ? "var(--color-error-muted)" : "var(--color-assistant-border)" };
 
   return (
     <MessagePrimitive.Root className="animate-message-enter w-full max-w-2xl px-4 py-2">
@@ -70,9 +86,9 @@ export function AssistantMessage() {
           AM
         </span>
         <div
-          className="max-w-[85%] rounded-lg border px-4 py-3"
+          className={`max-w-[85%] rounded-lg border px-4 py-3 ${borderClass}`}
           style={{
-            borderColor,
+            ...borderStyle,
             background: "var(--color-surface)",
           }}
         >
