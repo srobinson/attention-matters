@@ -14,7 +14,6 @@ use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
-use tokio_util::sync::CancellationToken;
 
 use crate::http_server::AppState;
 use crate::server::ServerState;
@@ -265,22 +264,19 @@ pub(crate) async fn handle_chat(
             .into_response();
     }
 
-    // Step 5-6: Stream SSE response with client disconnect cancellation.
+    // Step 5-6: Stream SSE response.
     //
-    // When the client drops the SSE connection, axum stops polling the stream.
-    // The generator is then dropped, which triggers the CancellationToken via
-    // the _cancel_guard. This cancels the `tokio::select!` branch waiting on
-    // OpenRouter, causing the reqwest response to be dropped (closing the
-    // upstream HTTP connection and stopping token consumption).
-    let cancel = CancellationToken::new();
+    // Client disconnect handling: when the client drops the SSE connection,
+    // axum stops polling this stream and drops it. Dropping the generator
+    // drops `event_stream`, which drops the reqwest response, closing the
+    // upstream OpenRouter connection. Code after the loop (post_response_ops)
+    // is unreachable once the generator is dropped, so memory ops are
+    // naturally skipped on disconnect.
     let inner_state = Arc::clone(&state.inner);
     let user_msg_clone = user_message.clone();
     let context_json = serde_json::to_string(&context_event).unwrap_or_default();
 
     let stream = async_stream::stream! {
-        // Guard: when this stream is dropped (client disconnect), cancel upstream.
-        let _cancel_guard = cancel.clone().drop_guard();
-
         // Emit typed context metadata before any LLM tokens
         yield Ok::<_, std::convert::Infallible>(sse_event("context", &context_json));
 
@@ -289,7 +285,6 @@ pub(crate) async fn handle_chat(
         let mut full_response = String::new();
         let mut keepalive_interval = tokio::time::interval(Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
         let mut first_chunk_received = false;
-        let mut client_disconnected = false;
 
         loop {
             tokio::select! {
@@ -323,19 +318,12 @@ pub(crate) async fn handle_chat(
                 _ = keepalive_interval.tick(), if !first_chunk_received => {
                     yield Ok(sse_keepalive());
                 }
-                _ = cancel.cancelled() => {
-                    tracing::info!("client disconnected, cancelling upstream OpenRouter request");
-                    client_disconnected = true;
-                    break;
-                }
             }
         }
 
-        // Post-response memory operations only if the client stayed connected
-        // and we received a meaningful response.
-        if !client_disconnected {
-            post_response_ops(&inner_state, &user_msg_clone, &full_response).await;
-        }
+        // Post-response memory operations (buffer + ingest).
+        // Unreachable on client disconnect since the generator is dropped.
+        post_response_ops(&inner_state, &user_msg_clone, &full_response).await;
     };
 
     let body = Body::from_stream(stream);

@@ -72,7 +72,7 @@ pub(crate) async fn serve_http(
         .route("/api/am/export", get(handle_export))
         .route("/api/am/episodes", get(handle_episodes))
         .route(
-            "/api/am/episodes/:id/neighborhoods",
+            "/api/am/episodes/{id}/neighborhoods",
             get(handle_episode_neighborhoods),
         )
         // LLM proxy with SSE streaming
