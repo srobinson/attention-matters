@@ -150,11 +150,27 @@ export function Sidebar({ onUploadClick }: SidebarProps) {
           className="flex flex-1 flex-col overflow-hidden"
           style={{ width: width }}
         >
-          {/* Stats header */}
+          {/* Scope header */}
           <div
-            className="flex-shrink-0 border-b"
+            className="flex flex-shrink-0 flex-col border-b"
             style={{ borderColor: "var(--color-border)" }}
           >
+            <div
+              className="flex items-center gap-1.5 px-3 pt-2 pb-1"
+            >
+              <span
+                className="text-[11px] font-medium uppercase tracking-wider"
+                style={{ color: "var(--color-text-secondary)" }}
+              >
+                Memory Explorer
+              </span>
+              <span
+                className="text-[10px]"
+                style={{ color: "var(--color-text-secondary)", opacity: 0.6 }}
+              >
+                All memories
+              </span>
+            </div>
             <StatsHeader />
           </div>
 

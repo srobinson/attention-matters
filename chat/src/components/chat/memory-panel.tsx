@@ -46,7 +46,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
         aria-controls={panelId}
       >
         <Brain className="h-3 w-3" />
-        <span>Memory</span>
+        <span>Memory context</span>
         {metrics && (
           <span className="flex items-center gap-1.5">
             {metrics.conscious > 0 && (
@@ -85,10 +85,17 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
       {expanded && (
         <div
           id={panelId}
-          className="mt-2 flex flex-col gap-2"
+          className="mt-2 flex flex-col gap-2 rounded border-l-2 pl-3"
+          style={{ borderColor: "var(--color-salient)" }}
           role="region"
-          aria-label="Recalled memory context"
+          aria-label="Recalled memory context for this response"
         >
+          <span
+            className="text-[10px]"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
+            What AM recalled for this response
+          </span>
           {grouped.conscious.length > 0 && (
             <CategorySection
               label="Pinned memory"
