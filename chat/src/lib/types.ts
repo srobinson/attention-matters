@@ -175,6 +175,18 @@ export interface Episode {
   created: string;
   neighborhood_count: number;
   total_occurrences: number;
+  is_conscious?: boolean;
+}
+
+export interface EpisodeNeighborhood {
+  id: string;
+  type: string;
+  epoch: number;
+  tokens: number;
+  text: string;
+  episode: string;
+  is_conscious: boolean;
+  superseded_by: string | null;
 }
 
 export interface HealthResponse {

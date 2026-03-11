@@ -69,6 +69,10 @@ export function AssistantMessage() {
   );
 }
 
+/** Allow <salient> tags through the markdown sanitizer so AM recalled
+ *  content renders with gold highlighting via the CSS rules in globals.css. */
+const ALLOWED_TAGS = { salient: [] };
+
 function AssistantTextPart() {
   return (
     <div
@@ -83,7 +87,7 @@ function AssistantTextPart() {
         "--tw-prose-borders": "var(--color-border)",
       } as React.CSSProperties}
     >
-      <StreamdownTextPrimitive />
+      <StreamdownTextPrimitive allowedTags={ALLOWED_TAGS} />
     </div>
   );
 }

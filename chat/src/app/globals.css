@@ -97,3 +97,19 @@
     @apply font-sans;
   }
 }
+
+/* Salient text: gold highlight for AM recalled content in streamed messages.
+ * The LLM wraps recalled content in <salient>...</salient> tags.
+ * The browser renders unknown HTML elements as inline, and these
+ * CSS rules style them with the gold accent color. */
+salient {
+  color: var(--color-salient);
+  font-weight: 500;
+}
+
+/* Accessible focus indicator for salient text when narrated */
+salient:focus {
+  outline: 2px solid var(--color-salient);
+  outline-offset: 2px;
+  border-radius: 2px;
+}

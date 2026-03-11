@@ -134,6 +134,9 @@ function EpisodeItem({
       className="mb-1 flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:opacity-90"
       style={{
         background: "transparent",
+        borderLeft: episode.is_conscious
+          ? "3px solid var(--color-conscious)"
+          : "3px solid transparent",
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.background = "var(--color-surface-raised)";

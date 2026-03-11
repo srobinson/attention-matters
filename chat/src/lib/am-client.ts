@@ -7,6 +7,7 @@ import type {
   BufferRequest,
   ChatRequest,
   Episode,
+  EpisodeNeighborhood,
   FeedbackRequest,
   HealthResponse,
   ImportRequest,
@@ -62,7 +63,7 @@ async function post<T>(
     try {
       const parsed = JSON.parse(text);
       code = parsed.code ?? code;
-      message = parsed.message ?? message;
+      message = parsed.message || parsed.error || message;
     } catch {
       // Not JSON, use raw text
     }
@@ -80,7 +81,17 @@ async function get<T>(path: string, apiKey?: string): Promise<T> {
 
   const res = await fetch(`${AM_API_URL}${path}`, { headers });
   if (!res.ok) {
-    throw new AMClientError(res.status, "FETCH_ERROR", `GET ${path} failed: ${res.status}`);
+    const text = await res.text();
+    let code = "FETCH_ERROR";
+    let message = text || `GET ${path} failed: ${res.status}`;
+    try {
+      const parsed = JSON.parse(text);
+      code = parsed.code ?? code;
+      message = parsed.message || parsed.error || message;
+    } catch {
+      // Not JSON, use raw text
+    }
+    throw new AMClientError(res.status, code, message);
   }
   return res.json() as Promise<T>;
 }
@@ -110,7 +121,16 @@ export async function chatStream(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new AMClientError(res.status, "CHAT_ERROR", text);
+    let code = "CHAT_ERROR";
+    let message = text || `Chat request failed: ${res.status}`;
+    try {
+      const parsed = JSON.parse(text);
+      code = parsed.code ?? code;
+      message = parsed.message || parsed.error || message;
+    } catch {
+      // Not JSON, use raw text
+    }
+    throw new AMClientError(res.status, code, message);
   }
 
   return res;
@@ -187,6 +207,13 @@ export function amStats(apiKey?: string): Promise<StatsResponse> {
 
 export function amEpisodes(apiKey?: string): Promise<Episode[]> {
   return get("/api/am/episodes", apiKey);
+}
+
+export function amEpisodeNeighborhoods(
+  episodeId: string,
+  apiKey?: string
+): Promise<EpisodeNeighborhood[]> {
+  return get(`/api/am/episodes/${encodeURIComponent(episodeId)}/neighborhoods`, apiKey);
 }
 
 export function amExport(apiKey?: string): Promise<unknown> {

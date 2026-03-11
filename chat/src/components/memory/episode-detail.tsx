@@ -2,9 +2,9 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import { amQueryIndex, amRetrieve } from "@/lib/am-client";
+import { amEpisodeNeighborhoods } from "@/lib/am-client";
 import { loadSettings } from "@/lib/settings";
-import type { Episode } from "@/lib/types";
+import type { Episode, EpisodeNeighborhood } from "@/lib/types";
 import { NeighborhoodList } from "./neighborhood-list";
 import type { NeighborhoodEntry } from "./neighborhood-list";
 
@@ -14,41 +14,25 @@ interface EpisodeDetailProps {
 }
 
 /**
- * Fetch topic clusters related to an episode using two-phase retrieval:
- * 1. query_index with episode name to find related neighborhood IDs
- * 2. retrieve with those IDs to get full text
+ * Map backend EpisodeNeighborhood to the NeighborhoodEntry shape
+ * consumed by NeighborhoodList.
  */
-async function fetchEpisodeNeighborhoods(
-  episodeName: string
-): Promise<NeighborhoodEntry[]> {
-  const apiKey = loadSettings().apiKey || undefined;
-
-  // Phase 1: query index by episode name
-  const indexResult = await amQueryIndex({ text: episodeName }, apiKey);
-  const entries = indexResult.entries ?? [];
-
-  if (entries.length === 0) return [];
-
-  const ids = entries.map((e) => e.id);
-
-  // Phase 2: retrieve full content
-  const retrieveResult = await amRetrieve({ ids }, apiKey);
-
-  return (retrieveResult.entries ?? []).map((e) => ({
-    id: e.id,
-    category: e.category,
-    type: e.type,
-    episode: e.episode,
-    tokens: e.tokens,
-    text: e.text,
-  }));
+function toNeighborhoodEntry(n: EpisodeNeighborhood): NeighborhoodEntry {
+  return {
+    id: n.id,
+    category: n.is_conscious ? "Conscious" : "Subconscious",
+    type: n.type,
+    episode: n.episode,
+    tokens: n.tokens,
+    text: n.text,
+  };
 }
 
 /**
  * Episode detail view showing metadata and topic clusters.
  * Opens when clicking an episode in the sidebar list.
- * Uses two-phase retrieval (query_index then retrieve) to
- * load neighborhood data since the episodes endpoint is lightweight.
+ * Fetches neighborhoods via the dedicated
+ * GET /api/am/episodes/:id/neighborhoods endpoint.
  *
  * User-facing terminology:
  *   neighborhood -> topic cluster
@@ -58,7 +42,11 @@ async function fetchEpisodeNeighborhoods(
 export function EpisodeDetail({ episode, onBack }: EpisodeDetailProps) {
   const { data: neighborhoods, isLoading } = useQuery({
     queryKey: ["am", "episode-detail", episode.id],
-    queryFn: () => fetchEpisodeNeighborhoods(episode.name),
+    queryFn: async (): Promise<NeighborhoodEntry[]> => {
+      const apiKey = loadSettings().apiKey || undefined;
+      const raw = await amEpisodeNeighborhoods(episode.id, apiKey);
+      return raw.map(toNeighborhoodEntry);
+    },
   });
 
   const date = formatTimestamp(episode.created);

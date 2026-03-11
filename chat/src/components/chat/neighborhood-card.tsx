@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, ThumbsUp, ThumbsDown } from "lucide-react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { RecallEntry } from "@/lib/types";
+import { FeedbackButtons } from "@/components/memory/feedback-buttons";
 
 interface NeighborhoodCardProps {
   entry: RecallEntry;
-  onFeedback?: (id: string, signal: "boost" | "demote") => void;
+  query: string;
 }
 
 /**
@@ -20,7 +21,7 @@ interface NeighborhoodCardProps {
  *   boost -> helpful
  *   demote -> not relevant
  */
-export function NeighborhoodCard({ entry, onFeedback }: NeighborhoodCardProps) {
+export function NeighborhoodCard({ entry, query }: NeighborhoodCardProps) {
   const [expanded, setExpanded] = useState(false);
   const strength = scoreToStrength(entry.score);
   const categoryColor = getCategoryColor(entry.category);
@@ -92,55 +93,20 @@ export function NeighborhoodCard({ entry, onFeedback }: NeighborhoodCardProps) {
         </div>
       </button>
 
-      {/* Expanded content */}
+      {/* Expanded content with shared feedback controls */}
       {expanded && (
         <div
           id={`recall-${entry.id}`}
-          className="mt-2 flex items-center gap-1 border-t pt-2"
+          className="mt-2 border-t pt-2"
           style={{ borderColor: "var(--color-border-subtle)" }}
         >
-          {onFeedback && (
-            <>
-              <FeedbackButton
-                icon={<ThumbsUp className="h-3 w-3" />}
-                label="Helpful"
-                onClick={() => onFeedback(entry.id, "boost")}
-              />
-              <FeedbackButton
-                icon={<ThumbsDown className="h-3 w-3" />}
-                label="Not relevant"
-                onClick={() => onFeedback(entry.id, "demote")}
-              />
-            </>
-          )}
+          <FeedbackButtons
+            query={query}
+            neighborhoodIds={[entry.id]}
+          />
         </div>
       )}
     </div>
-  );
-}
-
-function FeedbackButton({
-  icon,
-  label,
-  onClick,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className="flex items-center gap-1 rounded px-2 py-1 text-[10px] transition-colors hover:opacity-80"
-      style={{
-        color: "var(--color-text-secondary)",
-        background: "var(--color-surface-raised)",
-      }}
-      onClick={onClick}
-      title={label}
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
   );
 }
 

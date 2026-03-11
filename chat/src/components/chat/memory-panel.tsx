@@ -4,8 +4,6 @@ import { useState, useId } from "react";
 import { Brain, ChevronDown, ChevronRight } from "lucide-react";
 import type { ContextMetadata, RecallEntry } from "@/lib/types";
 import { NeighborhoodCard } from "./neighborhood-card";
-import { amFeedback } from "@/lib/am-client";
-import { loadSettings } from "@/lib/settings";
 
 interface MemoryPanelProps {
   context: ContextMetadata | undefined;
@@ -34,22 +32,6 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
 
   // Group by category
   const grouped = groupByCategory(entries);
-
-  const handleFeedback = async (id: string, signal: "boost" | "demote") => {
-    const apiKey = loadSettings().apiKey;
-    try {
-      await amFeedback(
-        {
-          query: userQuery,
-          neighborhood_ids: [id],
-          signal,
-        },
-        apiKey || undefined
-      );
-    } catch (err) {
-      console.error("Feedback failed:", err);
-    }
-  };
 
   return (
     <div className="mt-1 max-w-[85%]">
@@ -109,7 +91,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
               label="Pinned memory"
               color="var(--color-conscious)"
               entries={grouped.conscious}
-              onFeedback={handleFeedback}
+              query={userQuery}
             />
           )}
           {grouped.subconscious.length > 0 && (
@@ -117,7 +99,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
               label="Recalled"
               color="var(--color-subconscious)"
               entries={grouped.subconscious}
-              onFeedback={handleFeedback}
+              query={userQuery}
             />
           )}
           {grouped.novel.length > 0 && (
@@ -125,7 +107,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
               label="Connections"
               color="var(--color-novel)"
               entries={grouped.novel}
-              onFeedback={handleFeedback}
+              query={userQuery}
             />
           )}
         </div>
@@ -160,12 +142,12 @@ function CategorySection({
   label,
   color,
   entries,
-  onFeedback,
+  query,
 }: {
   label: string;
   color: string;
   entries: RecallEntry[];
-  onFeedback: (id: string, signal: "boost" | "demote") => void;
+  query: string;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
@@ -179,7 +161,7 @@ function CategorySection({
         <NeighborhoodCard
           key={entry.id}
           entry={entry}
-          onFeedback={onFeedback}
+          query={query}
         />
       ))}
     </div>
