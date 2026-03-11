@@ -607,10 +607,11 @@ impl ServerState {
             .map(|ep| {
                 let occ_count: usize = ep.neighborhoods.iter().map(|n| n.occurrences.len()).sum();
                 serde_json::json!({
+                    "id": ep.id.to_string(),
                     "name": ep.name,
-                    "neighborhoods": ep.neighborhoods.len(),
-                    "occurrences": occ_count,
-                    "timestamp": ep.timestamp,
+                    "neighborhood_count": ep.neighborhoods.len(),
+                    "total_occurrences": occ_count,
+                    "created": ep.timestamp,
                     "is_conscious": false,
                 })
             })
@@ -625,10 +626,11 @@ impl ServerState {
                 .map(|n| n.occurrences.len())
                 .sum();
             episodes.push(serde_json::json!({
+                "id": conscious_ep.id.to_string(),
                 "name": conscious_ep.name,
-                "neighborhoods": conscious_ep.neighborhoods.len(),
-                "occurrences": occ_count,
-                "timestamp": conscious_ep.timestamp,
+                "neighborhood_count": conscious_ep.neighborhoods.len(),
+                "total_occurrences": occ_count,
+                "created": conscious_ep.timestamp,
                 "is_conscious": true,
             }));
         }
@@ -637,6 +639,66 @@ impl ServerState {
             "episodes": episodes,
             "count": episodes.len(),
         })
+    }
+
+    /// Return neighborhoods for a specific episode by ID.
+    /// Includes source_text, type, epoch, and is_conscious flag.
+    pub(crate) fn do_episode_neighborhoods(&self, episode_id: &str) -> Option<serde_json::Value> {
+        let target_id = match Uuid::parse_str(episode_id) {
+            Ok(id) => id,
+            Err(_) => return None,
+        };
+
+        // Check conscious episode first
+        if self.system.conscious_episode.id == target_id {
+            let neighborhoods = self.serialize_neighborhoods(
+                &self.system.conscious_episode.neighborhoods,
+                &self.system.conscious_episode.name,
+                true,
+            );
+            return Some(serde_json::json!({
+                "neighborhoods": neighborhoods,
+                "count": neighborhoods.len(),
+            }));
+        }
+
+        // Search regular episodes
+        for ep in &self.system.episodes {
+            if ep.id == target_id {
+                let neighborhoods =
+                    self.serialize_neighborhoods(&ep.neighborhoods, &ep.name, false);
+                return Some(serde_json::json!({
+                    "neighborhoods": neighborhoods,
+                    "count": neighborhoods.len(),
+                }));
+            }
+        }
+
+        None
+    }
+
+    fn serialize_neighborhoods(
+        &self,
+        neighborhoods: &[am_core::Neighborhood],
+        episode_name: &str,
+        is_conscious: bool,
+    ) -> Vec<serde_json::Value> {
+        neighborhoods
+            .iter()
+            .map(|n| {
+                let tokens = n.source_text.split_whitespace().count() * 4 / 3; // rough token estimate
+                serde_json::json!({
+                    "id": n.id.to_string(),
+                    "type": format!("{:?}", n.neighborhood_type),
+                    "epoch": n.epoch,
+                    "tokens": tokens,
+                    "text": n.source_text,
+                    "episode": episode_name,
+                    "is_conscious": is_conscious,
+                    "superseded_by": n.superseded_by.map(|id| id.to_string()),
+                })
+            })
+            .collect()
     }
 }
 

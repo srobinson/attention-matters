@@ -12,8 +12,9 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::http_server::AppState;
 use crate::server::ServerState;
@@ -41,6 +42,22 @@ Use it naturally in your responses. When you identify an important insight,
 decision, or preference, wrap it in <salient> tags to store it as conscious memory.
 
 {dae_context}";
+
+// --- SSE context event schema ---
+
+/// Schema for the `event: context` SSE payload.
+/// Emitted before any LLM content tokens so the frontend can display recall metadata.
+#[derive(Debug, Serialize)]
+pub(crate) struct ContextEvent {
+    /// Counts of recalled neighborhoods by category.
+    pub metrics: Option<serde_json::Value>,
+    /// UUIDs of recalled neighborhoods by category.
+    pub recalled_ids: Option<serde_json::Value>,
+    /// Approximate token counts by recall category.
+    pub token_estimate: Option<serde_json::Value>,
+    /// Top index entries (neighborhood ID, category, score, summary).
+    pub index: Option<serde_json::Value>,
+}
 
 // --- Request types ---
 
@@ -158,17 +175,17 @@ pub(crate) async fn handle_chat(
     let user_message = req.message.clone();
 
     // Step 1: Query DAE for memory context
-    let (dae_context_str, context_metadata) = {
+    let (dae_context_str, context_event) = {
         let mut s = state.inner.lock().await;
         let result = s.do_query(&user_message, None);
         let context = result["context"].as_str().unwrap_or("").to_string();
-        let metadata = serde_json::json!({
-            "metrics": result.get("metrics"),
-            "recalled_ids": result.get("recalled_ids"),
-            "token_estimate": result.get("token_estimate"),
-            "index": result.get("index"),
-        });
-        (context, metadata)
+        let event = ContextEvent {
+            metrics: result.get("metrics").cloned(),
+            recalled_ids: result.get("recalled_ids").cloned(),
+            token_estimate: result.get("token_estimate").cloned(),
+            index: result.get("index").cloned(),
+        };
+        (context, event)
     };
 
     // Step 2: Build system prompt from mode template
@@ -248,20 +265,31 @@ pub(crate) async fn handle_chat(
             .into_response();
     }
 
-    // Step 5-6: Stream SSE response
+    // Step 5-6: Stream SSE response with client disconnect cancellation.
+    //
+    // When the client drops the SSE connection, axum stops polling the stream.
+    // The generator is then dropped, which triggers the CancellationToken via
+    // the _cancel_guard. This cancels the `tokio::select!` branch waiting on
+    // OpenRouter, causing the reqwest response to be dropped (closing the
+    // upstream HTTP connection and stopping token consumption).
+    let cancel = CancellationToken::new();
     let inner_state = Arc::clone(&state.inner);
     let user_msg_clone = user_message.clone();
-    let context_meta = context_metadata.to_string();
+    let context_json = serde_json::to_string(&context_event).unwrap_or_default();
 
     let stream = async_stream::stream! {
-        // Emit context metadata first
-        yield Ok::<_, std::convert::Infallible>(sse_event("context", &context_meta));
+        // Guard: when this stream is dropped (client disconnect), cancel upstream.
+        let _cancel_guard = cancel.clone().drop_guard();
+
+        // Emit typed context metadata before any LLM tokens
+        yield Ok::<_, std::convert::Infallible>(sse_event("context", &context_json));
 
         let byte_stream = openrouter_resp.bytes_stream();
         let mut event_stream = byte_stream.eventsource();
         let mut full_response = String::new();
         let mut keepalive_interval = tokio::time::interval(Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
         let mut first_chunk_received = false;
+        let mut client_disconnected = false;
 
         loop {
             tokio::select! {
@@ -295,11 +323,19 @@ pub(crate) async fn handle_chat(
                 _ = keepalive_interval.tick(), if !first_chunk_received => {
                     yield Ok(sse_keepalive());
                 }
+                _ = cancel.cancelled() => {
+                    tracing::info!("client disconnected, cancelling upstream OpenRouter request");
+                    client_disconnected = true;
+                    break;
+                }
             }
         }
 
-        // Step 7-9: Post-response memory operations (never panic)
-        post_response_ops(&inner_state, &user_msg_clone, &full_response).await;
+        // Post-response memory operations only if the client stayed connected
+        // and we received a meaningful response.
+        if !client_disconnected {
+            post_response_ops(&inner_state, &user_msg_clone, &full_response).await;
+        }
     };
 
     let body = Body::from_stream(stream);

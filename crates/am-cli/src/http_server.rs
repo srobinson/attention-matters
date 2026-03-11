@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
 use axum::response::IntoResponse;
@@ -71,6 +71,10 @@ pub(crate) async fn serve_http(
         .route("/api/am/stats", get(handle_stats))
         .route("/api/am/export", get(handle_export))
         .route("/api/am/episodes", get(handle_episodes))
+        .route(
+            "/api/am/episodes/:id/neighborhoods",
+            get(handle_episode_neighborhoods),
+        )
         // LLM proxy with SSE streaming
         .route("/api/chat", post(crate::llm_proxy::handle_chat))
         // Fallback for unmatched routes
@@ -132,7 +136,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         let request_id = uuid::Uuid::new_v4().to_string();
         let body = serde_json::json!({
-            "error": self.message,
+            "message": self.message,
             "code": self.code,
             "request_id": request_id,
         });
@@ -287,6 +291,21 @@ async fn handle_episodes(State(state): State<AppState>) -> Result<impl IntoRespo
     let s = state.inner.lock().await;
     let result = s.do_episodes();
     Ok(Json(result))
+}
+
+async fn handle_episode_neighborhoods(
+    State(state): State<AppState>,
+    Path(episode_id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let s = state.inner.lock().await;
+    match s.do_episode_neighborhoods(&episode_id) {
+        Some(result) => Ok(Json(result)),
+        None => Err(ApiError {
+            code: "NOT_FOUND".to_string(),
+            message: format!("episode {episode_id} not found"),
+            status: StatusCode::NOT_FOUND,
+        }),
+    }
 }
 
 #[cfg(test)]
