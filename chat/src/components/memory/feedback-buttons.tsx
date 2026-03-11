@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { ThumbsUp, ThumbsDown, Loader2 } from "lucide-react";
 import { amFeedback } from "@/lib/am-client";
 import { loadSettings } from "@/lib/settings";
@@ -36,6 +36,14 @@ export function FeedbackButtons({
   onFeedback,
 }: FeedbackButtonsProps) {
   const [state, setState] = useState<FeedbackState>("neutral");
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   const disabled = neighborhoodIds.length === 0;
 
@@ -52,7 +60,7 @@ export function FeedbackButtons({
         onFeedback?.();
 
         // Show "Memory updated" briefly, then settle into final state
-        setTimeout(() => setState("confirmed"), 2000);
+        timerRef.current = setTimeout(() => setState("confirmed"), 2000);
       } catch {
         // Revert to neutral on failure so user can retry
         setState("neutral");

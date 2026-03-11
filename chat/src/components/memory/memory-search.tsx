@@ -5,8 +5,9 @@ import { Search, Loader2 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { amQueryIndex } from "@/lib/am-client";
 import { loadSettings } from "@/lib/settings";
-import type { QueryIndexResponse } from "@/lib/types";
+import type { QueryIndexEntry, QueryIndexResponse } from "@/lib/types";
 import { SearchResult } from "./search-result";
+import { getCategoryColor } from "./shared";
 
 /**
  * Memory search panel for the sidebar Search tab.
@@ -168,19 +169,6 @@ export function MemorySearch() {
   );
 }
 
-function getCategoryColor(category: string): string {
-  switch (category) {
-    case "Conscious":
-      return "var(--color-conscious)";
-    case "Subconscious":
-      return "var(--color-subconscious)";
-    case "Novel":
-      return "var(--color-novel)";
-    default:
-      return "var(--color-text-secondary)";
-  }
-}
-
 function getCategoryLabel(category: string): string {
   switch (category) {
     case "Conscious":
@@ -194,21 +182,11 @@ function getCategoryLabel(category: string): string {
   }
 }
 
-interface IndexEntry {
-  id: string;
-  category: string;
-  type: string;
-  score: number;
-  epoch: number;
-  summary: string;
-  token_estimate: number;
-}
-
 function groupByCategory(
-  entries: IndexEntry[]
-): Array<[string, IndexEntry[]]> {
+  entries: QueryIndexEntry[]
+): Array<[string, QueryIndexEntry[]]> {
   const order = ["Conscious", "Subconscious", "Novel"];
-  const groups = new Map<string, IndexEntry[]>();
+  const groups = new Map<string, QueryIndexEntry[]>();
 
   // Sort by score descending first
   const sorted = [...entries].sort((a, b) => b.score - a.score);
@@ -219,8 +197,14 @@ function groupByCategory(
     groups.get(cat)!.push(entry);
   }
 
-  // Return in defined order, skip empty categories
-  return order
-    .filter((cat) => groups.has(cat))
-    .map((cat) => [cat, groups.get(cat)!] as [string, IndexEntry[]]);
+  // Return known categories in defined order, then any unknown categories
+  const result: Array<[string, QueryIndexEntry[]]> = [];
+  for (const cat of order) {
+    const group = groups.get(cat);
+    if (group) result.push([cat, group]);
+  }
+  for (const [cat, group] of groups) {
+    if (!order.includes(cat)) result.push([cat, group]);
+  }
+  return result;
 }

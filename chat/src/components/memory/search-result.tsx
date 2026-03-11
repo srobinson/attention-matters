@@ -7,6 +7,7 @@ import { amRetrieve } from "@/lib/am-client";
 import { loadSettings } from "@/lib/settings";
 import type { QueryIndexEntry } from "@/lib/types";
 import { FeedbackButtons } from "./feedback-buttons";
+import { getCategoryColor } from "./shared";
 
 interface SearchResultProps {
   entry: QueryIndexEntry;
@@ -18,19 +19,6 @@ function scoreToStrength(score: number): { label: string; color: string } {
   if (score >= 7) return { label: "Strong match", color: "var(--color-conscious)" };
   if (score >= 4) return { label: "Moderate match", color: "var(--color-subconscious)" };
   return { label: "Weak match", color: "var(--color-text-secondary)" };
-}
-
-function getCategoryColor(category: string): string {
-  switch (category) {
-    case "Conscious":
-      return "var(--color-conscious)";
-    case "Subconscious":
-      return "var(--color-subconscious)";
-    case "Novel":
-      return "var(--color-novel)";
-    default:
-      return "var(--color-text-secondary)";
-  }
 }
 
 /**

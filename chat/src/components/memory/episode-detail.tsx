@@ -57,7 +57,7 @@ async function fetchEpisodeNeighborhoods(
  */
 export function EpisodeDetail({ episode, onBack }: EpisodeDetailProps) {
   const { data: neighborhoods, isLoading } = useQuery({
-    queryKey: ["am", "episode-detail", episode.name],
+    queryKey: ["am", "episode-detail", episode.id],
     queryFn: () => fetchEpisodeNeighborhoods(episode.name),
   });
 

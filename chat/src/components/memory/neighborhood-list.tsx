@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { FeedbackButtons } from "./feedback-buttons";
+import { getCategoryColor } from "./shared";
 
 type SortField = "type" | "tokens";
 
@@ -194,19 +195,6 @@ function SortButton({
       {label}
     </button>
   );
-}
-
-function getCategoryColor(category: string): string {
-  switch (category) {
-    case "Conscious":
-      return "var(--color-conscious)";
-    case "Subconscious":
-      return "var(--color-subconscious)";
-    case "Novel":
-      return "var(--color-novel)";
-    default:
-      return "var(--color-text-secondary)";
-  }
 }
 
 function truncate(text: string, maxLength: number): string {
