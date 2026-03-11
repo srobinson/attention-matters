@@ -4,6 +4,7 @@ import { MessagePrimitive, useAuiState } from "@assistant-ui/react";
 import { StreamdownTextPrimitive } from "@assistant-ui/react-streamdown";
 import { getContextForMessage, getQueryForMessage } from "@/lib/am-runtime";
 import { MemoryPanel } from "./memory-panel";
+import { StreamingError } from "./streaming-error";
 
 export function UserMessage() {
   return (
@@ -38,8 +39,18 @@ function UserTextPart() {
 
 export function AssistantMessage() {
   const messageId = useAuiState((s) => s.message.id);
+  const status = useAuiState((s) => s.message.status);
   const context = getContextForMessage(messageId);
   const userQuery = getQueryForMessage(messageId);
+
+  // Narrow the discriminated union: only "incomplete" has reason and error
+  const errorStatus =
+    status?.type === "incomplete" && status.reason === "error"
+      ? status
+      : null;
+  const borderColor = errorStatus
+    ? "#ef444460"
+    : "var(--color-assistant-border)";
 
   return (
     <MessagePrimitive.Root className="w-full max-w-2xl px-4 py-3">
@@ -53,7 +64,7 @@ export function AssistantMessage() {
         <div
           className="rounded-lg border px-4 py-3 max-w-[85%]"
           style={{
-            borderColor: "var(--color-assistant-border)",
+            borderColor,
             background: "var(--color-surface)",
           }}
         >
@@ -62,6 +73,7 @@ export function AssistantMessage() {
               Text: AssistantTextPart,
             }}
           />
+          {errorStatus && <StreamingError error={errorStatus.error} />}
         </div>
         <MemoryPanel context={context} userQuery={userQuery} />
       </div>

@@ -3,6 +3,12 @@
  *
  * Bridges assistant-ui's ChatModelAdapter interface to AM's /api/chat SSE endpoint.
  * Stores DAE recall metadata per-message for the memory context panel (ALP-1138).
+ *
+ * Error classification (ALP-1157):
+ *   - rate-limit: OpenRouter 429 during streaming
+ *   - server-error: AM backend crash or 5xx
+ *   - network-error: fetch failure or stream read failure
+ *   - stream-error: SSE error event from backend
  */
 
 import { useMemo } from "react";
@@ -11,6 +17,88 @@ import { useLocalRuntime } from "@assistant-ui/react";
 import { chatStream } from "./am-client";
 import { parseSSEStream } from "./sse-parser";
 import type { ChatMessage, ContextMetadata } from "./types";
+
+// --- Streaming error types ---
+
+export type StreamingErrorType =
+  | "rate-limit"
+  | "server-error"
+  | "network-error"
+  | "stream-error";
+
+export interface StreamingErrorInfo {
+  type: StreamingErrorType;
+  message: string;
+  suggestion: string;
+}
+
+/**
+ * Classify an error into a user-facing streaming error.
+ * The returned object is serialized into the assistant-ui message
+ * status.error field for the error display component to read.
+ */
+function classifyError(err: unknown): StreamingErrorInfo {
+  if (err instanceof TypeError && String(err.message).includes("fetch")) {
+    return {
+      type: "network-error",
+      message: "Network connection interrupted",
+      suggestion: "Check your connection and try again.",
+    };
+  }
+
+  if (err instanceof Error) {
+    const msg = err.message;
+
+    // Rate limit (429) from OpenRouter via AM backend
+    if (msg.includes("429") || msg.toLowerCase().includes("rate limit")) {
+      return {
+        type: "rate-limit",
+        message: "The AI provider hit a rate limit",
+        suggestion: "Try again in a few seconds.",
+      };
+    }
+
+    // Server errors (5xx)
+    if (/\b5\d{2}\b/.test(msg) || msg.includes("ECONNREFUSED")) {
+      return {
+        type: "server-error",
+        message: "Lost connection to memory server",
+        suggestion: "The AM server may have restarted. Try again.",
+      };
+    }
+
+    // Network errors (various fetch/stream failure patterns)
+    if (
+      msg.includes("network") ||
+      msg.includes("aborted") ||
+      msg.includes("ECONNRESET") ||
+      msg.includes("Failed to fetch") ||
+      msg.includes("NetworkError")
+    ) {
+      return {
+        type: "network-error",
+        message: "Network connection interrupted",
+        suggestion: "Check your connection and try again.",
+      };
+    }
+
+    // SSE error event from backend
+    if (msg.startsWith("AM error")) {
+      return {
+        type: "stream-error",
+        message: msg.replace(/^AM error \[.*?\]: /, ""),
+        suggestion: "Try again. If this persists, the model may be unavailable.",
+      };
+    }
+  }
+
+  // Fallback
+  return {
+    type: "stream-error",
+    message: "Something went wrong during streaming",
+    suggestion: "Try again.",
+  };
+}
 
 /**
  * Per-message context metadata, keyed by assistant message ID.
@@ -44,6 +132,8 @@ interface AMAdapterOptions {
 
 /**
  * Create a ChatModelAdapter that talks to the AM backend.
+ * Errors are classified and attached as structured JSON to the
+ * message status so the UI can render appropriate error states.
  */
 export function createAMAdapter(options: AMAdapterOptions): ChatModelAdapter {
   return {
@@ -72,51 +162,64 @@ export function createAMAdapter(options: AMAdapterOptions): ChatModelAdapter {
 
       if (!lastUserText) return;
 
-      const response = await chatStream(
-        {
-          message: lastUserText,
-          conversation,
-          model: model ?? undefined,
-          mode,
-        },
-        apiKey,
-        abortSignal
-      );
+      let response: Response;
+      try {
+        response = await chatStream(
+          {
+            message: lastUserText,
+            conversation,
+            model: model ?? undefined,
+            mode,
+          },
+          apiKey,
+          abortSignal
+        );
+      } catch (err) {
+        // Pre-stream failure (connection refused, 429 before streaming, etc.)
+        throw classifyError(err);
+      }
 
       if (!response.body) {
-        throw new Error("No response body from AM backend");
+        throw classifyError(new Error("No response body from AM backend"));
       }
 
       let accumulated = "";
 
-      for await (const event of parseSSEStream(response.body)) {
-        if (abortSignal.aborted) break;
+      try {
+        for await (const event of parseSSEStream(response.body)) {
+          if (abortSignal.aborted) break;
 
-        switch (event.type) {
-          case "context": {
-            // Store context metadata and user query for the memory panel
-            if (unstable_assistantMessageId) {
-              contextStore.set(unstable_assistantMessageId, event.json);
-              queryStore.set(unstable_assistantMessageId, lastUserText);
+          switch (event.type) {
+            case "context": {
+              // Store context metadata and user query for the memory panel
+              if (unstable_assistantMessageId) {
+                contextStore.set(unstable_assistantMessageId, event.json);
+                queryStore.set(unstable_assistantMessageId, lastUserText);
+              }
+              break;
             }
-            break;
-          }
-          case "data": {
-            accumulated += event.text;
-            yield {
-              content: [{ type: "text" as const, text: accumulated }],
-            };
-            break;
-          }
-          case "error": {
-            throw new Error(
-              `AM error [${event.json.code}]: ${event.json.message}`
-            );
-          }
-          case "done": {
-            return;
+            case "data": {
+              accumulated += event.text;
+              yield {
+                content: [{ type: "text" as const, text: accumulated }],
+              };
+              break;
+            }
+            case "error": {
+              throw new Error(
+                `AM error [${event.json.code}]: ${event.json.message}`
+              );
+            }
+            case "done": {
+              return;
+            }
           }
         }
+      } catch (err) {
+        // Mid-stream failure: classify and re-throw.
+        // Partial content is already yielded and preserved by assistant-ui.
+        if (abortSignal.aborted) return;
+        throw classifyError(err);
       }
     },
   };
