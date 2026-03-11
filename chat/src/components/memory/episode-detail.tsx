@@ -32,7 +32,7 @@ function toNeighborhoodEntry(n: EpisodeNeighborhood): NeighborhoodEntry {
  * Episode detail view showing metadata and topic clusters.
  * Opens when clicking an episode in the sidebar list.
  * Fetches neighborhoods via the dedicated
- * GET /api/am/episodes/:id/neighborhoods endpoint.
+ * GET /api/am/episodes/{id}/neighborhoods endpoint.
  *
  * User-facing terminology:
  *   neighborhood -> topic cluster
