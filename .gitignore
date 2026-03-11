@@ -8,3 +8,8 @@
 /.nancy
 /target
 npm/*/scripts/am
+
+# Chat frontend
+chat/node_modules/
+chat/.next/
+chat/.env.local
