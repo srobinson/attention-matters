@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useId } from "react";
-import { Brain, ChevronDown, ChevronRight } from "lucide-react";
+import { Brain, ChevronDown, ChevronRight, Pin, History, Sparkles, type LucideIcon } from "lucide-react";
 import type { ContextMetadata, RecallEntry } from "@/lib/types";
 import { NeighborhoodCard } from "./neighborhood-card";
 
@@ -54,6 +54,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
                 label="pinned"
                 count={metrics.conscious}
                 color="var(--color-conscious)"
+                icon={Pin}
               />
             )}
             {metrics.subconscious > 0 && (
@@ -61,6 +62,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
                 label="recalled"
                 count={metrics.subconscious}
                 color="var(--color-subconscious)"
+                icon={History}
               />
             )}
             {metrics.novel > 0 && (
@@ -68,6 +70,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
                 label="connections"
                 count={metrics.novel}
                 color="var(--color-novel)"
+                icon={Sparkles}
               />
             )}
           </span>
@@ -90,6 +93,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
             <CategorySection
               label="Pinned memory"
               color="var(--color-conscious)"
+              icon={Pin}
               entries={grouped.conscious}
               query={userQuery}
             />
@@ -98,6 +102,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
             <CategorySection
               label="Recalled"
               color="var(--color-subconscious)"
+              icon={History}
               entries={grouped.subconscious}
               query={userQuery}
             />
@@ -106,6 +111,7 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
             <CategorySection
               label="Connections"
               color="var(--color-novel)"
+              icon={Sparkles}
               entries={grouped.novel}
               query={userQuery}
             />
@@ -120,17 +126,16 @@ function CategoryCount({
   label,
   count,
   color,
+  icon: Icon,
 }: {
   label: string;
   count: number;
   color: string;
+  icon: LucideIcon;
 }) {
   return (
     <span className="flex items-center gap-0.5">
-      <span
-        className="inline-block h-1.5 w-1.5 rounded-full"
-        style={{ background: color }}
-      />
+      <Icon className="h-2.5 w-2.5" style={{ color }} aria-hidden="true" />
       <span>
         {count} {label}
       </span>
@@ -141,20 +146,23 @@ function CategoryCount({
 function CategorySection({
   label,
   color,
+  icon: Icon,
   entries,
   query,
 }: {
   label: string;
   color: string;
+  icon: LucideIcon;
   entries: RecallEntry[];
   query: string;
 }) {
   return (
     <div className="flex flex-col gap-1.5">
       <span
-        className="text-[10px] font-medium uppercase tracking-wider"
+        className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider"
         style={{ color }}
       >
+        <Icon className="h-2.5 w-2.5" aria-hidden="true" />
         {label}
       </span>
       {entries.map((entry) => (

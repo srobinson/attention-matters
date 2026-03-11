@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Loader2, Upload } from "lucide-react";
+import { Search, Loader2, Upload, Pin } from "lucide-react";
 import { amEpisodes } from "@/lib/am-client";
 import { loadSettings } from "@/lib/settings";
 import type { Episode } from "@/lib/types";
@@ -146,10 +146,17 @@ function EpisodeItem({
       }}
     >
       <span
-        className="truncate text-xs font-medium"
+        className="flex items-center gap-1 truncate text-xs font-medium"
         style={{ color: "var(--color-text-primary)" }}
       >
-        {episode.name}
+        {episode.is_conscious && (
+          <Pin
+            className="h-2.5 w-2.5 flex-shrink-0"
+            style={{ color: "var(--color-conscious)" }}
+            aria-label="Pinned memory"
+          />
+        )}
+        <span className="truncate">{episode.name}</span>
       </span>
       <div className="flex items-center gap-2">
         <span
