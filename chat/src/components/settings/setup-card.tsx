@@ -89,8 +89,10 @@ export function SetupCard({ onComplete }: SetupCardProps) {
             className="text-center text-xs leading-relaxed"
             style={{ color: "var(--color-text-secondary)" }}
           >
-            Single API key, access to Claude, GPT, Gemini, and more. Keys are
-            stored locally in your browser, never sent externally.
+            Single API key, access to Claude, GPT, Gemini, and more. Your key
+            is stored in your browser and sent to the AM server for LLM
+            requests. The server forwards it to OpenRouter and does not persist
+            it.
           </p>
         </div>
 

@@ -217,6 +217,13 @@ function SettingsDrawer({
               color: "var(--color-text-primary)",
             }}
           />
+          <p
+            className="text-[10px] leading-relaxed"
+            style={{ color: "var(--color-text-secondary)" }}
+          >
+            Stored in your browser. Sent to the AM server for LLM requests,
+            forwarded to OpenRouter, never persisted on the server.
+          </p>
         </SettingsField>
 
         {/* Agent Name */}
