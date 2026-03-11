@@ -475,34 +475,53 @@ async fn cmd_serve(cli: &Cli, http_port: Option<u16>) -> Result<()> {
         None
     };
 
+    // When HTTP is active, stdin EOF should not shut down the server.
+    // When HTTP is not active, stdin EOF is the only shutdown trigger.
+    let http_active = http_handle.is_some();
+
     tracing::info!("starting MCP server on stdio");
     let service = match server.serve(stdio()).await {
-        Ok(s) => s,
+        Ok(s) => Some(s),
         Err(e) => {
-            // stdin closed before MCP init completed - treat as clean shutdown
-            tracing::info!("MCP server exited during init: {e}");
-            cancel.cancel();
-            if let Some(handle) = http_handle {
-                let _ = handle.await;
+            if http_active {
+                // stdin closed but HTTP server is running - continue serving
+                tracing::info!("MCP init failed (stdin closed), HTTP server continues: {e}");
+                None
+            } else {
+                // No HTTP server, stdin closed - clean shutdown
+                tracing::info!("MCP server exited during init: {e}");
+                if let Some(path) = pidfile {
+                    release_pidfile(&path);
+                }
+                return Ok(());
             }
-            if let Some(path) = pidfile {
-                release_pidfile(&path);
-            }
-            return Ok(());
         }
     };
 
-    // Race stdin EOF against OS signals - whichever fires first triggers shutdown
-    let shutdown_reason = tokio::select! {
-        result = service.waiting() => {
-            if let Err(e) = result {
-                tracing::warn!("MCP server error: {e}");
+    let shutdown_reason = if let Some(service) = service {
+        // MCP server is running - race stdin EOF against OS signals
+        tokio::select! {
+            result = service.waiting() => {
+                if let Err(e) = result {
+                    tracing::warn!("MCP server error: {e}");
+                }
+                if http_active {
+                    // stdin closed but HTTP is active - wait for signal
+                    tracing::info!("MCP session ended, HTTP server continues");
+                    shutdown_signal().await;
+                    "signal (after MCP EOF)"
+                } else {
+                    "stdin EOF"
+                }
             }
-            "stdin EOF"
+            _ = shutdown_signal() => {
+                "signal"
+            }
         }
-        _ = shutdown_signal() => {
-            "signal"
-        }
+    } else {
+        // HTTP-only mode - wait for OS signal
+        shutdown_signal().await;
+        "signal"
     };
     tracing::info!("shutdown triggered by {shutdown_reason}");
 
