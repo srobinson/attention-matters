@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useCallback, useState, useEffect } from "react";
+import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import {
   AssistantRuntimeProvider,
   useLocalRuntime,
@@ -19,11 +19,14 @@ export default function ChatPage() {
   const [connected, setConnected] = useState(false);
   const [settingsVersion, setSettingsVersion] = useState(0);
   const [showUpload, setShowUpload] = useState(false);
+  const [modeNotices, setModeNotices] = useState<string[]>([]);
+  const prevModeRef = useRef<string | null>(null);
   const queryClient = useQueryClient();
 
-  // Check for API key on mount
+  // Check for API key on mount, initialize mode tracking
   useEffect(() => {
     setConnected(hasApiKey());
+    prevModeRef.current = loadSettings().mode;
   }, []);
 
   const handleSetupComplete = () => {
@@ -32,6 +35,12 @@ export default function ChatPage() {
   };
 
   const handleSettingsChange = () => {
+    const currentMode = loadSettings().mode;
+    if (prevModeRef.current !== null && prevModeRef.current !== currentMode) {
+      const label = currentMode === "explorer" ? "Explorer" : "Assistant";
+      setModeNotices((prev) => [...prev, `Switched to ${label} mode`]);
+    }
+    prevModeRef.current = currentMode;
     setSettingsVersion((v) => v + 1);
   };
 
@@ -88,7 +97,7 @@ export default function ChatPage() {
           />
         </div>
         <div style={{ gridArea: "chat", overflow: "hidden" }}>
-          <ChatThread />
+          <ChatThread modeNotices={modeNotices} />
         </div>
         <div style={{ gridArea: "sidebar", overflow: "hidden" }}>
           <Sidebar

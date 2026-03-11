@@ -6,7 +6,11 @@ import { UserMessage, AssistantMessage } from "./message";
 import { Composer } from "./composer";
 import { SalientTeachableMoment } from "./salient-teachable";
 
-export function ChatThread() {
+interface ChatThreadProps {
+  modeNotices?: string[];
+}
+
+export function ChatThread({ modeNotices }: ChatThreadProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -28,11 +32,42 @@ export function ChatThread() {
             AssistantMessage,
           }}
         />
+
+        {/* Mode switch system notices */}
+        {modeNotices && modeNotices.length > 0 && (
+          <div className="flex w-full max-w-2xl flex-col gap-1 px-4 py-2">
+            {modeNotices.map((notice, i) => (
+              <ModeNotice key={i} text={notice} />
+            ))}
+          </div>
+        )}
+
         <SalientTeachableMoment containerRef={viewportRef} />
       </ThreadPrimitive.Viewport>
 
       <Composer />
     </ThreadPrimitive.Root>
+  );
+}
+
+function ModeNotice({ text }: { text: string }) {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div
+        className="h-px flex-1"
+        style={{ background: "var(--color-border)" }}
+      />
+      <span
+        className="text-[10px] font-medium uppercase tracking-wider"
+        style={{ color: "var(--color-text-secondary)" }}
+      >
+        {text}
+      </span>
+      <div
+        className="h-px flex-1"
+        style={{ background: "var(--color-border)" }}
+      />
+    </div>
   );
 }
 
