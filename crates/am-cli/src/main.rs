@@ -1,3 +1,4 @@
+mod http_server;
 mod server;
 mod sync;
 
@@ -76,19 +77,27 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start MCP server on stdio transport
+    /// Start MCP server on stdio transport (and optionally an HTTP server)
     #[command(
         long_about = "Start the MCP (Model Context Protocol) server on stdio transport.\n\n\
             This is the primary mode - Claude Code launches this automatically\n\
             when configured as an MCP server. The server exposes 8 tools that\n\
-            the AI agent calls to build and query geometric memory.",
+            the AI agent calls to build and query geometric memory.\n\n\
+            With --http <port>, also starts an HTTP/SSE server on the given port.\n\
+            The HTTP server shares the same brain.db and in-memory state.",
         after_help = "\x1b[1mSetup:\x1b[0m\n  \
             claude mcp add am -- npx -y attention-matters serve\n\n\
+            \x1b[1mHTTP mode:\x1b[0m\n  \
+            am serve --http 3001\n\n\
             \x1b[1mThe server exposes:\x1b[0m\n  \
             am_query, am_activate_response, am_salient, am_buffer,\n  \
             am_ingest, am_stats, am_export, am_import"
     )]
-    Serve,
+    Serve {
+        /// Start an HTTP/SSE server on this port (e.g. 3001)
+        #[arg(long)]
+        http: Option<u16>,
+    },
 
     /// Query the memory system and show recall
     #[command(
@@ -350,7 +359,7 @@ async fn main() -> Result<()> {
     init_tracing(cli.verbose);
 
     match &cli.command {
-        Commands::Serve => cmd_serve(&cli).await,
+        Commands::Serve { http } => cmd_serve(&cli, *http).await,
         Commands::Query { text } => cmd_query(&cli, text),
         Commands::Ingest { files, dir } => cmd_ingest(&cli, files, dir.as_deref()),
         Commands::Stats => cmd_stats(&cli),
@@ -442,19 +451,40 @@ fn is_process_alive(_pid: u32) -> bool {
     false // conservative: assume dead on non-unix
 }
 
-async fn cmd_serve(cli: &Cli) -> Result<()> {
+async fn cmd_serve(cli: &Cli, http_port: Option<u16>) -> Result<()> {
     let store = open_store(cli)?;
-    tracing::info!("starting MCP server");
 
     let pidfile = acquire_pidfile();
 
     let server = server::AmServer::new(store).map_err(|e| anyhow::anyhow!("{e}"))?;
     let server_handle = server.clone(); // Arc clone - cheap; used for shutdown checkpoint
+
+    let cancel = tokio_util::sync::CancellationToken::new();
+
+    // Bind HTTP listener eagerly so port conflicts fail fast with a clear error
+    let http_handle = if let Some(port) = http_port {
+        let listener = http_server::bind_http(port).await?;
+        let state = server.shared_state();
+        let cancel_clone = cancel.clone();
+        Some(tokio::spawn(async move {
+            if let Err(e) = http_server::serve_http(listener, state, cancel_clone).await {
+                tracing::error!("HTTP server error: {e}");
+            }
+        }))
+    } else {
+        None
+    };
+
+    tracing::info!("starting MCP server on stdio");
     let service = match server.serve(stdio()).await {
         Ok(s) => s,
         Err(e) => {
             // stdin closed before MCP init completed - treat as clean shutdown
             tracing::info!("MCP server exited during init: {e}");
+            cancel.cancel();
+            if let Some(handle) = http_handle {
+                let _ = handle.await;
+            }
             if let Some(path) = pidfile {
                 release_pidfile(&path);
             }
@@ -476,9 +506,16 @@ async fn cmd_serve(cli: &Cli) -> Result<()> {
     };
     tracing::info!("shutdown triggered by {shutdown_reason}");
 
+    // Signal HTTP server to shut down
+    cancel.cancel();
+
     // Clean shutdown with 5s timeout - an orphan is worse than a dirty exit
     let pidfile_clone = pidfile.clone();
     let clean = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+        // Wait for HTTP server to finish
+        if let Some(handle) = http_handle {
+            let _ = handle.await;
+        }
         // Explicit WAL checkpoint via the server's store (belt + suspenders with Drop)
         server_handle.checkpoint_wal().await;
         // Pidfile cleanup

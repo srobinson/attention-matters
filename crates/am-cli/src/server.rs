@@ -30,7 +30,7 @@ pub struct AmServer {
     tool_router: ToolRouter<Self>,
 }
 
-struct ServerState {
+pub(crate) struct ServerState {
     system: DAESystem,
     store: BrainStore,
     rng: SmallRng,
@@ -59,6 +59,11 @@ impl AmServer {
             })),
             tool_router: Self::tool_router(),
         })
+    }
+
+    /// Returns a clone of the shared state Arc for use by the HTTP server.
+    pub(crate) fn shared_state(&self) -> Arc<Mutex<ServerState>> {
+        Arc::clone(&self.state)
     }
 
     /// Explicitly flush WAL on the brain store.
