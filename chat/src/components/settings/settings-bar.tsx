@@ -4,12 +4,12 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Settings2 } from "lucide-react";
 import {
   type Settings,
-  CURATED_MODELS,
   loadSettings,
   saveSettings,
 } from "@/lib/settings";
 import { UploadButton } from "@/components/upload/upload-button";
 import { UploadModal } from "@/components/upload/upload-modal";
+import { ModelPicker } from "./model-picker";
 
 interface SettingsBarProps {
   onSettingsChange: () => void;
@@ -72,23 +72,11 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
 
           {/* Model selector */}
           <div className="hidden items-center gap-1.5 sm:flex">
-            <select
+            <ModelPicker
               value={settings.model}
-              onChange={(e) => updateSetting("model", e.target.value)}
-              className="rounded border px-2 py-1 text-xs outline-none"
-              style={{
-                borderColor: "var(--color-border)",
-                background: "var(--color-surface-raised)",
-                color: "var(--color-text-secondary)",
-              }}
-              aria-label="Select model"
-            >
-              {CURATED_MODELS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
+              onChange={(id) => updateSetting("model", id)}
+              compact
+            />
             {modelChangeHint && (
               <span
                 className="text-[10px] animate-pulse"
@@ -269,22 +257,10 @@ function SettingsDrawer({
 
         {/* Model (mobile) */}
         <SettingsField label="Model">
-          <select
+          <ModelPicker
             value={settings.model}
-            onChange={(e) => onUpdate("model", e.target.value)}
-            className="w-full rounded border px-2 py-1.5 text-xs outline-none"
-            style={{
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface-raised)",
-              color: "var(--color-text-primary)",
-            }}
-          >
-            {CURATED_MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+            onChange={(id) => onUpdate("model", id)}
+          />
           {modelChangeHint && (
             <span
               className="text-[10px] animate-pulse"

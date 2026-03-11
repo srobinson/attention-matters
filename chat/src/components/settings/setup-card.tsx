@@ -5,10 +5,10 @@ import { KeyRound, Loader2 } from "lucide-react";
 import {
   type Settings,
   DEFAULT_SETTINGS,
-  CURATED_MODELS,
   saveSettings,
 } from "@/lib/settings";
 import { amHealth } from "@/lib/am-client";
+import { ModelPicker } from "./model-picker";
 
 interface SetupCardProps {
   onComplete: () => void;
@@ -131,23 +131,10 @@ export function SetupCard({ onComplete }: SetupCardProps) {
             >
               Model
             </label>
-            <select
-              id="model"
+            <ModelPicker
               value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="rounded-md border px-3 py-2 text-sm outline-none"
-              style={{
-                borderColor: "var(--color-border)",
-                background: "var(--color-surface-raised)",
-                color: "var(--color-text-primary)",
-              }}
-            >
-              {CURATED_MODELS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
+              onChange={setModel}
+            />
           </div>
 
           {/* Error */}
