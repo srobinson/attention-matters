@@ -142,6 +142,12 @@ export interface StatsResponse {
   episodes: number;
   n: number;
   conscious: number;
+  db_size_bytes?: number;
+  activation?: {
+    mean: number;
+    max: number;
+    zero_count: number;
+  };
 }
 
 export interface Episode {
