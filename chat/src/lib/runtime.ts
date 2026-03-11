@@ -1,13 +1,18 @@
 /**
- * assistant-ui LocalRuntime adapter for AM backend.
- * Placeholder with mock adapter - full implementation in ALP-1136.
+ * Runtime adapter barrel.
+ * Re-exports the AM adapter and provides a mock for development.
  */
 
 import type { ChatModelAdapter } from "@assistant-ui/react";
 
+export { createAMAdapter, useAMRuntime, getContextForMessage } from "./am-runtime";
+
+/**
+ * Mock adapter for development without a running AM backend.
+ * Simulates streaming token-by-token responses.
+ */
 export const mockAdapter: ChatModelAdapter = {
   async *run({ messages, abortSignal }) {
-    // Simulate streaming delay for the mock
     const userMessage = messages[messages.length - 1];
     const userText =
       userMessage?.content
@@ -17,9 +22,8 @@ export const mockAdapter: ChatModelAdapter = {
         .map((p) => p.text)
         .join("") ?? "";
 
-    const response = `This is a mock response. You said: "${userText}"\n\nThe AM backend is not connected yet. This placeholder will be replaced by the real runtime adapter in ALP-1136.`;
+    const response = `This is a mock response. You said: "${userText}"\n\nThe AM backend is not connected yet. Configure your API key in settings to connect.`;
 
-    // Simulate token-by-token streaming
     const words = response.split(" ");
     let accumulated = "";
 
