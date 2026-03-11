@@ -37,6 +37,8 @@ export async function* parseSSEStream(
 
       for (const part of parts) {
         const lines = part.split("\n");
+        // Reset event type at each block boundary per SSE spec
+        currentEvent = "";
 
         for (const line of lines) {
           // Comment line (keepalive) - ignore

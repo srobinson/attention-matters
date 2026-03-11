@@ -68,8 +68,13 @@ async function post<T>(
   return res.json() as Promise<T>;
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${AM_API_URL}${path}`);
+async function get<T>(path: string, apiKey?: string): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (apiKey) {
+    headers["Authorization"] = `Bearer ${apiKey}`;
+  }
+
+  const res = await fetch(`${AM_API_URL}${path}`, { headers });
   if (!res.ok) {
     throw new AMClientError(res.status, "FETCH_ERROR", `GET ${path} failed: ${res.status}`);
   }
@@ -165,16 +170,16 @@ export function amFeedback(
   return post("/api/am/feedback", req, apiKey);
 }
 
-export function amStats(): Promise<StatsResponse> {
-  return get("/api/am/stats");
+export function amStats(apiKey?: string): Promise<StatsResponse> {
+  return get("/api/am/stats", apiKey);
 }
 
-export function amEpisodes(): Promise<Episode[]> {
-  return get("/api/am/episodes");
+export function amEpisodes(apiKey?: string): Promise<Episode[]> {
+  return get("/api/am/episodes", apiKey);
 }
 
-export function amExport(): Promise<unknown> {
-  return get("/api/am/export");
+export function amExport(apiKey?: string): Promise<unknown> {
+  return get("/api/am/export", apiKey);
 }
 
 export function amHealth(): Promise<HealthResponse> {

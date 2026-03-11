@@ -5,6 +5,7 @@
  * Stores DAE recall metadata per-message for the memory context panel (ALP-1138).
  */
 
+import { useMemo } from "react";
 import type { ChatModelAdapter } from "@assistant-ui/react";
 import { useLocalRuntime } from "@assistant-ui/react";
 import { chatStream } from "./am-client";
@@ -128,6 +129,7 @@ export function createAMAdapter(options: AMAdapterOptions): ChatModelAdapter {
  * @returns AssistantRuntime instance for use with AssistantRuntimeProvider
  */
 export function useAMRuntime(options: AMAdapterOptions) {
-  const adapter = createAMAdapter(options);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const adapter = useMemo(() => createAMAdapter(options), [options]);
   return useLocalRuntime(adapter);
 }
