@@ -1,14 +1,37 @@
 "use client";
 
+import { useMemo, useCallback, useState, useEffect } from "react";
 import {
   AssistantRuntimeProvider,
   useLocalRuntime,
 } from "@assistant-ui/react";
-import { ChatThread } from "@/components/chat/chat-thread";
+import { ChatThread } from "@/components/chat/thread";
+import { createAMAdapter } from "@/lib/am-runtime";
 import { mockAdapter } from "@/lib/runtime";
+import { loadSettings, hasApiKey } from "@/lib/settings";
 
 export default function ChatPage() {
-  const runtime = useLocalRuntime(mockAdapter);
+  const [connected, setConnected] = useState(false);
+
+  // Check for API key on mount
+  useEffect(() => {
+    setConnected(hasApiKey());
+  }, []);
+
+  const getApiKey = useCallback(() => loadSettings().apiKey || undefined, []);
+  const getModel = useCallback(() => loadSettings().model || undefined, []);
+  const getMode = useCallback(() => loadSettings().mode, []);
+
+  const adapter = useMemo(() => {
+    if (!connected) return mockAdapter;
+    return createAMAdapter({
+      getApiKey,
+      getModel,
+      getMode,
+    });
+  }, [connected, getApiKey, getModel, getMode]);
+
+  const runtime = useLocalRuntime(adapter);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -20,17 +43,17 @@ export default function ChatPage() {
           background: "var(--color-bg)",
         }}
       >
-        <Header />
+        <Header connected={connected} />
         <ChatThread />
       </main>
     </AssistantRuntimeProvider>
   );
 }
 
-function Header() {
+function Header({ connected }: { connected: boolean }) {
   return (
     <header
-      className="flex items-center border-b px-4"
+      className="flex items-center justify-between border-b px-4"
       style={{
         height: "var(--header-height)",
         borderColor: "var(--color-border)",
@@ -43,6 +66,26 @@ function Header() {
       >
         AM Chat
       </h1>
+      <div className="flex items-center gap-2">
+        <span
+          className="text-xs"
+          style={{
+            color: connected
+              ? "var(--color-novel)"
+              : "var(--color-text-secondary)",
+          }}
+        >
+          {connected ? "Connected" : "Mock mode"}
+        </span>
+        <div
+          className="h-2 w-2 rounded-full"
+          style={{
+            background: connected
+              ? "var(--color-novel)"
+              : "var(--color-text-secondary)",
+          }}
+        />
+      </div>
     </header>
   );
 }
