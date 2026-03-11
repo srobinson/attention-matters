@@ -24,7 +24,7 @@ export function SetupCard({ onComplete }: SetupCardProps) {
   const [validating, setValidating] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!apiKey.trim()) {
       setError("API key is required");
@@ -63,31 +63,44 @@ export function SetupCard({ onComplete }: SetupCardProps) {
     >
       <form
         onSubmit={handleSubmit}
-        className="w-full max-w-md rounded-xl border p-6"
+        className="animate-fade-in w-full max-w-md rounded-2xl border p-8"
         style={{
           borderColor: "var(--color-border)",
           background: "var(--color-surface)",
+          boxShadow: "var(--shadow-xl)",
         }}
       >
-        <div className="mb-6 flex flex-col items-center gap-3">
+        <div className="mb-8 flex flex-col items-center gap-4">
           <div
-            className="flex h-10 w-10 items-center justify-center rounded-lg"
-            style={{ background: "var(--color-surface-raised)" }}
+            className="flex h-14 w-14 items-center justify-center rounded-2xl"
+            style={{
+              background: "var(--color-salient-glow)",
+              boxShadow: "var(--shadow-glow-gold)",
+            }}
           >
             <KeyRound
-              className="h-5 w-5"
+              className="h-6 w-6"
               style={{ color: "var(--color-salient)" }}
             />
           </div>
           <h2
-            className="text-center text-lg font-semibold"
-            style={{ color: "var(--color-text-primary)" }}
+            className="text-center font-semibold"
+            style={{
+              color: "var(--color-text-primary)",
+              fontSize: "var(--font-size-xl)",
+              letterSpacing: "var(--tracking-tight)",
+              lineHeight: "var(--line-height-tight)",
+            }}
           >
             Connect a model to start chatting with your memory
           </h2>
           <p
-            className="text-center text-xs leading-relaxed"
-            style={{ color: "var(--color-text-secondary)" }}
+            className="text-center"
+            style={{
+              color: "var(--color-text-secondary)",
+              fontSize: "var(--font-size-sm)",
+              lineHeight: "var(--line-height-relaxed)",
+            }}
           >
             Single API key, access to Claude, GPT, Gemini, and more. Your key
             is stored in your browser and sent to the AM server for LLM
@@ -96,13 +109,17 @@ export function SetupCard({ onComplete }: SetupCardProps) {
           </p>
         </div>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-5">
           {/* API Key */}
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             <label
               htmlFor="api-key"
-              className="text-xs font-medium"
-              style={{ color: "var(--color-text-primary)" }}
+              className="font-medium uppercase"
+              style={{
+                color: "var(--color-text-tertiary)",
+                fontSize: "var(--font-size-micro)",
+                letterSpacing: "var(--tracking-wider)",
+              }}
             >
               OpenRouter API Key
             </label>
@@ -112,22 +129,27 @@ export function SetupCard({ onComplete }: SetupCardProps) {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="sk-or-..."
-              className="rounded-md border px-3 py-2 text-sm outline-none transition-colors focus:ring-1"
+              className="rounded-lg border px-3 py-2.5 outline-none transition-colors focus:border-[var(--color-salient)]"
               style={{
                 borderColor: "var(--color-border)",
                 background: "var(--color-surface-raised)",
                 color: "var(--color-text-primary)",
+                fontSize: "var(--font-size-base)",
               }}
               autoFocus
             />
           </div>
 
           {/* Model */}
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             <label
               htmlFor="model"
-              className="text-xs font-medium"
-              style={{ color: "var(--color-text-primary)" }}
+              className="font-medium uppercase"
+              style={{
+                color: "var(--color-text-tertiary)",
+                fontSize: "var(--font-size-micro)",
+                letterSpacing: "var(--tracking-wider)",
+              }}
             >
               Model
             </label>
@@ -139,7 +161,12 @@ export function SetupCard({ onComplete }: SetupCardProps) {
 
           {/* Error */}
           {error && (
-            <p className="text-xs" style={{ color: "#ef4444" }}>
+            <p
+              style={{
+                color: "var(--color-error)",
+                fontSize: "var(--font-size-sm)",
+              }}
+            >
               {error}
             </p>
           )}
@@ -148,10 +175,12 @@ export function SetupCard({ onComplete }: SetupCardProps) {
           <button
             type="submit"
             disabled={validating || !apiKey.trim()}
-            className="flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50"
+            className="flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-medium transition-all hover:brightness-110 disabled:opacity-50"
             style={{
               background: "var(--color-salient)",
               color: "var(--color-bg)",
+              fontSize: "var(--font-size-base)",
+              boxShadow: "var(--shadow-md)",
             }}
           >
             {validating ? (

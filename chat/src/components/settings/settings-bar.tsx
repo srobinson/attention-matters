@@ -64,10 +64,17 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
       >
         <div className="flex items-center gap-3">
           <h1
-            className="text-sm font-medium"
-            style={{ color: "var(--color-text-primary)" }}
+            className="font-semibold"
+            style={{
+              color: "var(--color-text-primary)",
+              fontSize: "var(--font-size-sm)",
+              letterSpacing: "var(--tracking-tight)",
+            }}
           >
-            {settings.agentName || "AM"} Chat
+            {settings.agentName || "AM"}{" "}
+            <span style={{ color: "var(--color-text-tertiary)", fontWeight: "var(--font-weight-normal)" }}>
+              Chat
+            </span>
           </h1>
 
           {/* Model selector */}
@@ -79,8 +86,11 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
             />
             {modelChangeHint && (
               <span
-                className="text-[10px] animate-pulse"
-                style={{ color: "var(--color-salient)" }}
+                className="animate-pulse"
+                style={{
+                  color: "var(--color-salient)",
+                  fontSize: "var(--font-size-micro)",
+                }}
               >
                 Takes effect on next message
               </span>
@@ -89,9 +99,9 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
 
           {/* Mode toggle */}
           <div
-            className="hidden items-center gap-1 rounded border p-0.5 sm:flex"
+            className="hidden items-center gap-0.5 rounded-lg border p-0.5 sm:flex"
             style={{
-              borderColor: "var(--color-border)",
+              borderColor: "var(--color-border-subtle)",
               background: "var(--color-surface-raised)",
             }}
           >
@@ -111,13 +121,16 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
         <div className="flex items-center gap-2">
           {/* Connection indicator */}
           <span
-            className="hidden text-xs sm:inline"
-            style={{ color: "var(--color-novel)" }}
+            className="hidden sm:inline"
+            style={{
+              color: "var(--color-novel)",
+              fontSize: "var(--font-size-xs)",
+            }}
           >
             Connected
           </span>
           <div
-            className="h-2 w-2 rounded-full"
+            className="h-1.5 w-1.5 rounded-full"
             style={{ background: "var(--color-novel)" }}
           />
 
@@ -127,7 +140,7 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
           {/* Gear icon */}
           <button
             onClick={() => setShowDrawer(!showDrawer)}
-            className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:opacity-80"
+            className="flex h-8 w-8 items-center justify-center rounded-lg transition-all hover:bg-[var(--color-surface-raised)]"
             style={{ color: "var(--color-text-secondary)" }}
             aria-label="Open settings"
           >
@@ -168,12 +181,14 @@ function ModeButton({
   return (
     <button
       onClick={onClick}
-      className="rounded px-2 py-0.5 text-[11px] font-medium transition-colors"
+      className="rounded-md px-2.5 py-1 font-medium transition-all"
       style={{
         background: active ? "var(--color-surface)" : "transparent",
         color: active
           ? "var(--color-text-primary)"
-          : "var(--color-text-secondary)",
+          : "var(--color-text-tertiary)",
+        fontSize: "var(--font-size-xs)",
+        boxShadow: active ? "var(--shadow-sm)" : "none",
       }}
     >
       {label}
@@ -194,24 +209,31 @@ function SettingsDrawer({
 }) {
   return (
     <div
-      className="absolute right-0 top-[var(--header-height)] z-50 w-80 rounded-bl-lg border-b border-l p-4"
+      className="animate-fade-slide-down absolute right-0 top-[var(--header-height)] z-50 w-80 rounded-bl-xl border-b border-l p-5"
       style={{
         borderColor: "var(--color-border)",
         background: "var(--color-surface)",
+        boxShadow: "var(--shadow-lg)",
       }}
     >
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <h2
-            className="text-sm font-medium"
-            style={{ color: "var(--color-text-primary)" }}
+            className="font-semibold"
+            style={{
+              color: "var(--color-text-primary)",
+              fontSize: "var(--font-size-sm)",
+            }}
           >
             Settings
           </h2>
           <button
             onClick={onClose}
-            className="text-xs hover:opacity-80"
-            style={{ color: "var(--color-text-secondary)" }}
+            className="rounded-md px-2 py-1 transition-colors hover:bg-[var(--color-surface-raised)]"
+            style={{
+              color: "var(--color-text-secondary)",
+              fontSize: "var(--font-size-xs)",
+            }}
           >
             Close
           </button>
@@ -223,16 +245,20 @@ function SettingsDrawer({
             type="password"
             value={settings.apiKey}
             onChange={(e) => onUpdate("apiKey", e.target.value)}
-            className="w-full rounded border px-2 py-1.5 text-xs outline-none"
+            className="w-full rounded-lg border px-3 py-2 outline-none transition-colors focus:border-[var(--color-salient)]"
             style={{
               borderColor: "var(--color-border)",
               background: "var(--color-surface-raised)",
               color: "var(--color-text-primary)",
+              fontSize: "var(--font-size-sm)",
             }}
           />
           <p
-            className="text-[10px] leading-relaxed"
-            style={{ color: "var(--color-text-secondary)" }}
+            style={{
+              color: "var(--color-text-tertiary)",
+              fontSize: "var(--font-size-micro)",
+              lineHeight: "var(--line-height-relaxed)",
+            }}
           >
             Stored in your browser. Sent to the AM server for LLM requests,
             forwarded to OpenRouter, never persisted on the server.
@@ -246,11 +272,12 @@ function SettingsDrawer({
             value={settings.agentName}
             onChange={(e) => onUpdate("agentName", e.target.value)}
             placeholder="AM"
-            className="w-full rounded border px-2 py-1.5 text-xs outline-none"
+            className="w-full rounded-lg border px-3 py-2 outline-none transition-colors focus:border-[var(--color-salient)]"
             style={{
               borderColor: "var(--color-border)",
               background: "var(--color-surface-raised)",
               color: "var(--color-text-primary)",
+              fontSize: "var(--font-size-sm)",
             }}
           />
         </SettingsField>
@@ -263,8 +290,11 @@ function SettingsDrawer({
           />
           {modelChangeHint && (
             <span
-              className="text-[10px] animate-pulse"
-              style={{ color: "var(--color-salient)" }}
+              className="animate-pulse"
+              style={{
+                color: "var(--color-salient)",
+                fontSize: "var(--font-size-micro)",
+              }}
             >
               Takes effect on next message
             </span>
@@ -299,10 +329,14 @@ function SettingsField({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-1">
+    <div className="flex flex-col gap-1.5">
       <label
-        className="text-[11px] font-medium"
-        style={{ color: "var(--color-text-secondary)" }}
+        className="font-medium uppercase"
+        style={{
+          color: "var(--color-text-tertiary)",
+          fontSize: "var(--font-size-micro)",
+          letterSpacing: "var(--tracking-wider)",
+        }}
       >
         {label}
       </label>

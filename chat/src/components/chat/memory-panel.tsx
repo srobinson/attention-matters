@@ -34,12 +34,13 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
   const grouped = groupByCategory(entries);
 
   return (
-    <div className="mt-1 max-w-[85%]">
+    <div className="mt-1.5 max-w-[85%]">
       <button
-        className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] transition-colors hover:opacity-80"
+        className="flex items-center gap-1.5 rounded-md px-2 py-1.5 transition-all hover:bg-[var(--color-surface-raised)]"
         style={{
           color: "var(--color-text-secondary)",
           background: expanded ? "var(--color-surface-raised)" : "transparent",
+          fontSize: "var(--font-size-xs)",
         }}
         onClick={() => setExpanded(!expanded)}
         aria-expanded={expanded}
@@ -85,14 +86,16 @@ export function MemoryPanel({ context, userQuery }: MemoryPanelProps) {
       {expanded && (
         <div
           id={panelId}
-          className="mt-2 flex flex-col gap-2 rounded border-l-2 pl-3"
+          className="animate-expand mt-2 flex flex-col gap-2 rounded-sm border-l-2 pl-3"
           style={{ borderColor: "var(--color-salient)" }}
           role="region"
           aria-label="Recalled memory context for this response"
         >
           <span
-            className="text-[10px]"
-            style={{ color: "var(--color-text-secondary)" }}
+            style={{
+              color: "var(--color-text-tertiary)",
+              fontSize: "var(--font-size-micro)",
+            }}
           >
             What AM recalled for this response
           </span>
@@ -166,8 +169,12 @@ function CategorySection({
   return (
     <div className="flex flex-col gap-1.5">
       <span
-        className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider"
-        style={{ color }}
+        className="flex items-center gap-1 font-semibold uppercase"
+        style={{
+          color,
+          fontSize: "var(--font-size-micro)",
+          letterSpacing: "var(--tracking-wider)",
+        }}
       >
         <Icon className="h-2.5 w-2.5" aria-hidden="true" />
         {label}

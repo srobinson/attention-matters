@@ -52,14 +52,18 @@ export function ChatThread({ modeNotices }: ChatThreadProps) {
 
 function ModeNotice({ text }: { text: string }) {
   return (
-    <div className="flex items-center gap-3 py-1">
+    <div className="animate-fade-in flex items-center gap-3 py-2">
       <div
         className="h-px flex-1"
         style={{ background: "var(--color-border)" }}
       />
       <span
-        className="text-[10px] font-medium uppercase tracking-wider"
-        style={{ color: "var(--color-text-secondary)" }}
+        className="font-medium uppercase"
+        style={{
+          color: "var(--color-text-tertiary)",
+          fontSize: "var(--font-size-micro)",
+          letterSpacing: "var(--tracking-wider)",
+        }}
       >
         {text}
       </span>
@@ -73,20 +77,50 @@ function ModeNotice({ text }: { text: string }) {
 
 function EmptyState() {
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-4 px-4">
+    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-4">
+      {/* Subtle gold accent mark */}
       <div
-        className="text-2xl font-semibold"
-        style={{ color: "var(--color-text-primary)" }}
+        className="flex h-12 w-12 items-center justify-center rounded-xl"
+        style={{
+          background: "var(--color-salient-glow)",
+          boxShadow: "var(--shadow-glow-gold)",
+        }}
       >
-        AM Chat
+        <span
+          className="font-semibold"
+          style={{
+            color: "var(--color-salient)",
+            fontSize: "var(--font-size-lg)",
+            letterSpacing: "var(--tracking-tight)",
+          }}
+        >
+          AM
+        </span>
       </div>
-      <p
-        className="max-w-md text-center text-sm"
-        style={{ color: "var(--color-text-secondary)" }}
-      >
-        Converse with your memory. Ask questions, explore recalled context, and
-        build understanding through dialogue.
-      </p>
+      <div className="flex flex-col items-center gap-2">
+        <h1
+          className="font-semibold"
+          style={{
+            color: "var(--color-text-primary)",
+            fontSize: "var(--font-size-2xl)",
+            letterSpacing: "var(--tracking-tight)",
+            lineHeight: "var(--line-height-tight)",
+          }}
+        >
+          Converse with your memory
+        </h1>
+        <p
+          className="max-w-md text-center"
+          style={{
+            color: "var(--color-text-secondary)",
+            fontSize: "var(--font-size-sm)",
+            lineHeight: "var(--line-height-relaxed)",
+          }}
+        >
+          Ask questions, explore recalled context, and build understanding
+          through dialogue.
+        </p>
+      </div>
     </div>
   );
 }

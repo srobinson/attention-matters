@@ -16,7 +16,7 @@ import type { Episode } from "@/lib/types";
 type SidebarTab = "episodes" | "search";
 
 const STORAGE_KEY = "am_sidebar_tab";
-const SIDEBAR_COLLAPSED_WIDTH = 32;
+const SIDEBAR_COLLAPSED_WIDTH = 36;
 const SIDEBAR_DEFAULT_WIDTH = 280;
 const SIDEBAR_MIN_WIDTH = 150;
 const SIDEBAR_MAX_WIDTH = 500;
@@ -123,7 +123,7 @@ export function Sidebar({ onUploadClick }: SidebarProps) {
         width: sidebarWidth,
         borderColor: "var(--color-border)",
         background: "var(--color-surface)",
-        transition: isDragging.current ? "none" : "width var(--transition-normal)",
+        transition: isDragging.current ? "none" : "width var(--transition-spring)",
       }}
       aria-label="Memory explorer sidebar"
     >
@@ -156,17 +156,23 @@ export function Sidebar({ onUploadClick }: SidebarProps) {
             style={{ borderColor: "var(--color-border)" }}
           >
             <div
-              className="flex items-center gap-1.5 px-3 pt-2 pb-1"
+              className="flex items-center gap-2 px-3 pt-3 pb-1"
             >
               <span
-                className="text-[11px] font-medium uppercase tracking-wider"
-                style={{ color: "var(--color-text-secondary)" }}
+                className="font-semibold uppercase"
+                style={{
+                  color: "var(--color-text-secondary)",
+                  fontSize: "var(--font-size-micro)",
+                  letterSpacing: "var(--tracking-wider)",
+                }}
               >
                 Memory Explorer
               </span>
               <span
-                className="text-[10px]"
-                style={{ color: "var(--color-text-secondary)", opacity: 0.6 }}
+                style={{
+                  color: "var(--color-text-tertiary)",
+                  fontSize: "var(--font-size-micro)",
+                }}
               >
                 All memories
               </span>
@@ -232,12 +238,13 @@ function IconButton({
   return (
     <button
       onClick={onClick}
-      className="flex h-7 w-7 items-center justify-center rounded transition-colors"
+      className="flex h-7 w-7 items-center justify-center rounded-lg transition-all"
       style={{
         color: active
           ? "var(--color-salient)"
-          : "var(--color-text-secondary)",
+          : "var(--color-text-tertiary)",
         background: active ? "var(--color-surface-raised)" : "transparent",
+        boxShadow: active ? "var(--shadow-sm)" : "none",
       }}
       title={label}
       aria-label={label}

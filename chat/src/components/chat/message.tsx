@@ -8,9 +8,9 @@ import { StreamingError } from "./streaming-error";
 
 export function UserMessage() {
   return (
-    <MessagePrimitive.Root className="flex w-full max-w-2xl justify-end px-4 py-3">
+    <MessagePrimitive.Root className="animate-message-enter flex w-full max-w-2xl justify-end px-4 py-2">
       <div
-        className="rounded-lg border px-4 py-3 max-w-[85%]"
+        className="max-w-[85%] rounded-lg border px-4 py-3"
         style={{
           borderColor: "var(--color-user-border)",
           background: "var(--color-surface)",
@@ -29,8 +29,12 @@ export function UserMessage() {
 function UserTextPart() {
   return (
     <div
-      className="text-sm whitespace-pre-wrap"
-      style={{ color: "var(--color-text-primary)" }}
+      className="whitespace-pre-wrap"
+      style={{
+        color: "var(--color-text-primary)",
+        fontSize: "var(--font-size-base)",
+        lineHeight: "var(--line-height-relaxed)",
+      }}
     >
       <StreamdownTextPrimitive />
     </div>
@@ -49,20 +53,24 @@ export function AssistantMessage() {
       ? status
       : null;
   const borderColor = errorStatus
-    ? "#ef444460"
+    ? "var(--color-error-muted)"
     : "var(--color-assistant-border)";
 
   return (
-    <MessagePrimitive.Root className="w-full max-w-2xl px-4 py-3">
-      <div className="flex flex-col gap-1">
+    <MessagePrimitive.Root className="animate-message-enter w-full max-w-2xl px-4 py-2">
+      <div className="flex flex-col gap-1.5">
         <span
-          className="text-xs font-medium"
-          style={{ color: "var(--color-salient)" }}
+          className="font-semibold uppercase"
+          style={{
+            color: "var(--color-salient)",
+            fontSize: "var(--font-size-micro)",
+            letterSpacing: "var(--tracking-wider)",
+          }}
         >
           AM
         </span>
         <div
-          className="rounded-lg border px-4 py-3 max-w-[85%]"
+          className="max-w-[85%] rounded-lg border px-4 py-3"
           style={{
             borderColor,
             background: "var(--color-surface)",
@@ -88,9 +96,10 @@ const ALLOWED_TAGS = { salient: [] };
 function AssistantTextPart() {
   return (
     <div
-      className="prose prose-invert prose-sm max-w-none [&_pre]:rounded-md [&_pre]:border [&_code]:text-xs"
+      className="prose prose-invert prose-sm max-w-none [&_pre]:rounded-md [&_pre]:border [&_code]:text-xs [&_p]:leading-relaxed"
       style={{
         color: "var(--color-text-primary)",
+        fontSize: "var(--font-size-base)",
         "--tw-prose-headings": "var(--color-text-primary)",
         "--tw-prose-links": "var(--color-salient)",
         "--tw-prose-code": "var(--color-text-primary)",

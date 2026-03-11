@@ -192,10 +192,11 @@ export function UploadModal({ open, onClose, onIngestComplete }: UploadModalProp
         aria-modal="true"
         aria-label="Upload document"
         tabIndex={-1}
-        className="fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border p-6 outline-none"
+        className="animate-fade-in fixed left-1/2 top-1/2 z-50 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border p-6 outline-none"
         style={{
           borderColor: "var(--color-border)",
           background: "var(--color-surface)",
+          boxShadow: "var(--shadow-xl)",
         }}
       >
         {/* Header */}
@@ -277,7 +278,7 @@ export function UploadModal({ open, onClose, onIngestComplete }: UploadModalProp
                 state.status === "success"
                   ? "var(--color-novel)"
                   : state.status === "error"
-                    ? "#ef4444"
+                    ? "var(--color-error)"
                     : "var(--color-border)",
               background: "var(--color-surface-raised)",
             }}
@@ -298,7 +299,7 @@ export function UploadModal({ open, onClose, onIngestComplete }: UploadModalProp
             {state.status === "error" && (
               <AlertCircle
                 className="mt-0.5 h-4 w-4 flex-shrink-0"
-                style={{ color: "#ef4444" }}
+                style={{ color: "var(--color-error)" }}
               />
             )}
             <div className="min-w-0 flex-1">
@@ -331,7 +332,7 @@ export function UploadModal({ open, onClose, onIngestComplete }: UploadModalProp
                     color:
                       state.status === "success"
                         ? "var(--color-novel)"
-                        : "#ef4444",
+                        : "var(--color-error)",
                   }}
                 >
                   {state.message}

@@ -49,16 +49,16 @@ export function StreamingError({ error }: StreamingErrorProps) {
 
   return (
     <div
-      className="mt-2 flex items-start gap-2.5 rounded-md border px-3 py-2.5"
+      className="mt-2 flex items-start gap-2.5 rounded-lg border px-3 py-2.5"
       style={{
-        borderColor: "#ef444440",
-        background: "#ef444410",
+        borderColor: "var(--color-error-muted)",
+        background: "var(--color-error-glow)",
       }}
       role="alert"
     >
       <Icon
         className="mt-0.5 h-4 w-4 flex-shrink-0"
-        style={{ color: "#ef4444" }}
+        style={{ color: "var(--color-error)" }}
         aria-hidden="true"
       />
       <div className="flex flex-1 flex-col gap-1 min-w-0">

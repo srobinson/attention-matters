@@ -14,7 +14,7 @@ export function UploadButton({ onClick }: UploadButtonProps) {
   return (
     <button
       onClick={onClick}
-      className="flex h-8 w-8 items-center justify-center rounded-md transition-colors hover:opacity-80"
+      className="flex h-8 w-8 items-center justify-center rounded-lg transition-all hover:bg-[var(--color-surface-raised)]"
       style={{ color: "var(--color-text-secondary)" }}
       aria-label="Upload document"
       title="Upload document"

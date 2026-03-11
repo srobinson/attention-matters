@@ -156,11 +156,12 @@ export function ModelPicker({ value, onChange, compact }: ModelPickerProps) {
       {/* Trigger button */}
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 rounded border px-2 py-1 text-xs outline-none transition-colors hover:opacity-80"
+        className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 outline-none transition-all hover:border-[var(--color-salient)]"
         style={{
           borderColor: "var(--color-border)",
           background: "var(--color-surface-raised)",
           color: "var(--color-text-secondary)",
+          fontSize: "var(--font-size-xs)",
           maxWidth: compact ? "160px" : "240px",
         }}
         aria-haspopup="listbox"
@@ -178,22 +179,23 @@ export function ModelPicker({ value, onChange, compact }: ModelPickerProps) {
       {/* Dropdown */}
       {open && (
         <div
-          className="absolute left-0 top-full z-50 mt-1 w-80 rounded-lg border shadow-xl"
+          className="animate-fade-slide-down absolute left-0 top-full z-50 mt-1 w-80 rounded-xl border"
           style={{
             borderColor: "var(--color-border)",
             background: "var(--color-surface)",
+            boxShadow: "var(--shadow-xl)",
           }}
           role="listbox"
           aria-label="Available models"
         >
           {/* Search */}
           <div
-            className="flex items-center gap-2 border-b px-3 py-2"
+            className="flex items-center gap-2 border-b px-3 py-2.5"
             style={{ borderColor: "var(--color-border)" }}
           >
             <Search
               className="h-3.5 w-3.5 flex-shrink-0"
-              style={{ color: "var(--color-text-secondary)" }}
+              style={{ color: "var(--color-text-tertiary)" }}
             />
             <input
               ref={inputRef}
@@ -201,8 +203,11 @@ export function ModelPicker({ value, onChange, compact }: ModelPickerProps) {
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="Search models..."
-              className="w-full bg-transparent text-xs outline-none placeholder:opacity-50"
-              style={{ color: "var(--color-text-primary)" }}
+              className="w-full bg-transparent outline-none placeholder:opacity-40"
+              style={{
+                color: "var(--color-text-primary)",
+                fontSize: "var(--font-size-sm)",
+              }}
               aria-label="Filter models"
             />
           </div>
@@ -220,8 +225,12 @@ export function ModelPicker({ value, onChange, compact }: ModelPickerProps) {
                     style={{ color: "var(--color-salient)" }}
                   />
                   <span
-                    className="text-[10px] font-medium uppercase tracking-wider"
-                    style={{ color: "var(--color-salient)" }}
+                    className="font-semibold uppercase"
+                    style={{
+                      color: "var(--color-salient)",
+                      fontSize: "var(--font-size-micro)",
+                      letterSpacing: "var(--tracking-wider)",
+                    }}
                   >
                     Recommended
                   </span>
@@ -242,8 +251,12 @@ export function ModelPicker({ value, onChange, compact }: ModelPickerProps) {
               <div key={provider} className="px-1 py-1">
                 <div className="px-2 py-1">
                   <span
-                    className="text-[10px] font-medium uppercase tracking-wider"
-                    style={{ color: "var(--color-text-secondary)" }}
+                    className="font-semibold uppercase"
+                    style={{
+                      color: "var(--color-text-tertiary)",
+                      fontSize: "var(--font-size-micro)",
+                      letterSpacing: "var(--tracking-wider)",
+                    }}
                   >
                     {provider}
                   </span>
@@ -288,10 +301,11 @@ function ModelOption({
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left transition-colors"
+      className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left transition-all"
       style={{
         background: selected ? "var(--color-surface-raised)" : "transparent",
         color: "var(--color-text-primary)",
+        fontSize: "var(--font-size-sm)",
       }}
       onMouseEnter={(e) => {
         if (!selected)
@@ -303,10 +317,13 @@ function ModelOption({
       role="option"
       aria-selected={selected}
     >
-      <span className="truncate text-xs">{model.name}</span>
+      <span className="truncate">{model.name}</span>
       <span
-        className="flex flex-shrink-0 items-center gap-2 text-[10px] tabular-nums"
-        style={{ color: "var(--color-text-secondary)" }}
+        className="flex flex-shrink-0 items-center gap-2 tabular-nums"
+        style={{
+          color: "var(--color-text-tertiary)",
+          fontSize: "var(--font-size-micro)",
+        }}
       >
         <span>{formatContext(model.contextLength)} ctx</span>
         <span>{formatPrice(model.promptPrice)}</span>

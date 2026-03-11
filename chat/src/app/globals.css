@@ -64,7 +64,7 @@
   --muted-foreground: var(--color-text-secondary);
   --accent: var(--color-surface-raised);
   --accent-foreground: var(--color-text-primary);
-  --destructive: #ef4444;
+  --destructive: var(--color-error);
   --border: var(--color-border);
   --input: var(--color-border);
   --ring: var(--color-salient);
@@ -92,28 +92,147 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "ss02", "cv01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   html {
     @apply font-sans;
   }
 }
 
-/* Salient text: gold highlight for AM recalled content in streamed messages.
- * The LLM wraps recalled content in <salient>...</salient> tags.
- * The browser renders unknown HTML elements as inline, and these
- * CSS rules style them with the gold accent color.
- * Dotted underline provides a non-color signal for color-blind users. */
+/* ═══════════════════════════════════════════════
+ * Salient text: gold highlight for AM recalled content
+ * ═══════════════════════════════════════════════ */
 salient {
   color: var(--color-salient);
-  font-weight: 500;
-  text-decoration: underline dotted var(--color-salient);
+  font-weight: var(--font-weight-medium);
+  text-decoration: underline dotted var(--color-salient-muted);
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
 }
 
-/* Accessible focus indicator for salient text when narrated */
 salient:focus {
   outline: 2px solid var(--color-salient);
   outline-offset: 2px;
   border-radius: 2px;
+}
+
+/* ═══════════════════════════════════════════════
+ * Animations: message entry, fade-in, sidebar
+ * ═══════════════════════════════════════════════ */
+
+/* Message entry: fade-in with subtle upward slide */
+@keyframes message-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-message-enter {
+  animation: message-enter 300ms ease-out both;
+}
+
+/* Fade in */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fade-in 200ms ease-out both;
+}
+
+/* Fade-slide for dropdowns and panels */
+@keyframes fade-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-slide-down {
+  animation: fade-slide-down 200ms ease-out both;
+}
+
+/* Collapse/expand content (height animation via max-height) */
+@keyframes expand-content {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+  }
+}
+
+.animate-expand {
+  animation: expand-content 250ms ease-out both;
+  overflow: hidden;
+}
+
+/* Reduced motion: disable all motion-based animations */
+@media (prefers-reduced-motion: reduce) {
+  .animate-message-enter,
+  .animate-fade-in,
+  .animate-fade-slide-down,
+  .animate-expand {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════
+ * Scrollbar styling (thin, dark theme)
+ * ═══════════════════════════════════════════════ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--neutral-700);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--neutral-600);
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--neutral-700) transparent;
+}
+
+/* ═══════════════════════════════════════════════
+ * Focus ring: consistent gold focus indicator
+ * ═══════════════════════════════════════════════ */
+:focus-visible {
+  outline: 2px solid var(--color-salient);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ═══════════════════════════════════════════════
+ * Selection: gold tinted selection highlight
+ * ═══════════════════════════════════════════════ */
+::selection {
+  background: rgba(212, 168, 83, 0.25);
+  color: var(--color-text-primary);
 }

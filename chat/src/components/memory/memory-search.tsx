@@ -112,7 +112,7 @@ export function MemorySearch() {
         {error && (
           <p
             className="px-3 py-4 text-center text-xs"
-            style={{ color: "#ef4444" }}
+            style={{ color: "var(--color-error)" }}
           >
             Search failed. Try again.
           </p>

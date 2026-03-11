@@ -75,7 +75,7 @@ export function EpisodeList({ onSelectEpisode, onUploadClick }: EpisodeListProps
         {error && (
           <p
             className="px-1 py-4 text-center text-xs"
-            style={{ color: "#ef4444" }}
+            style={{ color: "var(--color-error)" }}
           >
             Failed to load episodes
           </p>
@@ -131,23 +131,20 @@ function EpisodeItem({
   return (
     <button
       onClick={onClick}
-      className="mb-1 flex w-full flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors hover:opacity-90"
+      className="mb-0.5 flex w-full flex-col gap-0.5 rounded-lg px-2.5 py-2 text-left transition-all hover:bg-[var(--color-surface-raised)]"
       style={{
         background: "transparent",
         borderLeft: episode.is_conscious
           ? "3px solid var(--color-conscious)"
           : "3px solid transparent",
       }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.background = "var(--color-surface-raised)";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.background = "transparent";
-      }}
     >
       <span
-        className="flex items-center gap-1 truncate text-xs font-medium"
-        style={{ color: "var(--color-text-primary)" }}
+        className="flex items-center gap-1.5 truncate font-medium"
+        style={{
+          color: "var(--color-text-primary)",
+          fontSize: "var(--font-size-sm)",
+        }}
       >
         {episode.is_conscious && (
           <Pin
@@ -160,14 +157,18 @@ function EpisodeItem({
       </span>
       <div className="flex items-center gap-2">
         <span
-          className="text-[10px]"
-          style={{ color: "var(--color-text-secondary)" }}
+          style={{
+            color: "var(--color-text-tertiary)",
+            fontSize: "var(--font-size-micro)",
+          }}
         >
           {episode.neighborhood_count} topic clusters
         </span>
         <span
-          className="text-[10px]"
-          style={{ color: "var(--color-text-secondary)" }}
+          style={{
+            color: "var(--color-text-tertiary)",
+            fontSize: "var(--font-size-micro)",
+          }}
         >
           {date}
         </span>
