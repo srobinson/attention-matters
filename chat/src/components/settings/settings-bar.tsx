@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Settings2 } from "lucide-react";
 import {
   type Settings,
@@ -24,10 +24,21 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [showDrawer, setShowDrawer] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
+  const [modelChangeHint, setModelChangeHint] = useState(false);
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Reload settings when component mounts (SSR safety)
   useEffect(() => {
     setSettings(loadSettings());
+    return () => {
+      if (hintTimerRef.current !== null) clearTimeout(hintTimerRef.current);
+    };
+  }, []);
+
+  const showModelHint = useCallback(() => {
+    setModelChangeHint(true);
+    if (hintTimerRef.current !== null) clearTimeout(hintTimerRef.current);
+    hintTimerRef.current = setTimeout(() => setModelChangeHint(false), 3000);
   }, []);
 
   const updateSetting = <K extends keyof Settings>(
@@ -37,6 +48,7 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
     const updated = { ...settings, [key]: value };
     setSettings(updated);
     saveSettings(updated);
+    if (key === "model") showModelHint();
     onSettingsChange();
   };
 
@@ -59,23 +71,33 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
           </h1>
 
           {/* Model selector */}
-          <select
-            value={settings.model}
-            onChange={(e) => updateSetting("model", e.target.value)}
-            className="hidden rounded border px-2 py-1 text-xs outline-none sm:block"
-            style={{
-              borderColor: "var(--color-border)",
-              background: "var(--color-surface-raised)",
-              color: "var(--color-text-secondary)",
-            }}
-            aria-label="Select model"
-          >
-            {CURATED_MODELS.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+          <div className="hidden items-center gap-1.5 sm:flex">
+            <select
+              value={settings.model}
+              onChange={(e) => updateSetting("model", e.target.value)}
+              className="rounded border px-2 py-1 text-xs outline-none"
+              style={{
+                borderColor: "var(--color-border)",
+                background: "var(--color-surface-raised)",
+                color: "var(--color-text-secondary)",
+              }}
+              aria-label="Select model"
+            >
+              {CURATED_MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            {modelChangeHint && (
+              <span
+                className="text-[10px] animate-pulse"
+                style={{ color: "var(--color-salient)" }}
+              >
+                Takes effect on next message
+              </span>
+            )}
+          </div>
 
           {/* Mode toggle */}
           <div
@@ -132,6 +154,7 @@ export function SettingsBar({ onSettingsChange, onIngestComplete }: SettingsBarP
           settings={settings}
           onUpdate={updateSetting}
           onClose={() => setShowDrawer(false)}
+          modelChangeHint={modelChangeHint}
         />
       )}
 
@@ -174,10 +197,12 @@ function SettingsDrawer({
   settings,
   onUpdate,
   onClose,
+  modelChangeHint,
 }: {
   settings: Settings;
   onUpdate: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
   onClose: () => void;
+  modelChangeHint: boolean;
 }) {
   return (
     <div
@@ -260,6 +285,14 @@ function SettingsDrawer({
               </option>
             ))}
           </select>
+          {modelChangeHint && (
+            <span
+              className="text-[10px] animate-pulse"
+              style={{ color: "var(--color-salient)" }}
+            >
+              Takes effect on next message
+            </span>
+          )}
         </SettingsField>
 
         {/* Mode (mobile) */}
