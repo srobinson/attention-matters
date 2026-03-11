@@ -9,6 +9,7 @@ import {
 import { Layers, Search } from "lucide-react";
 import { StatsHeader } from "./stats-header";
 import { EpisodeList } from "./episode-list";
+import { EpisodeDetail } from "./episode-detail";
 import type { Episode } from "@/lib/types";
 
 type SidebarTab = "episodes" | "search";
@@ -27,7 +28,6 @@ function loadTab(): SidebarTab {
 }
 
 interface SidebarProps {
-  onSelectEpisode?: (episode: Episode) => void;
   onUploadClick?: () => void;
   /** Controlled search content from parent. Null when no search panel exists yet. */
   searchContent?: React.ReactNode;
@@ -42,10 +42,11 @@ interface SidebarProps {
  *
  * Responsive: hidden below 1024px, accessible via toggle.
  */
-export function Sidebar({ onSelectEpisode, onUploadClick, searchContent }: SidebarProps) {
+export function Sidebar({ onUploadClick, searchContent }: SidebarProps) {
   const [expanded, setExpanded] = useState(false);
   const [tab, setTab] = useState<SidebarTab>(loadTab);
   const [width, setWidth] = useState(SIDEBAR_DEFAULT_WIDTH);
+  const [selectedEpisode, setSelectedEpisode] = useState<Episode | null>(null);
   const isDragging = useRef(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
@@ -160,9 +161,15 @@ export function Sidebar({ onSelectEpisode, onUploadClick, searchContent }: Sideb
 
           {/* Tab content */}
           <div className="flex-1 overflow-hidden pt-2">
-            {tab === "episodes" && (
+            {tab === "episodes" && selectedEpisode && (
+              <EpisodeDetail
+                episode={selectedEpisode}
+                onBack={() => setSelectedEpisode(null)}
+              />
+            )}
+            {tab === "episodes" && !selectedEpisode && (
               <EpisodeList
-                onSelectEpisode={onSelectEpisode}
+                onSelectEpisode={(ep) => setSelectedEpisode(ep)}
                 onUploadClick={onUploadClick}
               />
             )}

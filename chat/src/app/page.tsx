@@ -39,6 +39,11 @@ export default function ChatPage() {
   const getModel = useCallback(() => loadSettings().model || undefined, []);
   const getMode = useCallback(() => loadSettings().mode, []);
 
+  const handleIngestComplete = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["am", "episodes"] });
+    queryClient.invalidateQueries({ queryKey: ["am", "stats"] });
+  }, [queryClient]);
+
   // Re-create adapter when settings change
   const adapter = useMemo(() => {
     // settingsVersion dependency forces re-creation
@@ -64,11 +69,6 @@ export default function ChatPage() {
       </div>
     );
   }
-
-  const handleIngestComplete = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["am", "episodes"] });
-    queryClient.invalidateQueries({ queryKey: ["am", "stats"] });
-  }, [queryClient]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
