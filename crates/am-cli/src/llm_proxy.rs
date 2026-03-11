@@ -113,10 +113,11 @@ fn resolve_api_key(headers: &HeaderMap) -> Option<String> {
     // Check Authorization header first
     if let Some(auth) = headers.get("authorization")
         && let Ok(val) = auth.to_str()
-            && let Some(token) = val.strip_prefix("Bearer ")
-                && !token.is_empty() {
-                    return Some(token.to_string());
-                }
+        && let Some(token) = val.strip_prefix("Bearer ")
+        && !token.is_empty()
+    {
+        return Some(token.to_string());
+    }
     // Fall back to env var
     std::env::var("OPENROUTER_API_KEY").ok()
 }
