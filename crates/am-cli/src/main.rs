@@ -1,4 +1,5 @@
 mod http_server;
+mod llm_proxy;
 mod server;
 mod sync;
 

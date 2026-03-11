@@ -68,6 +68,8 @@ pub(crate) async fn serve_http(
         .route("/api/am/stats", get(handle_stats))
         .route("/api/am/export", get(handle_export))
         .route("/api/am/episodes", get(handle_episodes))
+        // LLM proxy with SSE streaming
+        .route("/api/chat", post(crate::llm_proxy::handle_chat))
         .with_state(app_state);
 
     let addr = listener.local_addr()?;
