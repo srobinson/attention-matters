@@ -1,16 +1,23 @@
 "use client";
 
+import { useRef } from "react";
 import { ThreadPrimitive } from "@assistant-ui/react";
 import { UserMessage, AssistantMessage } from "./message";
 import { Composer } from "./composer";
+import { SalientTeachableMoment } from "./salient-teachable";
 
 export function ChatThread() {
+  const viewportRef = useRef<HTMLDivElement>(null);
+
   return (
     <ThreadPrimitive.Root
       className="flex h-full flex-col"
       style={{ background: "var(--color-bg)" }}
     >
-      <ThreadPrimitive.Viewport className="flex flex-1 flex-col items-center overflow-y-auto scroll-smooth">
+      <ThreadPrimitive.Viewport
+        ref={viewportRef}
+        className="relative flex flex-1 flex-col items-center overflow-y-auto scroll-smooth"
+      >
         <ThreadPrimitive.Empty>
           <EmptyState />
         </ThreadPrimitive.Empty>
@@ -21,6 +28,7 @@ export function ChatThread() {
             AssistantMessage,
           }}
         />
+        <SalientTeachableMoment containerRef={viewportRef} />
       </ThreadPrimitive.Viewport>
 
       <Composer />
