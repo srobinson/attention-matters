@@ -34,12 +34,29 @@ pub struct FeedbackResult {
     pub centroid: Option<Quaternion>,
 }
 
-/// How much to SLERP toward the query centroid on a Boost signal.
-/// Moderate - we don't want to collapse the manifold, just nudge.
+/// SLERP interpolation factor toward query centroid on a Boost signal.
+///
+/// Controls how aggressively boosted occurrences converge toward the query
+/// region. The effective displacement is `BOOST_DRIFT_FACTOR * idf_weight *
+/// plasticity`, so high-IDF, high-plasticity occurrences move furthest.
+///
+/// At 0.15: gentle nudge that preserves manifold topology while creating a
+/// detectable attraction basin over 3-5 repeated boosts. Higher values
+/// (0.3+) risk collapsing distinct neighborhoods into a single cluster.
+/// Lower values (0.05) require many feedback signals before drift is visible.
 const BOOST_DRIFT_FACTOR: f64 = 0.15;
 
-/// How much activation to decay on a Demote signal.
-/// Floor at 0 - we never go negative.
+/// Activation count decrement per Demote signal.
+///
+/// Reduces `activation_count` by this amount (saturating at 0), which
+/// increases plasticity and reduces the occurrence's anchoring strength.
+/// Demoted occurrences become more susceptible to future drift, allowing
+/// the manifold to reorganize away from unhelpful recall patterns.
+///
+/// At 2: a single demote undoes roughly two prior activations, making
+/// the occurrence noticeably more mobile without erasing it entirely.
+/// Combined with THRESHOLD (ratio/C), this ensures demoted occurrences
+/// drop below the vivid threshold after 1-2 demote signals.
 const DEMOTE_DECAY: u32 = 2;
 
 /// Apply relevance feedback to neighborhoods that were recalled for a query.
