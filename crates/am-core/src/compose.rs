@@ -334,7 +334,7 @@ pub fn compose_context(
         .iter()
         .filter(|c| c.category == RecallCategory::Conscious)
         .collect();
-    con.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    con.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     if let Some(best) = con.first() {
         selected_ids.insert(best.neighborhood_id);
@@ -358,7 +358,7 @@ pub fn compose_context(
             c.category == RecallCategory::Subconscious && !selected_ids.contains(&c.neighborhood_id)
         })
         .collect();
-    sub.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    sub.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     for (i, entry) in sub.iter().take(2).enumerate() {
         selected_ids.insert(entry.neighborhood_id);
@@ -386,7 +386,7 @@ pub fn compose_context(
             c.category == RecallCategory::Novel && !selected_ids.contains(&c.neighborhood_id)
         })
         .collect();
-    novel.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    novel.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     if let Some(best) = novel.first() {
         selected_ids.insert(best.neighborhood_id);
@@ -454,19 +454,19 @@ pub fn compose_context_budgeted(
         .iter()
         .filter(|c| c.category == RecallCategory::Conscious)
         .collect();
-    conscious.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    conscious.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     let mut subconscious: Vec<&RankedCandidate> = candidates
         .iter()
         .filter(|c| c.category == RecallCategory::Subconscious)
         .collect();
-    subconscious.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    subconscious.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     let mut novel: Vec<&RankedCandidate> = candidates
         .iter()
         .filter(|c| c.category == RecallCategory::Novel)
         .collect();
-    novel.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    novel.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     // Deduplicate: a neighborhood can appear as both Subconscious and Novel.
     // Track which neighborhood_ids are included to avoid duplicates.
@@ -566,7 +566,7 @@ pub fn compose_context_budgeted(
         .iter()
         .filter(|c| !selected_ids.contains(&c.neighborhood_id) && c.score >= MIN_SCORE_THRESHOLD)
         .collect();
-    remaining.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    remaining.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     for c in &remaining {
         if tokens_used >= budget.max_tokens {
@@ -752,7 +752,7 @@ pub fn compose_index(
         })
         .collect();
 
-    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     let mut total_tokens_if_fetched = 0;
     let entries: Vec<IndexEntry> = scored
@@ -2955,5 +2955,54 @@ mod tests {
             "irrelevant query should produce NO conscious recall, got:\n{}",
             ctx.context,
         );
+    }
+
+    #[test]
+    fn test_sort_with_nan_scores_does_not_panic() {
+        // Verifies that total_cmp handles NaN without panicking.
+        // Previously partial_cmp().unwrap() would crash on NaN scores.
+        let mut candidates = [RankedCandidate {
+                neighborhood_id: Uuid::new_v4(),
+                episode_idx: 0,
+                category: RecallCategory::Conscious,
+                score: 0.5,
+                text: "normal".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Ingested,
+            },
+            RankedCandidate {
+                neighborhood_id: Uuid::new_v4(),
+                episode_idx: 1,
+                category: RecallCategory::Conscious,
+                score: f64::NAN,
+                text: "degenerate".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Ingested,
+            },
+            RankedCandidate {
+                neighborhood_id: Uuid::new_v4(),
+                episode_idx: 2,
+                category: RecallCategory::Conscious,
+                score: 0.8,
+                text: "high".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Ingested,
+            },
+            RankedCandidate {
+                neighborhood_id: Uuid::new_v4(),
+                episode_idx: 3,
+                category: RecallCategory::Conscious,
+                score: f64::INFINITY,
+                text: "inf".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Ingested,
+            }];
+
+        // This would panic with partial_cmp().unwrap() if any score is NaN
+        candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
+
+        // NaN sorts to the end with total_cmp (NaN > everything)
+        assert_eq!(candidates.len(), 4);
+        // The sort completed without panicking - that's the key assertion
     }
 }
