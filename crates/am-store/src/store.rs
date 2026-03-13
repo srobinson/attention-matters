@@ -690,8 +690,12 @@ impl Store {
         let before_occs = self.occurrence_count()?;
         let before_size = self.db_size();
 
-        // Build retention filter clauses
+        // Build retention filter clauses with parameterized values.
+        // Parameter index starts at 2 because ?1 is activation_floor.
         let mut retention_clauses = String::new();
+        let mut retention_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut param_idx: usize = 2;
+
         if retention.grace_epochs > 0 {
             let max_epoch: u64 = self
                 .conn
@@ -703,22 +707,34 @@ impl Store {
                 .unwrap_or(0);
             let epoch_floor = max_epoch.saturating_sub(retention.grace_epochs);
             retention_clauses.push_str(&format!(
-                "\n                     AND n.epoch < {epoch_floor}"
+                "\n                     AND n.epoch < ?{param_idx}"
             ));
+            retention_params.push(Box::new(epoch_floor));
+            param_idx += 1;
         }
         if retention.retention_days > 0 {
-            let retention_secs = retention.retention_days * 86400;
+            let retention_secs = (retention.retention_days * 86400) as i64;
             retention_clauses.push_str(&format!(
                 "\n                     AND (e.timestamp = ''
                           OR REPLACE(REPLACE(e.timestamp, 'T', ' '), 'Z', '')
-                             < datetime('now', '-{retention_secs} seconds'))"
+                             < datetime('now', '-' || ?{param_idx} || ' seconds'))"
             ));
+            retention_params.push(Box::new(retention_secs));
+            param_idx += 1;
         }
+        let _ = param_idx; // suppress unused warning
 
         let tx = self.conn.unchecked_transaction()?;
 
         // 1. Delete occurrences at or below the activation floor,
         //    but only from non-conscious episodes, and respecting retention.
+        let mut all_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        all_params.push(Box::new(activation_floor));
+        for p in &retention_params {
+            all_params.push(Box::new(p.to_sql().unwrap()));
+        }
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            all_params.iter().map(|p| p.as_ref()).collect();
         let evicted_occs: u64 = tx.execute(
             &format!(
                 "DELETE FROM occurrences WHERE activation_count <= ?1
@@ -728,7 +744,7 @@ impl Store {
                      WHERE e.is_conscious = 0{retention_clauses}
                  )"
             ),
-            [activation_floor],
+            param_refs.as_slice(),
         )? as u64;
 
         // 2. Delete neighborhoods that have no remaining occurrences
@@ -781,7 +797,8 @@ impl Store {
         let before_occs = self.occurrence_count()?;
         let before_size = self.db_size();
 
-        // Build retention filter clauses
+        // Build retention filter clauses with parameterized values.
+        // Parameters: ?1 = max_epoch_f, ?2 = recency_weight, then dynamic retention params.
         let max_epoch: u64 = self
             .conn
             .query_row(
@@ -793,18 +810,28 @@ impl Store {
         let max_epoch_f = (max_epoch as f64).max(1.0);
 
         let mut retention_clauses = String::new();
+        let mut query_params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        query_params.push(Box::new(max_epoch_f));
+        query_params.push(Box::new(retention.recency_weight));
+        let mut param_idx: usize = 3;
+
         if retention.grace_epochs > 0 {
             let epoch_floor = max_epoch.saturating_sub(retention.grace_epochs);
-            retention_clauses.push_str(&format!("\n                 AND n.epoch < {epoch_floor}"));
+            retention_clauses.push_str(&format!("\n                 AND n.epoch < ?{param_idx}"));
+            query_params.push(Box::new(epoch_floor));
+            param_idx += 1;
         }
         if retention.retention_days > 0 {
-            let retention_secs = retention.retention_days * 86400;
+            let retention_secs = (retention.retention_days * 86400) as i64;
             retention_clauses.push_str(&format!(
                 "\n                 AND (e.timestamp = ''
                       OR REPLACE(REPLACE(e.timestamp, 'T', ' '), 'Z', '')
-                         < datetime('now', '-{retention_secs} seconds'))"
+                         < datetime('now', '-' || ?{param_idx} || ' seconds'))"
             ));
+            query_params.push(Box::new(retention_secs));
+            param_idx += 1;
         }
+        let _ = param_idx;
 
         // Get occurrences sorted by composite eviction score (most evictable first).
         // Score = activation_count - (epoch / max_epoch) * recency_weight
@@ -814,13 +841,14 @@ impl Store {
                  JOIN neighborhoods n ON o.neighborhood_id = n.id
                  JOIN episodes e ON n.episode_id = e.id
                  WHERE e.is_conscious = 0{retention_clauses}
-                 ORDER BY (o.activation_count - (CAST(n.epoch AS REAL) / {max_epoch_f}) * {w}) ASC",
-            w = retention.recency_weight,
+                 ORDER BY (o.activation_count - (CAST(n.epoch AS REAL) / ?1) * ?2) ASC",
         );
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            query_params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = self.conn.prepare(&query)?;
 
         let rows: Vec<(String, u32)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map(param_refs.as_slice(), |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<std::result::Result<_, _>>()?;
 
         if rows.is_empty() {
