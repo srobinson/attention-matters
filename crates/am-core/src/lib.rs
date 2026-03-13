@@ -32,24 +32,24 @@
 // use std::collections::HashMap.
 #![allow(clippy::implicit_hasher)]
 
-pub mod batch;
-pub mod compose;
-pub mod constants;
-pub mod episode;
-pub mod feedback;
-pub mod neighborhood;
-pub mod occurrence;
-pub mod phasor;
-pub mod quaternion;
-pub mod query;
-pub mod recency;
-pub mod salient;
+mod batch;
+mod compose;
+mod constants;
+mod episode;
+mod feedback;
+mod neighborhood;
+mod occurrence;
+mod phasor;
+mod quaternion;
+mod query;
+pub(crate) mod recency;
+mod salient;
 pub(crate) mod scoring;
-pub mod serde_compat;
-pub mod surface;
-pub mod system;
-pub mod time;
-pub mod tokenizer;
+mod serde_compat;
+mod surface;
+mod system;
+mod time;
+mod tokenizer;
 
 pub use batch::{BatchQueryEngine, BatchQueryRequest, BatchQueryResult};
 pub use compose::{

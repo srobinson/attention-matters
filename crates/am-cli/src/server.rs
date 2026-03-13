@@ -6,9 +6,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use am_core::{
-    BatchQueryEngine, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine, RecallCategory,
-    apply_feedback, compose_context, compose_context_budgeted, compose_index, compute_surface,
-    export_json, extract_salient, import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
+    BatchQueryEngine, BatchQueryRequest, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine,
+    RecallCategory, apply_feedback, compose_context, compose_context_budgeted, compose_index,
+    compute_surface, export_json, extract_salient, import_json, ingest_text, mark_salient_typed,
+    retrieve_by_ids,
 };
 use am_store::BrainStore;
 use rand::SeedableRng;
@@ -876,10 +877,10 @@ impl AmServer {
 
         flush_orphaned_buffer(store, system, rng);
 
-        let requests: Vec<am_core::batch::BatchQueryRequest> = req
+        let requests: Vec<BatchQueryRequest> = req
             .queries
             .iter()
-            .map(|q| am_core::batch::BatchQueryRequest {
+            .map(|q| BatchQueryRequest {
                 query: q.query.clone(),
                 max_tokens: q.max_tokens,
             })
