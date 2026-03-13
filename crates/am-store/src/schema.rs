@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 6;
+pub const SCHEMA_VERSION: i64 = 7;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -122,6 +122,18 @@ pub fn initialize(conn: &Connection) -> Result<()> {
             CREATE INDEX IF NOT EXISTS idx_ep_conscious ON episodes(is_conscious);
             CREATE INDEX IF NOT EXISTS idx_occ_activation ON occurrences(activation_count);
             CREATE INDEX IF NOT EXISTS idx_nbhd_episode_epoch ON neighborhoods(episode_id, epoch);
+            ",
+        )?;
+    }
+
+    // v7: Replace standalone activation index with compound index that covers
+    // the GC query shape (WHERE activation_count <= ? AND neighborhood_id IN ...)
+    if stored_version < 7 {
+        conn.execute_batch(
+            "
+            DROP INDEX IF EXISTS idx_occ_activation;
+            CREATE INDEX IF NOT EXISTS idx_occ_nbhd_activation
+                ON occurrences(neighborhood_id, activation_count);
             ",
         )?;
     }
