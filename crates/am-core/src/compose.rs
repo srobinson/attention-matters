@@ -4,9 +4,7 @@ use uuid::Uuid;
 
 use crate::neighborhood::NeighborhoodType;
 use crate::query::{InterferenceResult, QueryResult};
-use crate::scoring::{
-    MIN_SCORE_THRESHOLD, RankedCandidate, get_episode_name, rank_candidates,
-};
+use crate::scoring::{MIN_SCORE_THRESHOLD, RankedCandidate, get_episode_name, rank_candidates};
 use crate::surface::SurfaceResult;
 use crate::system::DAESystem;
 use crate::tokenizer::token_count;

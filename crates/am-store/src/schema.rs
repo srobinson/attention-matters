@@ -84,31 +84,31 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         && conn
             .prepare("SELECT neighborhood_type FROM neighborhoods LIMIT 0")
             .is_err()
-        {
-            conn.execute_batch(
+    {
+        conn.execute_batch(
                 "ALTER TABLE neighborhoods ADD COLUMN neighborhood_type TEXT NOT NULL DEFAULT 'memory';",
             )?;
-        }
+    }
 
     // v3: Add epoch column
     if stored_version < 3
         && conn
             .prepare("SELECT epoch FROM neighborhoods LIMIT 0")
             .is_err()
-        {
-            conn.execute_batch(
-                "ALTER TABLE neighborhoods ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;",
-            )?;
-        }
+    {
+        conn.execute_batch(
+            "ALTER TABLE neighborhoods ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
 
     // v4: Add superseded_by column
     if stored_version < 4
         && conn
             .prepare("SELECT superseded_by FROM neighborhoods LIMIT 0")
             .is_err()
-        {
-            conn.execute_batch("ALTER TABLE neighborhoods ADD COLUMN superseded_by TEXT;")?;
-        }
+    {
+        conn.execute_batch("ALTER TABLE neighborhoods ADD COLUMN superseded_by TEXT;")?;
+    }
 
     // v5: Backfill empty timestamps on episodes
     if stored_version < 5 {
