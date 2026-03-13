@@ -4,7 +4,7 @@ use std::{env, fs};
 use am_core::DAESystem;
 
 use crate::config::Config;
-use crate::error::{Result, StoreError};
+use crate::error::Result;
 use crate::store::Store;
 
 /// Default base directory for all am storage.
@@ -210,9 +210,7 @@ impl BrainStore {
     /// Open the brain store using the provided configuration.
     pub fn open(config: &Config) -> Result<Self> {
         let base = &config.data_dir;
-        fs::create_dir_all(base).map_err(|e| {
-            StoreError::InvalidData(format!("failed to create {}: {e}", base.display()))
-        })?;
+        fs::create_dir_all(base)?;
 
         let brain_path = base.join("brain.db");
 
