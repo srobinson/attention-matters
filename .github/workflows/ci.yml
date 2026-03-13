@@ -49,7 +49,7 @@ jobs:
         run: cargo install critcmp
 
       - name: Baseline benchmarks (base branch)
-        run: cargo bench -p am-core --bench drift -- --save-baseline baseline
+        run: cargo bench -p am-core --bench drift -- --save-baseline baseline || echo "No bench target on base branch, skipping baseline"
 
       - uses: actions/checkout@v4
         with:
