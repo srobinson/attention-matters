@@ -68,7 +68,7 @@ pub use feedback::{FeedbackResult, FeedbackSignal, apply_feedback};
 pub use neighborhood::{Neighborhood, NeighborhoodType};
 pub use occurrence::Occurrence;
 pub use phasor::DaemonPhasor;
-pub use quaternion::Quaternion;
+pub use quaternion::{Quaternion, WeightedSum};
 pub use query::{QueryEngine, QueryResult};
 pub use salient::{detect_neighborhood_type, extract_salient, mark_salient_typed};
 pub use serde_compat::{CURRENT_VERSION, export_json, import_json};

@@ -47,6 +47,38 @@ pub struct Quaternion {
     pub z: f64,
 }
 
+/// Accumulated weighted R⁴ sum produced by `Quaternion::weighted_sum`.
+/// Used for centroid computation and leave-one-out centroid drift.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WeightedSum {
+    pub w: f64,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub total_weight: f64,
+}
+
+impl WeightedSum {
+    /// Compute the leave-one-out centroid by subtracting one element's
+    /// contribution from the accumulated sum and projecting to S³.
+    ///
+    /// Returns `None` if the remaining weight is below `EPSILON` or the
+    /// resulting vector has near-zero norm.
+    #[must_use]
+    pub fn leave_one_out(&self, pos: Quaternion, weight: f64) -> Option<Quaternion> {
+        let rem_weight = self.total_weight - weight;
+        if rem_weight < EPSILON {
+            return None;
+        }
+        Quaternion::from_r4_projection(
+            (self.w - pos.w * weight) / rem_weight,
+            (self.x - pos.x * weight) / rem_weight,
+            (self.y - pos.y * weight) / rem_weight,
+            (self.z - pos.z * weight) / rem_weight,
+        )
+    }
+}
+
 impl PartialEq for Quaternion {
     fn eq(&self, other: &Self) -> bool {
         (self.w - other.w).abs() < EPSILON
@@ -227,47 +259,60 @@ impl Quaternion {
         Self::new(arr[0], arr[1], arr[2], arr[3])
     }
 
-    /// Compute the weighted centroid of quaternion positions in R^4,
-    /// projected back to S^3 via normalization.
+    /// Accumulate a weighted sum in R⁴. Returns the raw component sums
+    /// and total weight. This is the shared accumulation step used by
+    /// `weighted_centroid` and leave-one-out centroid drift in `query.rs`.
     ///
-    /// Returns `None` if the input is empty, lengths mismatch, total weight
-    /// is below EPSILON, or the resulting centroid has near-zero norm
-    /// (antipodal cancellation).
+    /// Returns `None` if the input is empty or lengths mismatch.
     #[must_use]
-    pub fn weighted_centroid(positions: &[Quaternion], weights: &[f64]) -> Option<Quaternion> {
+    pub fn weighted_sum(positions: &[Quaternion], weights: &[f64]) -> Option<WeightedSum> {
         if positions.is_empty() || positions.len() != weights.len() {
             return None;
         }
 
-        let mut sum_w = 0.0_f64;
-        let mut sum_x = 0.0_f64;
-        let mut sum_y = 0.0_f64;
-        let mut sum_z = 0.0_f64;
-        let mut total_weight = 0.0_f64;
+        let mut sum = WeightedSum::default();
 
         for (pos, w) in positions.iter().zip(weights.iter()) {
-            sum_w += pos.w * w;
-            sum_x += pos.x * w;
-            sum_y += pos.y * w;
-            sum_z += pos.z * w;
-            total_weight += w;
+            sum.w += pos.w * w;
+            sum.x += pos.x * w;
+            sum.y += pos.y * w;
+            sum.z += pos.z * w;
+            sum.total_weight += w;
         }
 
-        if total_weight < EPSILON {
-            return None;
-        }
+        Some(sum)
+    }
 
-        let cw = sum_w / total_weight;
-        let cx = sum_x / total_weight;
-        let cy = sum_y / total_weight;
-        let cz = sum_z / total_weight;
-
-        let norm = (cw * cw + cx * cx + cy * cy + cz * cz).sqrt();
+    /// Project an R⁴ vector to S³ via normalization.
+    /// Returns `None` if the vector norm is below `EPSILON` (antipodal
+    /// cancellation or zero-weight input).
+    #[must_use]
+    pub fn from_r4_projection(w: f64, x: f64, y: f64, z: f64) -> Option<Quaternion> {
+        let norm = (w * w + x * x + y * y + z * z).sqrt();
         if norm < EPSILON {
             return None;
         }
+        Some(Quaternion::new(w / norm, x / norm, y / norm, z / norm))
+    }
 
-        Some(Quaternion::new(cw / norm, cx / norm, cy / norm, cz / norm))
+    /// Compute the weighted centroid of quaternion positions in R⁴,
+    /// projected back to S³ via normalization.
+    ///
+    /// Returns `None` if the input is empty, lengths mismatch, total weight
+    /// is below `EPSILON`, or the resulting centroid has near-zero norm
+    /// (antipodal cancellation).
+    #[must_use]
+    pub fn weighted_centroid(positions: &[Quaternion], weights: &[f64]) -> Option<Quaternion> {
+        let sum = Self::weighted_sum(positions, weights)?;
+        if sum.total_weight < EPSILON {
+            return None;
+        }
+        Self::from_r4_projection(
+            sum.w / sum.total_weight,
+            sum.x / sum.total_weight,
+            sum.y / sum.total_weight,
+            sum.z / sum.total_weight,
+        )
     }
 }
 
