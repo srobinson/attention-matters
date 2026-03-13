@@ -69,9 +69,9 @@ pub(crate) fn cmd_sync(
 /// Each subagent's work becomes its own episode. Thinking blocks are captured
 /// alongside text. Tool interactions are excluded.
 fn cmd_sync_single(cli: &Cli, hook: sync::HookInput, dry_run: bool) -> Result<()> {
-    let bold = "\x1b[1m";
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
+    let crate::colors::Colors {
+        bold, dim, reset, ..
+    } = crate::colors::Colors::stdout();
 
     let session_prefix = safe_prefix(&hook.session_id, 8);
 
@@ -225,9 +225,9 @@ fn cmd_sync_discover(
 
     let sessions = sync::discover_sessions(&project_dir).context("failed to discover sessions")?;
 
-    let bold = "\x1b[1m";
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
+    let crate::colors::Colors {
+        bold, dim, reset, ..
+    } = crate::colors::Colors::stdout();
 
     if sessions.is_empty() {
         println!("No sessions found.");

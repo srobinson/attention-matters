@@ -1,3 +1,4 @@
+mod colors;
 mod server;
 mod sync;
 mod sync_dispatch;
@@ -744,10 +745,13 @@ fn inspect_overview(store: &BrainStore, limit: usize, json: bool) -> Result<()> 
         return Ok(());
     }
 
-    let bold = "\x1b[1m";
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
-    let cyan = "\x1b[36m";
+    let colors::Colors {
+        bold,
+        dim,
+        reset,
+        cyan,
+        ..
+    } = colors::Colors::stdout();
 
     println!("{bold}MEMORY OVERVIEW{reset}");
     println!("{dim}───────────────────────────────{reset}");
@@ -851,9 +855,9 @@ fn inspect_conscious(store: &BrainStore, limit: usize, json: bool) -> Result<()>
         return Ok(());
     }
 
-    let bold = "\x1b[1m";
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
+    let colors::Colors {
+        bold, dim, reset, ..
+    } = colors::Colors::stdout();
 
     println!(
         "{bold}CONSCIOUS MEMORIES{reset} {dim}({}){reset}",
@@ -920,10 +924,13 @@ fn inspect_episodes(store: &BrainStore, limit: usize, json: bool) -> Result<()> 
         return Ok(());
     }
 
-    let bold = "\x1b[1m";
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
-    let cyan = "\x1b[36m";
+    let colors::Colors {
+        bold,
+        dim,
+        reset,
+        cyan,
+        ..
+    } = colors::Colors::stdout();
 
     println!("{bold}EPISODES{reset} {dim}({}){reset}", sub_episodes.len());
     println!("{dim}───────────────────────────────{reset}");
@@ -991,11 +998,13 @@ fn inspect_neighborhoods(store: &BrainStore, limit: usize, json: bool) -> Result
         return Ok(());
     }
 
-    let bold = "\x1b[1m";
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
-    let cyan = "\x1b[36m";
-    let yellow = "\x1b[33m";
+    let colors::Colors {
+        bold,
+        dim,
+        reset,
+        cyan,
+        yellow,
+    } = colors::Colors::stdout();
 
     println!(
         "{bold}NEIGHBORHOODS{reset} {dim}({} total, by activation){reset}",
@@ -1046,9 +1055,9 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
         None,
     );
 
-    let bold = "\x1b[1m";
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
+    let colors::Colors {
+        bold, dim, reset, ..
+    } = colors::Colors::stdout();
 
     println!("{bold}RECALL{reset} for {dim}\"{text}\"{reset}");
     println!("{dim}───────────────────────────────{reset}");
@@ -1079,9 +1088,9 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
 fn cmd_gc(cli: &Cli, floor: u32, target_mb: Option<u64>, dry_run: bool) -> Result<()> {
     let store = open_store(cli)?;
     let db = store.store();
-    let bold = "\x1b[1m";
-    let dim = "\x1b[2m";
-    let reset = "\x1b[0m";
+    let colors::Colors {
+        bold, dim, reset, ..
+    } = colors::Colors::stdout();
 
     let stats = db
         .activation_distribution()
@@ -1148,8 +1157,7 @@ fn cmd_forget(
 ) -> Result<()> {
     let store = open_store(cli)?;
     let db = store.store();
-    let bold = "\x1b[1m";
-    let reset = "\x1b[0m";
+    let colors::Colors { bold, reset, .. } = colors::Colors::stdout();
 
     if let Some(id) = episode_id {
         let removed = db.forget_episode(id).context("failed to forget episode")?;
