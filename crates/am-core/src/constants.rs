@@ -19,6 +19,12 @@ pub const EPSILON: f64 = 1e-10;
 /// SLERP near-parallel threshold (OpenClaw standard)
 pub const SLERP_THRESHOLD: f64 = 0.9995;
 
+/// Maximum mobile occurrence count for O(n^2) pairwise drift.
+/// Above this threshold, drift switches to O(n) centroid-based algorithm.
+/// At n=200 pairwise drift performs ~20,000 SLERP pairs, which benchmarks
+/// under 1ms on typical hardware. Beyond this the quadratic cost dominates.
+pub const PAIRWISE_DRIFT_MAX_MOBILE: usize = 200;
+
 /// GC: minimum activation count to survive eviction.
 /// Occurrences at or below this are candidates for garbage collection.
 pub const ACTIVATION_FLOOR: u32 = 0;

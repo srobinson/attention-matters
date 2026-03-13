@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::constants::{EPSILON, THRESHOLD};
+use crate::constants::{EPSILON, PAIRWISE_DRIFT_MAX_MOBILE, THRESHOLD};
 use crate::phasor::DaemonPhasor;
 use crate::quaternion::Quaternion;
 use crate::system::{ActivationResult, DAESystem, OccurrenceRef};
@@ -147,7 +147,7 @@ impl QueryEngine {
             return;
         }
 
-        if mobile.len() >= 200 {
+        if mobile.len() >= PAIRWISE_DRIFT_MAX_MOBILE {
             Self::centroid_drift(system, &mobile, &container_activations);
         } else {
             Self::pairwise_drift(system, &mobile, &container_activations);
