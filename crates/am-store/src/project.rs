@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use am_core::DAESystem;
+use am_core::{DAESystem, Episode};
 
 use crate::config::Config;
 use crate::error::Result;
@@ -166,6 +166,8 @@ fn migrate_old_layout(base: &Path, brain_path: &Path) {
         tracing::info!("merged {} conscious neighborhoods from global.db", merged);
     }
 
+    // Intentional save_system: migration merges data from the legacy
+    // per-project layout into a single brain.db. Full rewrite is correct.
     brain_system.mark_dirty();
     if let Err(e) = brain_store.save_system(&brain_system) {
         tracing::warn!("failed to save brain.db during migration: {e}");
@@ -245,12 +247,54 @@ impl BrainStore {
         self.store.load_system()
     }
 
-    /// Save a full DAESystem to brain.db.
+    /// Save a full DAESystem to brain.db (DELETE + reinsert all data).
+    ///
+    /// Reserved for operations that replace the entire system state:
+    /// import, CLI batch ingest, and data migration. MCP hot-path handlers
+    /// should use targeted writes (`save_episode`, `save_neighborhood`,
+    /// `save_occurrence_positions`, `batch_increment_activation`).
     pub fn save_system(&self, system: &DAESystem) -> Result<()> {
         self.store.save_system(system)
     }
 
+    /// Persist a single episode without rewriting the entire system.
+    pub fn save_episode(&self, episode: &Episode) -> Result<()> {
+        self.store.save_episode(episode)
+    }
+
+    /// Persist a single neighborhood under an episode, creating the episode
+    /// row if needed.
+    pub fn save_neighborhood(
+        &self,
+        episode: &am_core::Episode,
+        neighborhood: &am_core::Neighborhood,
+    ) -> Result<()> {
+        self.store.save_neighborhood(episode, neighborhood)
+    }
+
+    /// Increment activation counts for a batch of occurrences.
+    pub fn batch_increment_activation(&self, ids: &[uuid::Uuid]) -> Result<()> {
+        self.store.batch_increment_activation(ids)
+    }
+
+    /// Set activation counts to absolute values for a batch of occurrences.
+    pub fn batch_set_activation_counts(&self, batch: &[(uuid::Uuid, u32)]) -> Result<()> {
+        self.store.batch_set_activation_counts(batch)
+    }
+
+    /// Persist position and phasor updates for a batch of occurrences.
+    pub fn save_occurrence_positions(
+        &self,
+        batch: &[(uuid::Uuid, am_core::Quaternion, am_core::DaemonPhasor)],
+    ) -> Result<()> {
+        self.store.save_occurrence_positions(batch)
+    }
+
     /// Mark text as salient (conscious). Returns the neighborhood ID.
+    ///
+    /// Uses `save_system` because this convenience method is not on the MCP
+    /// hot path (the server handler uses `save_neighborhood` directly).
+    /// Only called from CLI code and tests.
     pub fn mark_salient(
         &self,
         system: &mut DAESystem,
@@ -258,6 +302,8 @@ impl BrainStore {
         rng: &mut impl rand::Rng,
     ) -> Result<uuid::Uuid> {
         let nbhd_id = system.add_to_conscious(text, rng);
+        // Intentional save_system: convenience method for CLI/test use.
+        // The MCP handler (am_salient) uses targeted save_neighborhood.
         self.store.save_system(system)?;
         Ok(nbhd_id)
     }

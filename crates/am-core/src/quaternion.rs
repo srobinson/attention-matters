@@ -133,8 +133,29 @@ impl Quaternion {
     /// because they represent the same rotation. This differs from raw S³ manifold
     /// distance, where q and -q are π apart.
     ///
+    /// # Antipodal semantics
+    ///
+    /// The `abs(dot)` collapses antipodal pairs: `q.angular_distance(-q) == 0`.
+    /// For DAE neighborhood radius checks (where distances are well below π),
+    /// this collapse has no practical effect. It matters only at distances near
+    /// π, which never arise in normal operation.
+    ///
     /// The SLERP implementation handles antipodal pairs differently: it flips the
     /// sign to take the shorter arc rather than collapsing to zero.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use am_core::Quaternion;
+    ///
+    /// let q1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+    /// let q2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
+    /// let d = q1.angular_distance(q2);
+    /// assert!(d > 0.0 && d <= std::f64::consts::PI);
+    ///
+    /// // Identity distance is zero
+    /// assert!(q1.angular_distance(q1) < 1e-10);
+    /// ```
     #[must_use]
     pub fn angular_distance(self, other: Self) -> f64 {
         let d = self.dot(other).abs().clamp(0.0, 1.0);
@@ -142,6 +163,21 @@ impl Quaternion {
     }
 
     /// Spherical linear interpolation with antipodal flip and NLERP fallback.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use am_core::Quaternion;
+    ///
+    /// let q1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+    /// let q2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
+    /// let mid = q1.slerp(q2, 0.5);
+    ///
+    /// // Midpoint is equidistant from both endpoints
+    /// let d1 = q1.angular_distance(mid);
+    /// let d2 = q2.angular_distance(mid);
+    /// assert!((d1 - d2).abs() < 1e-10);
+    /// ```
     #[must_use]
     pub fn slerp(self, other: Self, t: f64) -> Self {
         if t <= 0.0 {

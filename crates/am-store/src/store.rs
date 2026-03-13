@@ -157,6 +157,38 @@ impl Store {
         Ok(())
     }
 
+    /// Persist a single episode (and its neighborhoods/occurrences) without
+    /// rewriting the entire system. Use after `DAESystem::add_episode` to
+    /// avoid the full DELETE/rewrite cycle of `save_system`.
+    pub fn save_episode(&self, episode: &Episode) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.save_episode_on(&tx, episode)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Persist a single neighborhood under an episode without rewriting the
+    /// entire system. Creates the episode row if it does not already exist
+    /// (using INSERT OR IGNORE), then inserts the neighborhood and its
+    /// occurrences. Use after adding a neighborhood to the conscious episode
+    /// via `add_to_conscious` or `extract_salient`.
+    pub fn save_neighborhood(&self, episode: &Episode, neighborhood: &Neighborhood) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        // Ensure the parent episode row exists (no-op if already present)
+        tx.execute(
+            "INSERT OR IGNORE INTO episodes (id, name, is_conscious, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                episode.id.to_string(),
+                episode.name,
+                episode.is_conscious as i32,
+                episode.timestamp,
+            ],
+        )?;
+        self.save_neighborhood_on(&tx, neighborhood, episode.id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     fn save_episode_on(&self, conn: &Connection, episode: &Episode) -> Result<()> {
         conn.execute(
             "INSERT INTO episodes (id, name, is_conscious, timestamp) VALUES (?1, ?2, ?3, ?4)",
@@ -367,6 +399,49 @@ impl Store {
         Ok(())
     }
 
+    /// Increment `activation_count` for multiple occurrences in a single transaction.
+    ///
+    /// Silently skips IDs that do not exist in the store (common when the
+    /// system has occurrences that were never persisted, e.g. from conscious
+    /// memory added after the last full save).
+    pub fn batch_increment_activation(&self, ids: &[Uuid]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "UPDATE occurrences SET activation_count = activation_count + 1 WHERE id = ?1",
+            )?;
+            for id in ids {
+                stmt.execute([id.to_string()])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Set activation counts to absolute values for a batch of occurrences.
+    ///
+    /// Used by feedback demote where activation is decremented rather than
+    /// incremented. Silently skips unknown IDs (common for unpersisted
+    /// conscious occurrences).
+    pub fn batch_set_activation_counts(&self, batch: &[(Uuid, u32)]) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt =
+                tx.prepare("UPDATE occurrences SET activation_count = ?1 WHERE id = ?2")?;
+            for (id, count) in batch {
+                stmt.execute(rusqlite::params![count, id.to_string()])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Mark a neighborhood as superseded by another (targeted update, no full save).
     pub fn mark_superseded(&self, old_id: Uuid, new_id: Uuid) -> Result<()> {
         let rows = self.conn.execute(
@@ -432,14 +507,28 @@ impl Store {
         drop(stmt);
 
         if !entries.is_empty() {
-            // Safe to delete all rows: the transaction guarantees no new entries
-            // appear between the SELECT and DELETE, and we read every row above.
-            tx.execute("DELETE FROM conversation_buffer", [])?;
+            // Delete only the rows we read, identified by rowid. If new rows
+            // arrive from another connection between SELECT and DELETE, they
+            // survive for the next drain call (at-least-once semantics).
+            let placeholders: String = entries
+                .iter()
+                .enumerate()
+                .map(|(i, _)| format!("?{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(",");
+            let sql = format!("DELETE FROM conversation_buffer WHERE id IN ({placeholders})");
+            let id_params: Vec<&dyn rusqlite::types::ToSql> = entries
+                .iter()
+                .map(|(id, _, _)| id as &dyn rusqlite::types::ToSql)
+                .collect();
+            tx.execute(&sql, id_params.as_slice())?;
         }
+
+        let results: Vec<(String, String)> = entries.into_iter().map(|(_, u, a)| (u, a)).collect();
 
         tx.commit()?;
 
-        Ok(entries.into_iter().map(|(_, u, a)| (u, a)).collect())
+        Ok(results)
     }
 
     pub fn buffer_count(&self) -> Result<usize> {
@@ -1192,6 +1281,78 @@ mod tests {
     }
 
     #[test]
+    fn test_batch_increment_activation() {
+        let store = Store::open_in_memory().unwrap();
+        let system = make_system();
+        store.save_system(&system).unwrap();
+
+        let occ0 = system.episodes[0].neighborhoods[0].occurrences[0].id;
+        let occ1 = system.episodes[0].neighborhoods[0].occurrences[1].id;
+
+        // Batch increment both occurrences twice
+        store.batch_increment_activation(&[occ0, occ1]).unwrap();
+        store.batch_increment_activation(&[occ0, occ1]).unwrap();
+
+        let loaded = store.load_system().unwrap();
+        let c0 = loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count;
+        let c1 = loaded.episodes[0].neighborhoods[0].occurrences[1].activation_count;
+        assert_eq!(c0, 2, "first occurrence should have activation_count 2");
+        assert_eq!(c1, 2, "second occurrence should have activation_count 2");
+    }
+
+    #[test]
+    fn test_batch_increment_activation_empty() {
+        let store = Store::open_in_memory().unwrap();
+        // Empty batch should be a no-op
+        store.batch_increment_activation(&[]).unwrap();
+    }
+
+    #[test]
+    fn test_batch_increment_activation_skips_unknown() {
+        let store = Store::open_in_memory().unwrap();
+        let system = make_system();
+        store.save_system(&system).unwrap();
+
+        let occ0 = system.episodes[0].neighborhoods[0].occurrences[0].id;
+        let unknown = Uuid::new_v4();
+
+        // Mixed batch: one real, one unknown. Should succeed without error.
+        store.batch_increment_activation(&[occ0, unknown]).unwrap();
+
+        let loaded = store.load_system().unwrap();
+        let c0 = loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count;
+        assert_eq!(c0, 1, "known occurrence should be incremented");
+    }
+
+    #[test]
+    fn test_batch_set_activation_counts() {
+        let store = Store::open_in_memory().unwrap();
+        let system = make_system();
+        store.save_system(&system).unwrap();
+
+        let occ0 = system.episodes[0].neighborhoods[0].occurrences[0].id;
+        let occ1 = system.episodes[0].neighborhoods[0].occurrences[1].id;
+
+        // Set absolute activation counts
+        store
+            .batch_set_activation_counts(&[(occ0, 42), (occ1, 7)])
+            .unwrap();
+
+        let loaded = store.load_system().unwrap();
+        let c0 = loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count;
+        let c1 = loaded.episodes[0].neighborhoods[0].occurrences[1].activation_count;
+        assert_eq!(c0, 42, "first occurrence should have activation_count 42");
+        assert_eq!(c1, 7, "second occurrence should have activation_count 7");
+    }
+
+    #[test]
+    fn test_batch_set_activation_counts_empty() {
+        let store = Store::open_in_memory().unwrap();
+        // Empty batch should be a no-op
+        store.batch_set_activation_counts(&[]).unwrap();
+    }
+
+    #[test]
     fn test_increment_activation_nonexistent() {
         let store = Store::open_in_memory().unwrap();
         let result = store.increment_activation(Uuid::new_v4());
@@ -1295,6 +1456,96 @@ mod tests {
         assert_eq!(
             loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count,
             42
+        );
+    }
+
+    /// Regression guard for the single-JOIN load_system implementation.
+    /// Builds a system with 500+ occurrences across multiple episodes and
+    /// neighborhoods, round-trips through SQLite, and asserts structural
+    /// and numerical equivalence.
+    #[test]
+    fn test_load_system_roundtrip_500_occurrences() {
+        let store = Store::open_in_memory().unwrap();
+        let mut rng = rng();
+        let mut sys = DAESystem::new("roundtrip-agent");
+
+        // 10 episodes x 5 neighborhoods x 12 tokens = 600 occurrences
+        let words: Vec<String> = (0..12).map(|i| format!("word{i}")).collect();
+        for ep_idx in 0..10 {
+            let mut ep = Episode::new(&format!("ep-{ep_idx}"));
+            for _ in 0..5 {
+                let n = Neighborhood::from_tokens(&words, None, "source text", &mut rng);
+                ep.add_neighborhood(n);
+            }
+            sys.add_episode(ep);
+        }
+        // Add conscious content
+        sys.add_to_conscious("conscious roundtrip content", &mut rng);
+
+        // Set varied activation counts to test numeric fidelity
+        for (i, ep) in sys.episodes.iter_mut().enumerate() {
+            for nbhd in &mut ep.neighborhoods {
+                for (j, occ) in nbhd.occurrences.iter_mut().enumerate() {
+                    occ.activation_count = (i * 100 + j) as u32;
+                }
+            }
+        }
+
+        let total_before: usize = sys
+            .episodes
+            .iter()
+            .chain(std::iter::once(&sys.conscious_episode))
+            .map(|e| {
+                e.neighborhoods
+                    .iter()
+                    .map(|n| n.occurrences.len())
+                    .sum::<usize>()
+            })
+            .sum();
+        assert!(
+            total_before >= 500,
+            "precondition: need 500+ occurrences, got {total_before}"
+        );
+
+        store.save_system(&sys).unwrap();
+        let loaded = store.load_system().unwrap();
+
+        // Structural equivalence
+        assert_eq!(loaded.agent_name, "roundtrip-agent");
+        assert_eq!(loaded.episodes.len(), sys.episodes.len());
+        assert!(loaded.conscious_episode.is_conscious);
+
+        let total_after: usize = loaded
+            .episodes
+            .iter()
+            .chain(std::iter::once(&loaded.conscious_episode))
+            .map(|e| {
+                e.neighborhoods
+                    .iter()
+                    .map(|n| n.occurrences.len())
+                    .sum::<usize>()
+            })
+            .sum();
+        assert_eq!(total_before, total_after);
+
+        // Per-episode neighborhood count
+        for (orig, loaded_ep) in sys.episodes.iter().zip(loaded.episodes.iter()) {
+            assert_eq!(orig.neighborhoods.len(), loaded_ep.neighborhoods.len());
+            assert_eq!(orig.name, loaded_ep.name);
+        }
+
+        // Spot-check activation counts survive roundtrip
+        assert_eq!(
+            loaded.episodes[3].neighborhoods[2].occurrences[1].activation_count,
+            (3 * 100 + 1) as u32,
+        );
+
+        // Quaternion precision
+        let orig_pos = sys.episodes[0].neighborhoods[0].occurrences[0].position;
+        let load_pos = loaded.episodes[0].neighborhoods[0].occurrences[0].position;
+        assert!(
+            orig_pos.angular_distance(load_pos) < 1e-10,
+            "quaternion drift on roundtrip"
         );
     }
 

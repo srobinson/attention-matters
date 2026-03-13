@@ -6,11 +6,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use am_core::{
-    BatchQueryEngine, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine, RecallCategory,
-    apply_feedback, compose_context, compose_context_budgeted, compose_index, compute_surface,
-    export_json, extract_salient, import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
+    BatchQueryEngine, BatchQueryRequest, BudgetConfig, DAESystem, DaemonPhasor, FeedbackSignal,
+    Quaternion, QueryEngine, QueryManifest, RecallCategory, apply_feedback, compose_context,
+    compose_context_budgeted, compose_index, compute_surface, export_json, extract_salient,
+    import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
 };
-use am_store::BrainStore;
+use am_store::{BrainStore, StoreError};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -36,6 +37,23 @@ fn check_input_size(value: &str, field: &str) -> Result<(), McpError> {
         ));
     }
     Ok(())
+}
+
+/// Convert a `StoreError` to an `McpError`, preserving the variant name as a
+/// machine-readable prefix so callers can distinguish error classes without
+/// parsing free-form text.
+fn store_err_to_mcp(e: StoreError) -> McpError {
+    let (category, detail) = match &e {
+        StoreError::Sqlite(inner) => ("sqlite", inner.to_string()),
+        StoreError::Io(inner) => ("io", inner.to_string()),
+        StoreError::InvalidData(msg) => ("invalid_data", msg.clone()),
+    };
+    McpError::internal_error(format!("[{category}] {detail}"), None)
+}
+
+/// Convert a serialization error to an `McpError` with a `[serde]` prefix.
+fn serde_err_to_mcp(e: impl std::fmt::Display) -> McpError {
+    McpError::internal_error(format!("[serde] {e}"), None)
 }
 
 #[derive(Clone)]
@@ -80,6 +98,65 @@ struct ServerState {
     dedup_window: HashMap<u64, Instant>,
 }
 
+/// Collect current `(Uuid, Quaternion, DaemonPhasor)` tuples for a set of occurrence IDs.
+///
+/// Scans all episodes (including conscious) to find occurrences matching the
+/// given UUIDs. Used to prepare data for `save_occurrence_positions` after
+/// drift or Kuramoto coupling has modified positions/phasors in memory.
+fn collect_occurrence_positions(
+    system: &DAESystem,
+    ids: &[Uuid],
+) -> Vec<(Uuid, Quaternion, DaemonPhasor)> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let target: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+    let mut result = Vec::with_capacity(ids.len());
+
+    let all_episodes = system
+        .episodes
+        .iter()
+        .chain(std::iter::once(&system.conscious_episode));
+
+    for episode in all_episodes {
+        for nbhd in &episode.neighborhoods {
+            for occ in &nbhd.occurrences {
+                if target.contains(&occ.id) {
+                    result.push((occ.id, occ.position, occ.phasor));
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Persist query manifest mutations to the store: drifted positions and
+/// activated occurrence counts.
+fn persist_manifest(
+    store: &BrainStore,
+    system: &DAESystem,
+    manifest: &QueryManifest,
+    context: &str,
+) {
+    if !manifest.drifted.is_empty() {
+        let positions = collect_occurrence_positions(system, &manifest.drifted);
+        if let Err(e) = store.save_occurrence_positions(&positions) {
+            tracing::error!("failed to persist drifted positions after {context}: {e}");
+        }
+    }
+    if !manifest.activated.is_empty()
+        && let Err(e) = store.batch_increment_activation(&manifest.activated)
+    {
+        tracing::error!("failed to persist activations after {context}: {e}");
+    }
+    if !manifest.demoted_activations.is_empty()
+        && let Err(e) = store.batch_set_activation_counts(&manifest.demoted_activations)
+    {
+        tracing::error!("failed to persist demoted activations after {context}: {e}");
+    }
+}
+
 /// Flush orphaned buffer entries from the store into the system as a conversation episode.
 ///
 /// Called at the start of query paths to ensure buffered exchanges from previous
@@ -96,17 +173,15 @@ fn flush_orphaned_buffer(store: &BrainStore, system: &mut DAESystem, rng: &mut S
             .join("\n\n");
         let episode = ingest_text(&combined, Some("conversation"), rng);
         system.add_episode(episode);
-        if let Err(e) = store.save_system(system) {
+        if let Err(e) = store.save_episode(system.episodes.last().unwrap()) {
             tracing::error!("failed to persist flushed buffer episode: {e}");
         }
     }
 }
 
 impl AmServer {
-    pub fn new(store: BrainStore) -> std::result::Result<Self, String> {
-        let system = store
-            .load_system()
-            .map_err(|e| format!("failed to load system: {e}"))?;
+    pub fn new(store: BrainStore) -> std::result::Result<Self, StoreError> {
+        let system = store.load_system()?;
         let rng = SmallRng::from_os_rng();
         Ok(Self {
             state: Arc::new(Mutex::new(ServerState {
@@ -393,6 +468,8 @@ impl AmServer {
             .collect();
         result["index"] = serde_json::json!(index_entries);
 
+        persist_manifest(store, system, &query_result.manifest, "query");
+
         // Increment recall count for returned neighborhood IDs (diminishing returns)
         for id in new_ids {
             *state.session_recalled.entry(id).or_insert(0) += 1;
@@ -430,9 +507,7 @@ impl AmServer {
             Some(&session_recalled_snapshot),
         );
 
-        if let Err(e) = store.save_system(system) {
-            tracing::error!("failed to persist after query_index: {e}");
-        }
+        persist_manifest(store, system, &query_result.manifest, "query_index");
 
         let entries_json: Vec<serde_json::Value> = index
             .entries
@@ -520,24 +595,27 @@ impl AmServer {
         let mut state = self.state.lock().await;
         let ServerState { system, store, .. } = &mut *state;
 
-        let activation = QueryEngine::activate(system, &req.text);
+        let (activation, activated_ids) = QueryEngine::activate(system, &req.text);
         let all_refs: Vec<_> = activation
             .subconscious
             .iter()
             .chain(activation.conscious.iter())
             .copied()
             .collect();
-        QueryEngine::drift_and_consolidate(system, &all_refs);
+        let mut drifted = QueryEngine::drift_and_consolidate(system, &all_refs);
         let (_, word_groups) = QueryEngine::compute_interference(
             system,
             &activation.subconscious,
             &activation.conscious,
         );
-        QueryEngine::apply_kuramoto_coupling(system, &word_groups);
+        drifted.extend(QueryEngine::apply_kuramoto_coupling(system, &word_groups));
 
-        if let Err(e) = store.save_system(system) {
-            tracing::error!("failed to persist after activate_response: {e}");
-        }
+        let manifest = QueryManifest {
+            drifted,
+            activated: activated_ids,
+            demoted_activations: Vec::new(),
+        };
+        persist_manifest(store, system, &manifest, "activate_response");
 
         let result = serde_json::json!({
             "activated": all_refs.len(),
@@ -562,21 +640,25 @@ impl AmServer {
             system, store, rng, ..
         } = &mut *state;
 
+        // Track how many neighborhoods exist before adding new ones
+        let nbhd_before = system.conscious_episode.neighborhoods.len();
+
         let stored = extract_salient(system, &req.text, rng);
         let new_id = if stored == 0 {
             // No <salient> tags found - mark the whole text as salient
             // with automatic type detection from DECISION:/PREFERENCE: prefix
             let id = mark_salient_typed(system, &req.text, rng);
-            if let Err(e) = store.save_system(system) {
-                tracing::error!("failed to persist after salient: {e}");
-            }
             Some(id)
         } else {
-            if let Err(e) = store.save_system(system) {
-                tracing::error!("failed to persist after salient: {e}");
-            }
             None
         };
+
+        // Persist only the newly added neighborhoods
+        for nbhd in &system.conscious_episode.neighborhoods[nbhd_before..] {
+            if let Err(e) = store.save_neighborhood(&system.conscious_episode, nbhd) {
+                tracing::error!("failed to persist conscious neighborhood: {e}");
+            }
+        }
         let stored = if stored == 0 { 1u32 } else { stored };
 
         // Process supersedes: mark old neighborhoods as superseded by the new one
@@ -659,15 +741,12 @@ impl AmServer {
         let buffer_size = store
             .store()
             .append_buffer(&req.user, &req.assistant)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            .map_err(store_err_to_mcp)?;
 
         let mut episode_created: Option<String> = None;
 
         if buffer_size >= BUFFER_THRESHOLD {
-            let exchanges = store
-                .store()
-                .drain_buffer()
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            let exchanges = store.store().drain_buffer().map_err(store_err_to_mcp)?;
 
             let combined: String = exchanges
                 .iter()
@@ -679,7 +758,7 @@ impl AmServer {
             let name = episode.name.clone();
             system.add_episode(episode);
 
-            if let Err(e) = store.save_system(system) {
+            if let Err(e) = store.save_episode(system.episodes.last().unwrap()) {
                 tracing::error!("failed to persist after buffer episode: {e}");
             }
 
@@ -720,7 +799,7 @@ impl AmServer {
 
         system.add_episode(episode);
 
-        if let Err(e) = store.save_system(system) {
+        if let Err(e) = store.save_episode(system.episodes.last().unwrap()) {
             tracing::error!("failed to persist after ingest: {e}");
         }
 
@@ -761,8 +840,7 @@ impl AmServer {
     #[tool(description = "Export the full DAE system state as v0.7.2 compatible JSON.")]
     async fn am_export(&self) -> Result<CallToolResult, McpError> {
         let state = self.state.lock().await;
-        let json = export_json(&state.system)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let json = export_json(&state.system).map_err(serde_err_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
@@ -775,14 +853,14 @@ impl AmServer {
         Parameters(req): Parameters<ImportRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
-        let json_str = serde_json::to_string(&req.state)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let json_str = serde_json::to_string(&req.state).map_err(serde_err_to_mcp)?;
 
-        let imported = import_json(&json_str)
-            .map_err(|e| McpError::internal_error(format!("invalid state JSON: {e}"), None))?;
+        let imported = import_json(&json_str).map_err(serde_err_to_mcp)?;
 
         state.system = imported;
 
+        // Intentional save_system: import replaces the entire DAE state,
+        // so a full rewrite is the only correct persistence strategy.
         if let Err(e) = state.store.save_system(&state.system) {
             tracing::error!("failed to persist after import: {e}");
         }
@@ -834,9 +912,7 @@ impl AmServer {
 
         let feedback = apply_feedback(system, &req.query, &neighborhood_ids, signal);
 
-        if let Err(e) = store.save_system(system) {
-            tracing::error!("failed to persist after feedback: {e}");
-        }
+        persist_manifest(store, system, &feedback.manifest, "feedback");
 
         let result = serde_json::json!({
             "boosted": feedback.boosted,
@@ -876,22 +952,21 @@ impl AmServer {
 
         flush_orphaned_buffer(store, system, rng);
 
-        let requests: Vec<am_core::batch::BatchQueryRequest> = req
+        let requests: Vec<BatchQueryRequest> = req
             .queries
             .iter()
-            .map(|q| am_core::batch::BatchQueryRequest {
+            .map(|q| BatchQueryRequest {
                 query: q.query.clone(),
                 max_tokens: q.max_tokens,
             })
             .collect();
 
-        let results = BatchQueryEngine::batch_query(system, &requests);
+        let batch_output = BatchQueryEngine::batch_query(system, &requests);
 
-        if let Err(e) = store.save_system(system) {
-            tracing::error!("failed to persist after batch query: {e}");
-        }
+        persist_manifest(store, system, &batch_output.manifest, "batch_query");
 
-        let results_json: Vec<serde_json::Value> = results
+        let results_json: Vec<serde_json::Value> = batch_output
+            .results
             .iter()
             .map(|r| {
                 let mut con_ids = Vec::new();

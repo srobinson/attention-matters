@@ -35,14 +35,10 @@ impl DaemonPhasor {
     /// Circular interpolation along the shortest arc.
     #[must_use]
     pub fn slerp(self, other: Self, t: f64) -> Self {
-        let mut diff = other.theta - self.theta;
         // Wrap to [-π, π] for shortest path
-        while diff > std::f64::consts::PI {
-            diff -= std::f64::consts::TAU;
-        }
-        while diff < -std::f64::consts::PI {
-            diff += std::f64::consts::TAU;
-        }
+        let diff = ((other.theta - self.theta) + std::f64::consts::PI)
+            .rem_euclid(std::f64::consts::TAU)
+            - std::f64::consts::PI;
         Self::new(self.theta + t * diff)
     }
 }

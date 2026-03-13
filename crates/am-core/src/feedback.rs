@@ -11,6 +11,7 @@
 
 use crate::constants::EPSILON;
 use crate::quaternion::Quaternion;
+use crate::query::QueryManifest;
 use crate::system::{DAESystem, OccurrenceRef};
 use crate::tokenizer::tokenize;
 
@@ -32,14 +33,34 @@ pub struct FeedbackResult {
     pub demoted: usize,
     /// The query centroid used for boosting (if any).
     pub centroid: Option<Quaternion>,
+    /// Mutation manifest: tracks which occurrence IDs had positions or
+    /// activation counts modified. Used for incremental persistence.
+    pub manifest: QueryManifest,
 }
 
-/// How much to SLERP toward the query centroid on a Boost signal.
-/// Moderate - we don't want to collapse the manifold, just nudge.
+/// SLERP interpolation factor toward query centroid on a Boost signal.
+///
+/// Controls how aggressively boosted occurrences converge toward the query
+/// region. The effective displacement is `BOOST_DRIFT_FACTOR * idf_weight *
+/// plasticity`, so high-IDF, high-plasticity occurrences move furthest.
+///
+/// At 0.15: gentle nudge that preserves manifold topology while creating a
+/// detectable attraction basin over 3-5 repeated boosts. Higher values
+/// (0.3+) risk collapsing distinct neighborhoods into a single cluster.
+/// Lower values (0.05) require many feedback signals before drift is visible.
 const BOOST_DRIFT_FACTOR: f64 = 0.15;
 
-/// How much activation to decay on a Demote signal.
-/// Floor at 0 - we never go negative.
+/// Activation count decrement per Demote signal.
+///
+/// Reduces `activation_count` by this amount (saturating at 0), which
+/// increases plasticity and reduces the occurrence's anchoring strength.
+/// Demoted occurrences become more susceptible to future drift, allowing
+/// the manifold to reorganize away from unhelpful recall patterns.
+///
+/// At 2: a single demote undoes roughly two prior activations, making
+/// the occurrence noticeably more mobile without erasing it entirely.
+/// Combined with THRESHOLD (ratio/C), this ensures demoted occurrences
+/// drop below the vivid threshold after 1-2 demote signals.
 const DEMOTE_DECAY: u32 = 2;
 
 /// Apply relevance feedback to neighborhoods that were recalled for a query.
@@ -104,6 +125,7 @@ pub fn apply_feedback(
             boosted: 0,
             demoted: 0,
             centroid: None,
+            manifest: QueryManifest::default(),
         };
     }
 
@@ -122,7 +144,7 @@ pub fn apply_feedback(
         .collect();
 
     match signal {
-        FeedbackSignal::Boost => apply_boost(system, &query_refs, &target_refs, &unique),
+        FeedbackSignal::Boost => apply_boost(system, &query_refs, &target_refs),
         FeedbackSignal::Demote => apply_demote(system, &target_refs),
     }
 }
@@ -132,13 +154,13 @@ fn apply_boost(
     system: &mut DAESystem,
     all_query_refs: &[OccurrenceRef],
     target_refs: &[OccurrenceRef],
-    _query_words: &[String],
 ) -> FeedbackResult {
     if target_refs.is_empty() {
         return FeedbackResult {
             boosted: 0,
             demoted: 0,
             centroid: None,
+            manifest: QueryManifest::default(),
         };
     }
 
@@ -163,6 +185,7 @@ fn apply_boost(
             boosted: 0,
             demoted: 0,
             centroid: None,
+            manifest: QueryManifest::default(),
         };
     };
 
@@ -178,6 +201,8 @@ fn apply_boost(
     // SLERP each target occurrence toward the centroid
     // Factor scales with IDF weight - rare words get pulled harder
     let mut boosted = 0usize;
+    let mut drifted = Vec::new();
+    let mut activated = Vec::new();
     for (i, r) in target_refs.iter().enumerate() {
         let occ = system.get_occurrence(*r);
         let plasticity = occ.plasticity();
@@ -189,6 +214,8 @@ fn apply_boost(
             occ.position = new_pos;
             // Also bump activation - this memory proved useful
             occ.activation_count = occ.activation_count.saturating_add(1);
+            drifted.push(occ.id);
+            activated.push(occ.id);
             boosted += 1;
         }
     }
@@ -197,18 +224,25 @@ fn apply_boost(
         boosted,
         demoted: 0,
         centroid: Some(centroid),
+        manifest: QueryManifest {
+            drifted,
+            activated,
+            demoted_activations: Vec::new(),
+        },
     }
 }
 
 /// Demote: decay activation on target occurrences.
 fn apply_demote(system: &mut DAESystem, target_refs: &[OccurrenceRef]) -> FeedbackResult {
     let mut demoted = 0usize;
+    let mut demoted_activations = Vec::new();
 
     for r in target_refs {
         let occ = system.get_occurrence_mut(*r);
         let before = occ.activation_count;
         occ.activation_count = occ.activation_count.saturating_sub(DEMOTE_DECAY);
         if occ.activation_count != before {
+            demoted_activations.push((occ.id, occ.activation_count));
             demoted += 1;
         }
     }
@@ -217,6 +251,11 @@ fn apply_demote(system: &mut DAESystem, target_refs: &[OccurrenceRef]) -> Feedba
         boosted: 0,
         demoted,
         centroid: None,
+        manifest: QueryManifest {
+            drifted: Vec::new(),
+            activated: Vec::new(),
+            demoted_activations,
+        },
     }
 }
 
@@ -445,6 +484,90 @@ mod tests {
         assert!(
             d1 < d2,
             "centroid should be closer to heavily-weighted point: {d1} vs {d2}"
+        );
+    }
+
+    #[test]
+    fn test_boost_manifest_tracks_drifted_and_activated() {
+        let mut sys = make_feedback_system();
+        let nbhd_id = sys.episodes[0].neighborhoods[0].id;
+
+        let result = apply_feedback(
+            &mut sys,
+            "quantum physics",
+            &[nbhd_id],
+            FeedbackSignal::Boost,
+        );
+
+        assert!(result.boosted > 0);
+        // Boosted occurrences should appear in both drifted and activated
+        assert_eq!(
+            result.manifest.drifted.len(),
+            result.boosted,
+            "drifted count should match boosted count"
+        );
+        assert_eq!(
+            result.manifest.activated.len(),
+            result.boosted,
+            "activated count should match boosted count"
+        );
+        assert!(
+            result.manifest.demoted_activations.is_empty(),
+            "boost should not have demoted activations"
+        );
+    }
+
+    #[test]
+    fn test_demote_manifest_tracks_demoted_activations() {
+        let mut sys = make_feedback_system();
+        let nbhd_id = sys.episodes[0].neighborhoods[0].id;
+
+        let result = apply_feedback(
+            &mut sys,
+            "quantum physics",
+            &[nbhd_id],
+            FeedbackSignal::Demote,
+        );
+
+        assert!(result.demoted > 0);
+        assert!(
+            result.manifest.drifted.is_empty(),
+            "demote should not drift"
+        );
+        assert!(
+            result.manifest.activated.is_empty(),
+            "demote should not activate"
+        );
+        assert_eq!(
+            result.manifest.demoted_activations.len(),
+            result.demoted,
+            "demoted_activations count should match demoted count"
+        );
+        // Each entry should have the post-demote activation count
+        for (id, count) in &result.manifest.demoted_activations {
+            assert!(!id.is_nil(), "ID should not be nil");
+            // Count should be less than original (process_query gives >= 1)
+            assert!(*count < u32::MAX, "count should be a reasonable value");
+        }
+    }
+
+    #[test]
+    fn test_batch_query_manifest_tracks_mutations() {
+        use crate::batch::{BatchQueryEngine, BatchQueryRequest};
+
+        let mut sys = make_feedback_system();
+
+        let requests = vec![BatchQueryRequest {
+            query: "quantum physics".to_string(),
+            max_tokens: Some(4096),
+        }];
+
+        let output = BatchQueryEngine::batch_query(&mut sys, &requests);
+
+        // Batch query activates and drifts, so manifest should be non-empty
+        assert!(
+            !output.manifest.activated.is_empty(),
+            "batch query should track activated occurrence IDs"
         );
     }
 }

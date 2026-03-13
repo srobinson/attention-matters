@@ -13,7 +13,7 @@ use crate::neighborhood::NeighborhoodType;
 use crate::query::{InterferenceResult, QueryResult};
 use crate::recency::{RECENCY_DECAY_RATE, days_since_episode};
 use crate::surface::SurfaceResult;
-use crate::system::{DAESystem, OccurrenceRef};
+use crate::system::{DAESystem, EpisodeRef, OccurrenceRef};
 use crate::tokenizer::token_count;
 
 /// Multiplier for Decision/Preference neighborhoods.
@@ -45,7 +45,8 @@ pub(crate) const MIN_SCORE_THRESHOLD: f64 = 1.0;
 
 pub(crate) struct ScoredNeighborhood {
     pub neighborhood_id: Uuid,
-    pub episode_idx: usize, // usize::MAX for conscious
+    pub episode_ref: EpisodeRef,
+    pub neighborhood_idx: usize,
     pub score: f64,
     pub activated_count: usize,
     pub words: HashSet<String>,
@@ -57,7 +58,7 @@ pub(crate) struct ScoredNeighborhood {
 
 pub(crate) struct RankedCandidate {
     pub neighborhood_id: Uuid,
-    pub episode_idx: usize,
+    pub episode_ref: EpisodeRef,
     pub category: RecallCategory,
     pub score: f64,
     pub text: String,
@@ -127,11 +128,16 @@ pub(crate) fn rank_candidates(
 
     // Conscious candidates
     for sn in con_scored.values() {
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
+        let text = get_neighborhood_text(
+            system,
+            sn.neighborhood_id,
+            sn.episode_ref,
+            sn.neighborhood_idx,
+        );
         let tokens = token_count(&text);
         candidates.push(RankedCandidate {
             neighborhood_id: sn.neighborhood_id,
-            episode_idx: sn.episode_idx,
+            episode_ref: sn.episode_ref,
             category: RecallCategory::Conscious,
             score: sn.score,
             text,
@@ -142,11 +148,16 @@ pub(crate) fn rank_candidates(
 
     // Subconscious candidates
     for sn in sub_scored.values() {
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
+        let text = get_neighborhood_text(
+            system,
+            sn.neighborhood_id,
+            sn.episode_ref,
+            sn.neighborhood_idx,
+        );
         let tokens = token_count(&text);
         candidates.push(RankedCandidate {
             neighborhood_id: sn.neighborhood_id,
-            episode_idx: sn.episode_idx,
+            episode_ref: sn.episode_ref,
             category: RecallCategory::Subconscious,
             score: sn.score,
             text,
@@ -167,11 +178,16 @@ pub(crate) fn rank_candidates(
         }
         let novelty_score =
             sn.max_word_weight * sn.max_plasticity / sn.activated_count.max(1) as f64;
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
+        let text = get_neighborhood_text(
+            system,
+            sn.neighborhood_id,
+            sn.episode_ref,
+            sn.neighborhood_idx,
+        );
         let tokens = token_count(&text);
         candidates.push(RankedCandidate {
             neighborhood_id: sn.neighborhood_id,
-            episode_idx: sn.episode_idx,
+            episode_ref: sn.episode_ref,
             category: RecallCategory::Novel,
             score: novelty_score,
             text,
@@ -219,7 +235,8 @@ fn score_neighborhoods(
     // Superseded neighborhoods are excluded - they've been explicitly replaced.
     struct OccData {
         nbhd_id: Uuid,
-        episode_idx: usize,
+        episode_ref: EpisodeRef,
+        neighborhood_idx: usize,
         word: String,
         activation_count: u32,
         plasticity: f64,
@@ -237,11 +254,8 @@ fn score_neighborhoods(
             }
             Some(OccData {
                 nbhd_id: nbhd.id,
-                episode_idx: if r.is_conscious() {
-                    usize::MAX
-                } else {
-                    r.episode_idx
-                },
+                episode_ref: r.episode_ref,
+                neighborhood_idx: r.neighborhood_idx,
                 word: occ.word.to_lowercase(),
                 activation_count: occ.activation_count,
                 plasticity: occ.plasticity(),
@@ -251,22 +265,22 @@ fn score_neighborhoods(
         })
         .collect();
 
-    // Pre-collect recency decay per episode_idx
-    let recency_cache: HashMap<usize, f64> = data
+    // Pre-collect recency decay per episode
+    let recency_cache: HashMap<EpisodeRef, f64> = data
         .iter()
-        .map(|d| d.episode_idx)
+        .map(|d| d.episode_ref)
         .collect::<HashSet<_>>()
         .into_iter()
-        .map(|ep_idx| {
-            let days = days_since_episode(system, ep_idx);
+        .map(|ep_ref| {
+            let days = days_since_episode(system, ep_ref);
             let decay = 1.0 / (1.0 + days * RECENCY_DECAY_RATE);
-            (ep_idx, decay)
+            (ep_ref, decay)
         })
         .collect();
 
     // For conscious neighborhoods, compute recency boost based on position.
     // Later neighborhoods (higher index) were added more recently.
-    let conscious_count = if data.iter().any(|d| d.episode_idx == usize::MAX) {
+    let conscious_count = if data.iter().any(|d| d.episode_ref.is_conscious()) {
         system.conscious_episode.neighborhoods.len() as f64
     } else {
         1.0
@@ -295,7 +309,8 @@ fn score_neighborhoods(
             .entry(d.nbhd_id)
             .or_insert_with(|| ScoredNeighborhood {
                 neighborhood_id: d.nbhd_id,
-                episode_idx: d.episode_idx,
+                episode_ref: d.episode_ref,
+                neighborhood_idx: d.neighborhood_idx,
                 score: 0.0,
                 activated_count: 0,
                 words: HashSet::new(),
@@ -324,10 +339,10 @@ fn score_neighborhoods(
             sn.score *= 1.0 + density_bonus;
         }
         // All neighborhoods get recency decay
-        let decay = recency_cache.get(&sn.episode_idx).copied().unwrap_or(1.0);
+        let decay = recency_cache.get(&sn.episode_ref).copied().unwrap_or(1.0);
         sn.score *= decay;
         // For conscious neighborhoods, apply recency boost (newer = higher score)
-        if sn.episode_idx == usize::MAX {
+        if sn.episode_ref.is_conscious() {
             let boost = conscious_recency
                 .get(&sn.neighborhood_id)
                 .copied()
@@ -429,43 +444,58 @@ fn overlap_suppress(
     }
 }
 
+/// Extract the text for a neighborhood via direct O(1) indexing.
+///
+/// Falls back to a linear scan if `neighborhood_idx` is out of bounds or
+/// points to a different neighborhood (can happen if episodes were mutated
+/// after index construction).
 pub(crate) fn get_neighborhood_text(
     system: &DAESystem,
     neighborhood_id: Uuid,
-    episode_idx: usize,
+    episode_ref: EpisodeRef,
+    neighborhood_idx: usize,
 ) -> String {
-    let episode = if episode_idx == usize::MAX {
-        &system.conscious_episode
-    } else {
-        &system.episodes[episode_idx]
-    };
-
-    for nbhd in &episode.neighborhoods {
-        if nbhd.id == neighborhood_id {
-            if !nbhd.source_text.is_empty() {
-                return nbhd.source_text.clone();
-            }
-            return nbhd
-                .occurrences
+    fn extract_text(nbhd: &crate::neighborhood::Neighborhood) -> String {
+        if nbhd.source_text.is_empty() {
+            nbhd.occurrences
                 .iter()
                 .map(|o| o.word.as_str())
                 .collect::<Vec<_>>()
-                .join(" ");
+                .join(" ")
+        } else {
+            nbhd.source_text.clone()
+        }
+    }
+
+    let episode = system.resolve_episode(episode_ref);
+
+    // Fast path: direct index
+    if let Some(nbhd) = episode.neighborhoods.get(neighborhood_idx)
+        && nbhd.id == neighborhood_id
+    {
+        return extract_text(nbhd);
+    }
+
+    // Fallback: linear scan (should rarely trigger)
+    for nbhd in &episode.neighborhoods {
+        if nbhd.id == neighborhood_id {
+            return extract_text(nbhd);
         }
     }
 
     String::new()
 }
 
-pub(crate) fn get_episode_name(system: &DAESystem, episode_idx: usize) -> String {
-    if episode_idx == usize::MAX {
-        "Previously marked salient".to_string()
-    } else {
-        let ep = &system.episodes[episode_idx];
-        if ep.name.is_empty() {
-            "Memory".to_string()
-        } else {
-            ep.name.clone()
+pub(crate) fn get_episode_name(system: &DAESystem, episode_ref: EpisodeRef) -> String {
+    match episode_ref {
+        EpisodeRef::Conscious => "Previously marked salient".to_string(),
+        EpisodeRef::Subconscious(idx) => {
+            let ep = &system.episodes[idx];
+            if ep.name.is_empty() {
+                "Memory".to_string()
+            } else {
+                ep.name.clone()
+            }
         }
     }
 }

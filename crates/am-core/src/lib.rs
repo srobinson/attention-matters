@@ -32,36 +32,34 @@
 // use std::collections::HashMap.
 #![allow(clippy::implicit_hasher)]
 
-pub mod batch;
-pub mod compose;
-pub mod constants;
-pub mod episode;
-pub mod feedback;
-pub mod neighborhood;
-pub mod occurrence;
-pub mod phasor;
-pub mod quaternion;
-pub mod query;
-pub mod recency;
-pub mod salient;
+mod batch;
+mod compose;
+mod constants;
+mod episode;
+mod feedback;
+mod neighborhood;
+mod occurrence;
+mod phasor;
+mod quaternion;
+mod query;
+pub(crate) mod recency;
+mod salient;
 pub(crate) mod scoring;
-pub mod serde_compat;
-pub mod surface;
-pub mod system;
-pub mod time;
-pub mod tokenizer;
+mod serde_compat;
+mod surface;
+mod system;
+mod time;
+mod tokenizer;
 
-pub use batch::{BatchQueryEngine, BatchQueryRequest, BatchQueryResult};
+pub use batch::{BatchQueryEngine, BatchQueryOutput, BatchQueryRequest, BatchQueryResult};
 pub use compose::{
     BudgetConfig, BudgetedContextResult, CategorizedIds, ContextMetrics, ContextResult,
     IncludedFragment, IndexEntry, IndexResult, RecallCategory, TokenEstimate, compose_context,
     compose_context_budgeted, compose_index, retrieve_by_ids,
 };
 pub use constants::{
-    ACTIVATION_FLOOR, DB_GC_TARGET_RATIO, DB_SOFT_LIMIT_BYTES, DEFAULT_GRACE_EPOCHS,
-    DEFAULT_MIN_NEIGHBORHOODS, DEFAULT_RECENCY_WEIGHT, DEFAULT_RETENTION_DAYS, EPSILON,
-    GOLDEN_ANGLE, M, NEIGHBORHOOD_RADIUS, PAIRWISE_DRIFT_MAX_MOBILE, PHI, SLERP_THRESHOLD,
-    THRESHOLD,
+    ACTIVATION_FLOOR, DB_GC_TARGET_RATIO, DEFAULT_GRACE_EPOCHS, DEFAULT_MIN_NEIGHBORHOODS,
+    DEFAULT_RECENCY_WEIGHT, DEFAULT_RETENTION_DAYS,
 };
 pub use episode::Episode;
 pub use feedback::{FeedbackResult, FeedbackSignal, apply_feedback};
@@ -69,10 +67,10 @@ pub use neighborhood::{Neighborhood, NeighborhoodType};
 pub use occurrence::Occurrence;
 pub use phasor::DaemonPhasor;
 pub use quaternion::{Quaternion, WeightedSum};
-pub use query::{QueryEngine, QueryResult};
+pub use query::{QueryEngine, QueryManifest, QueryResult};
 pub use salient::{detect_neighborhood_type, extract_salient, mark_salient_typed};
 pub use serde_compat::{CURRENT_VERSION, export_json, import_json};
 pub use surface::{SurfaceResult, compute_surface};
-pub use system::{DAESystem, NeighborhoodRef, OccurrenceRef};
+pub use system::{DAESystem, EpisodeRef, NeighborhoodRef, OccurrenceRef};
 pub use time::{now_iso8601, now_unix_secs, unix_to_iso8601};
 pub use tokenizer::{ingest_text, token_count, tokenize};

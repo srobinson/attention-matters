@@ -4,19 +4,15 @@
 //! applies a hyperbolic decay to scoring. Decision and Preference
 //! neighborhoods are exempt from recency decay in the caller.
 
-use crate::system::DAESystem;
+use crate::system::{DAESystem, EpisodeRef};
 
 /// Recency decay coefficient for non-decision memories.
 /// score *= 1.0 / (1.0 + `days_old` * `RECENCY_DECAY_RATE`)
 pub(crate) const RECENCY_DECAY_RATE: f64 = 0.01;
 
 /// Compute days since an episode's timestamp (empty or unparseable returns 0.0).
-pub(crate) fn days_since_episode(system: &DAESystem, episode_idx: usize) -> f64 {
-    let timestamp = if episode_idx == usize::MAX {
-        &system.conscious_episode.timestamp
-    } else {
-        &system.episodes[episode_idx].timestamp
-    };
+pub(crate) fn days_since_episode(system: &DAESystem, episode_ref: EpisodeRef) -> f64 {
+    let timestamp = &system.resolve_episode(episode_ref).timestamp;
     if timestamp.is_empty() {
         return 0.0;
     }
@@ -128,6 +124,25 @@ mod tests {
             (days - 0.0).abs() < f64::EPSILON,
             "future date should clamp to 0, got {days}"
         );
+    }
+
+    #[test]
+    fn seven_days_ago() {
+        let days = parse_days_ago("2026-03-06T10:00:00Z", NOW_2026_03_13);
+        assert!((days - 7.0).abs() < f64::EPSILON, "expected 7, got {days}");
+    }
+
+    #[test]
+    fn fractional_day_now_midday() {
+        // now_secs at 2026-03-13T12:00:00Z (noon) = midnight + 43200
+        let now_midday = NOW_2026_03_13 + 43_200;
+        // Episode from yesterday: still 1 full day because parse_days_ago
+        // uses integer division (now_secs / 86400) for the current day.
+        let days = parse_days_ago("2026-03-12T18:00:00Z", now_midday);
+        assert!((days - 1.0).abs() < f64::EPSILON, "expected 1, got {days}");
+        // Same day: 0 even though now is at noon
+        let days = parse_days_ago("2026-03-13T00:00:00Z", now_midday);
+        assert!((days - 0.0).abs() < f64::EPSILON, "expected 0, got {days}");
     }
 
     #[test]

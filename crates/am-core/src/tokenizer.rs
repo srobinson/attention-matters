@@ -24,9 +24,21 @@ pub fn tokenize(text: &str) -> Vec<String> {
 
 /// Count tokens in text without allocating the full token vector.
 /// Used for budget estimation in context composition.
+///
+/// Replicates the same cleaning pipeline as `tokenize()` but counts
+/// matches instead of collecting `String`s. Avoids per-token heap
+/// allocation on every candidate evaluation in context composition.
 #[must_use]
 pub fn token_count(text: &str) -> usize {
-    tokenize(text).len()
+    let cleaned = NON_WORD.replace_all(text, " ");
+    cleaned
+        .to_lowercase()
+        .split_whitespace()
+        .filter(|t| {
+            let trimmed = APOSTROPHE_TRIM.replace_all(t, "");
+            !trimmed.is_empty()
+        })
+        .count()
 }
 
 /// Split text into sentences at sentence-ending punctuation followed by whitespace.
@@ -162,5 +174,31 @@ mod tests {
         assert_eq!(token_count("one two three four five"), 5);
         assert_eq!(token_count(""), 0);
         assert_eq!(token_count("   "), 0);
+    }
+
+    /// Verify `token_count` stays in sync with `tokenize().len()` across
+    /// representative inputs (guards against drift if either is refactored).
+    #[test]
+    fn test_token_count_matches_tokenize_len() {
+        let cases = [
+            "Hello, world!",
+            "Don't stop believing",
+            "'quoted' 'words'",
+            "   ",
+            "",
+            "one",
+            "test 123 hello",
+            "the a an is are was were",
+            "Complex sentence: with (lots) of punctuation!!",
+            "Running runs ran runner",
+            "a b c d e f g h i j k l m n o p q r s t u v w x y z",
+        ];
+        for input in &cases {
+            assert_eq!(
+                token_count(input),
+                tokenize(input).len(),
+                "token_count and tokenize().len() diverged for: {input:?}"
+            );
+        }
     }
 }
