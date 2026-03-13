@@ -6,10 +6,10 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use am_core::{
-    BatchQueryEngine, BatchQueryRequest, BudgetConfig, DAESystem, FeedbackSignal, QueryEngine,
-    RecallCategory, apply_feedback, compose_context, compose_context_budgeted, compose_index,
-    compute_surface, export_json, extract_salient, import_json, ingest_text, mark_salient_typed,
-    retrieve_by_ids,
+    BatchQueryEngine, BatchQueryRequest, BudgetConfig, DAESystem, DaemonPhasor, FeedbackSignal,
+    Quaternion, QueryEngine, QueryManifest, RecallCategory, apply_feedback, compose_context,
+    compose_context_budgeted, compose_index, compute_surface, export_json, extract_salient,
+    import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
 };
 use am_store::{BrainStore, StoreError};
 use rand::SeedableRng;
@@ -96,6 +96,60 @@ struct ServerState {
     /// Content hashes with timestamps for dedup within a time window.
     /// Prevents duplicate episodes when am_buffer is called with identical content.
     dedup_window: HashMap<u64, Instant>,
+}
+
+/// Collect current `(Uuid, Quaternion, DaemonPhasor)` tuples for a set of occurrence IDs.
+///
+/// Scans all episodes (including conscious) to find occurrences matching the
+/// given UUIDs. Used to prepare data for `save_occurrence_positions` after
+/// drift or Kuramoto coupling has modified positions/phasors in memory.
+fn collect_occurrence_positions(
+    system: &DAESystem,
+    ids: &[Uuid],
+) -> Vec<(Uuid, Quaternion, DaemonPhasor)> {
+    if ids.is_empty() {
+        return Vec::new();
+    }
+    let target: std::collections::HashSet<Uuid> = ids.iter().copied().collect();
+    let mut result = Vec::with_capacity(ids.len());
+
+    let all_episodes = system
+        .episodes
+        .iter()
+        .chain(std::iter::once(&system.conscious_episode));
+
+    for episode in all_episodes {
+        for nbhd in &episode.neighborhoods {
+            for occ in &nbhd.occurrences {
+                if target.contains(&occ.id) {
+                    result.push((occ.id, occ.position, occ.phasor));
+                }
+            }
+        }
+    }
+
+    result
+}
+
+/// Persist query manifest mutations to the store: drifted positions and
+/// activated occurrence counts.
+fn persist_manifest(
+    store: &BrainStore,
+    system: &DAESystem,
+    manifest: &QueryManifest,
+    context: &str,
+) {
+    if !manifest.drifted.is_empty() {
+        let positions = collect_occurrence_positions(system, &manifest.drifted);
+        if let Err(e) = store.save_occurrence_positions(&positions) {
+            tracing::error!("failed to persist drifted positions after {context}: {e}");
+        }
+    }
+    if !manifest.activated.is_empty()
+        && let Err(e) = store.batch_increment_activation(&manifest.activated)
+    {
+        tracing::error!("failed to persist activations after {context}: {e}");
+    }
 }
 
 /// Flush orphaned buffer entries from the store into the system as a conversation episode.
@@ -409,6 +463,8 @@ impl AmServer {
             .collect();
         result["index"] = serde_json::json!(index_entries);
 
+        persist_manifest(store, system, &query_result.manifest, "query");
+
         // Increment recall count for returned neighborhood IDs (diminishing returns)
         for id in new_ids {
             *state.session_recalled.entry(id).or_insert(0) += 1;
@@ -446,9 +502,7 @@ impl AmServer {
             Some(&session_recalled_snapshot),
         );
 
-        if let Err(e) = store.save_system(system) {
-            tracing::error!("failed to persist after query_index: {e}");
-        }
+        persist_manifest(store, system, &query_result.manifest, "query_index");
 
         let entries_json: Vec<serde_json::Value> = index
             .entries
@@ -536,24 +590,26 @@ impl AmServer {
         let mut state = self.state.lock().await;
         let ServerState { system, store, .. } = &mut *state;
 
-        let (activation, _activated_ids) = QueryEngine::activate(system, &req.text);
+        let (activation, activated_ids) = QueryEngine::activate(system, &req.text);
         let all_refs: Vec<_> = activation
             .subconscious
             .iter()
             .chain(activation.conscious.iter())
             .copied()
             .collect();
-        let _ = QueryEngine::drift_and_consolidate(system, &all_refs);
+        let mut drifted = QueryEngine::drift_and_consolidate(system, &all_refs);
         let (_, word_groups) = QueryEngine::compute_interference(
             system,
             &activation.subconscious,
             &activation.conscious,
         );
-        let _ = QueryEngine::apply_kuramoto_coupling(system, &word_groups);
+        drifted.extend(QueryEngine::apply_kuramoto_coupling(system, &word_groups));
 
-        if let Err(e) = store.save_system(system) {
-            tracing::error!("failed to persist after activate_response: {e}");
-        }
+        let manifest = QueryManifest {
+            drifted,
+            activated: activated_ids,
+        };
+        persist_manifest(store, system, &manifest, "activate_response");
 
         let result = serde_json::json!({
             "activated": all_refs.len(),

@@ -377,6 +377,28 @@ impl Store {
         Ok(())
     }
 
+    /// Increment `activation_count` for multiple occurrences in a single transaction.
+    ///
+    /// Silently skips IDs that do not exist in the store (common when the
+    /// system has occurrences that were never persisted, e.g. from conscious
+    /// memory added after the last full save).
+    pub fn batch_increment_activation(&self, ids: &[Uuid]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "UPDATE occurrences SET activation_count = activation_count + 1 WHERE id = ?1",
+            )?;
+            for id in ids {
+                stmt.execute([id.to_string()])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Mark a neighborhood as superseded by another (targeted update, no full save).
     pub fn mark_superseded(&self, old_id: Uuid, new_id: Uuid) -> Result<()> {
         let rows = self.conn.execute(
@@ -1199,6 +1221,50 @@ mod tests {
         let loaded = store.load_system().unwrap();
         let loaded_count = loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count;
         assert_eq!(loaded_count, 2);
+    }
+
+    #[test]
+    fn test_batch_increment_activation() {
+        let store = Store::open_in_memory().unwrap();
+        let system = make_system();
+        store.save_system(&system).unwrap();
+
+        let occ0 = system.episodes[0].neighborhoods[0].occurrences[0].id;
+        let occ1 = system.episodes[0].neighborhoods[0].occurrences[1].id;
+
+        // Batch increment both occurrences twice
+        store.batch_increment_activation(&[occ0, occ1]).unwrap();
+        store.batch_increment_activation(&[occ0, occ1]).unwrap();
+
+        let loaded = store.load_system().unwrap();
+        let c0 = loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count;
+        let c1 = loaded.episodes[0].neighborhoods[0].occurrences[1].activation_count;
+        assert_eq!(c0, 2, "first occurrence should have activation_count 2");
+        assert_eq!(c1, 2, "second occurrence should have activation_count 2");
+    }
+
+    #[test]
+    fn test_batch_increment_activation_empty() {
+        let store = Store::open_in_memory().unwrap();
+        // Empty batch should be a no-op
+        store.batch_increment_activation(&[]).unwrap();
+    }
+
+    #[test]
+    fn test_batch_increment_activation_skips_unknown() {
+        let store = Store::open_in_memory().unwrap();
+        let system = make_system();
+        store.save_system(&system).unwrap();
+
+        let occ0 = system.episodes[0].neighborhoods[0].occurrences[0].id;
+        let unknown = Uuid::new_v4();
+
+        // Mixed batch: one real, one unknown. Should succeed without error.
+        store.batch_increment_activation(&[occ0, unknown]).unwrap();
+
+        let loaded = store.load_system().unwrap();
+        let c0 = loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count;
+        assert_eq!(c0, 1, "known occurrence should be incremented");
     }
 
     #[test]

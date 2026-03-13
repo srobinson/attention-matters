@@ -255,6 +255,19 @@ impl BrainStore {
         self.store.save_episode(episode)
     }
 
+    /// Increment activation counts for a batch of occurrences.
+    pub fn batch_increment_activation(&self, ids: &[uuid::Uuid]) -> Result<()> {
+        self.store.batch_increment_activation(ids)
+    }
+
+    /// Persist position and phasor updates for a batch of occurrences.
+    pub fn save_occurrence_positions(
+        &self,
+        batch: &[(uuid::Uuid, am_core::Quaternion, am_core::DaemonPhasor)],
+    ) -> Result<()> {
+        self.store.save_occurrence_positions(batch)
+    }
+
     /// Mark text as salient (conscious). Returns the neighborhood ID.
     pub fn mark_salient(
         &self,
