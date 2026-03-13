@@ -26,7 +26,9 @@ impl Store {
     /// Export the store contents to a v0.7.2 JSON file.
     pub fn export_json_file(&self, path: &Path) -> Result<()> {
         let json = self.export_json_string()?;
-        fs::write(path, json)?;
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, json)?;
+        fs::rename(&tmp, path)?;
         Ok(())
     }
 
