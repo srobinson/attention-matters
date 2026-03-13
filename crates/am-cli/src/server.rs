@@ -121,10 +121,8 @@ fn flush_orphaned_buffer(store: &BrainStore, system: &mut DAESystem, rng: &mut S
 }
 
 impl AmServer {
-    pub fn new(store: BrainStore) -> std::result::Result<Self, String> {
-        let system = store
-            .load_system()
-            .map_err(|e| format!("failed to load system: {e}"))?;
+    pub fn new(store: BrainStore) -> std::result::Result<Self, StoreError> {
+        let system = store.load_system()?;
         let rng = SmallRng::from_os_rng();
         Ok(Self {
             state: Arc::new(Mutex::new(ServerState {
