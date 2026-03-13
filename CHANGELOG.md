@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.16](https://github.com/srobinson/attention-matters/compare/v0.1.15...v0.1.16) (2026-03-13)
+
+
+### Features
+
+* post-v0.1.15 codebase quality review ([#27](https://github.com/srobinson/attention-matters/issues/27)) ([d5c18ea](https://github.com/srobinson/attention-matters/commit/d5c18ea94735d039fdf6019dd921571ff6ce445b))
+
 ## [0.1.15](https://github.com/srobinson/attention-matters/compare/v0.1.14...v0.1.15) (2026-03-08)
 
 
