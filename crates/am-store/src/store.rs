@@ -237,109 +237,123 @@ impl Store {
 
         let mut system = DAESystem::new(&agent_name);
 
-        let mut ep_stmt = self
-            .conn
-            .prepare("SELECT id, name, is_conscious, timestamp FROM episodes ORDER BY rowid")?;
+        // Single three-way JOIN replaces the previous 1 + N + N*M query pattern.
+        // LEFT JOINs handle episodes with no neighborhoods and neighborhoods with no occurrences.
+        let mut stmt = self.conn.prepare(
+            "SELECT e.id, e.name, e.is_conscious, e.timestamp,
+                    n.id, n.seed_w, n.seed_x, n.seed_y, n.seed_z,
+                    n.source_text, COALESCE(n.neighborhood_type, 'memory'),
+                    n.epoch, n.superseded_by,
+                    o.id, o.word, o.pos_w, o.pos_x, o.pos_y, o.pos_z,
+                    o.phasor_theta, o.activation_count
+             FROM episodes e
+             LEFT JOIN neighborhoods n ON n.episode_id = e.id
+             LEFT JOIN occurrences o ON o.neighborhood_id = n.id
+             ORDER BY e.rowid, n.rowid, o.rowid",
+        )?;
 
-        let episodes: Vec<(String, String, bool, String)> = ep_stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i32>(2)? != 0,
-                    row.get::<_, String>(3)?,
-                ))
-            })?
-            .collect::<std::result::Result<_, _>>()?;
+        // Track current episode and neighborhood being assembled.
+        let mut current_ep_id: Option<String> = None;
+        let mut current_nbhd_id: Option<String> = None;
+        let mut current_episode: Option<Episode> = None;
+        let mut current_nbhd: Option<Neighborhood> = None;
 
-        for (ep_id_str, name, is_conscious, timestamp) in episodes {
-            let ep_id = parse_uuid(&ep_id_str)?;
-            let neighborhoods = self.load_neighborhoods(&ep_id_str)?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let ep_id_str: String = row.get(0)?;
+            let nbhd_id_str: Option<String> = row.get(4)?;
+            let occ_id_str: Option<String> = row.get(13)?;
 
-            let episode = Episode {
-                id: ep_id,
-                name,
-                is_conscious,
-                timestamp,
-                neighborhoods,
-            };
+            // Episode boundary: flush previous neighborhood and episode
+            if current_ep_id.as_ref() != Some(&ep_id_str) {
+                if let Some(nbhd) = current_nbhd.take()
+                    && let Some(ep) = current_episode.as_mut()
+                {
+                    ep.neighborhoods.push(nbhd);
+                }
+                current_nbhd_id = None;
+                if let Some(ep) = current_episode.take() {
+                    if ep.is_conscious {
+                        system.conscious_episode = ep;
+                    } else {
+                        system.episodes.push(ep);
+                    }
+                }
 
-            if is_conscious {
-                system.conscious_episode = episode;
+                let ep_id = parse_uuid(&ep_id_str)?;
+                current_episode = Some(Episode {
+                    id: ep_id,
+                    name: row.get(1)?,
+                    is_conscious: row.get::<_, i32>(2)? != 0,
+                    timestamp: row.get(3)?,
+                    neighborhoods: Vec::new(),
+                });
+                current_ep_id = Some(ep_id_str);
+            }
+
+            // Neighborhood boundary
+            if let Some(ref nid) = nbhd_id_str
+                && current_nbhd_id.as_ref() != Some(nid)
+            {
+                if let Some(nbhd) = current_nbhd.take()
+                    && let Some(ep) = current_episode.as_mut()
+                {
+                    ep.neighborhoods.push(nbhd);
+                }
+
+                let id = parse_uuid(nid)?;
+                let superseded_by: Option<String> = row.get(12)?;
+                current_nbhd = Some(Neighborhood {
+                    id,
+                    seed: Quaternion::new(row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?),
+                    occurrences: Vec::new(),
+                    source_text: row.get(9)?,
+                    neighborhood_type: NeighborhoodType::from_str_lossy(&row.get::<_, String>(10)?),
+                    epoch: row.get(11)?,
+                    superseded_by: superseded_by.and_then(|s| Uuid::parse_str(&s).ok()),
+                });
+                current_nbhd_id = Some(nid.clone());
+            }
+
+            // Occurrence row
+            if let (Some(oid), Some(nid)) = (&occ_id_str, &nbhd_id_str) {
+                let id = parse_uuid(oid)?;
+                let nbhd_uuid = parse_uuid(nid)?;
+                if let Some(nbhd) = current_nbhd.as_mut() {
+                    nbhd.occurrences.push(Occurrence {
+                        id,
+                        neighborhood_id: nbhd_uuid,
+                        word: row.get(14)?,
+                        position: Quaternion::new(
+                            row.get(15)?,
+                            row.get(16)?,
+                            row.get(17)?,
+                            row.get(18)?,
+                        ),
+                        phasor: DaemonPhasor::new(row.get(19)?),
+                        activation_count: row.get(20)?,
+                    });
+                }
+            }
+        }
+
+        // Flush remaining neighborhood and episode
+        if let Some(nbhd) = current_nbhd.take()
+            && let Some(ep) = current_episode.as_mut()
+        {
+            ep.neighborhoods.push(nbhd);
+        }
+        if let Some(ep) = current_episode.take() {
+            if ep.is_conscious {
+                system.conscious_episode = ep;
             } else {
-                system.episodes.push(episode);
+                system.episodes.push(ep);
             }
         }
 
         system.mark_dirty();
         system.sync_next_epoch();
         Ok(system)
-    }
-
-    fn load_neighborhoods(&self, episode_id: &str) -> Result<Vec<Neighborhood>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, seed_w, seed_x, seed_y, seed_z, source_text, COALESCE(neighborhood_type, 'memory'), epoch, superseded_by
-             FROM neighborhoods WHERE episode_id = ?1 ORDER BY rowid",
-        )?;
-
-        let mut neighborhoods = Vec::new();
-        let mut query_rows = stmt.query([episode_id])?;
-        while let Some(row) = query_rows.next()? {
-            let id_str: String = row.get(0)?;
-            let id = parse_uuid(&id_str)?;
-            let occurrences = self.load_occurrences(&id_str)?;
-            let superseded_by: Option<String> = row.get(8)?;
-
-            neighborhoods.push(Neighborhood {
-                id,
-                seed: Quaternion::new(row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
-                occurrences,
-                source_text: row.get(5)?,
-                neighborhood_type: NeighborhoodType::from_str_lossy(&row.get::<_, String>(6)?),
-                epoch: row.get(7)?,
-                superseded_by: superseded_by.and_then(|s| Uuid::parse_str(&s).ok()),
-            });
-        }
-
-        Ok(neighborhoods)
-    }
-
-    fn load_occurrences(&self, neighborhood_id: &str) -> Result<Vec<Occurrence>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, word, pos_w, pos_x, pos_y, pos_z, phasor_theta, activation_count
-             FROM occurrences WHERE neighborhood_id = ?1 ORDER BY rowid",
-        )?;
-
-        let occurrences = stmt
-            .query_map([neighborhood_id], |row| {
-                let id_str: String = row.get(0)?;
-                let word: String = row.get(1)?;
-                let w: f64 = row.get(2)?;
-                let x: f64 = row.get(3)?;
-                let y: f64 = row.get(4)?;
-                let z: f64 = row.get(5)?;
-                let theta: f64 = row.get(6)?;
-                let activation_count: u32 = row.get(7)?;
-                Ok((id_str, word, w, x, y, z, theta, activation_count))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-
-        let nbhd_id = parse_uuid(neighborhood_id)?;
-
-        occurrences
-            .into_iter()
-            .map(|(id_str, word, w, x, y, z, theta, activation_count)| {
-                let id = parse_uuid(&id_str)?;
-                Ok(Occurrence {
-                    id,
-                    neighborhood_id: nbhd_id,
-                    word,
-                    position: Quaternion::new(w, x, y, z),
-                    phasor: DaemonPhasor::new(theta),
-                    activation_count,
-                })
-            })
-            .collect()
     }
 
     // --- Targeted updates (no full rewrite) ---
