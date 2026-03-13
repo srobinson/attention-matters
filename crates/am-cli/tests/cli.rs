@@ -164,9 +164,48 @@ fn ingest_dir() {
     // Non-matching extension should be skipped
     std::fs::write(docs_dir.join("ignore.json"), "{}").unwrap();
 
-    // Use a dummy positional arg (first.md) since `files` is required,
-    // then --dir scans for additional .md/.txt files (second.md).
-    // first.md appears both as positional and from dir scan → 3 episodes.
+    // --dir alone works without positional args (required_unless_present = "dir").
+    // first.md + second.md from dir scan = 2 episodes. .json is skipped.
+    am_cmd(&dir)
+        .args(["ingest", "--dir"])
+        .arg(&docs_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ingested"));
+
+    let output = am_cmd(&dir).args(["stats"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let episodes: usize = extract_stat_value(&stdout, "episodes:")
+        .parse()
+        .unwrap_or(0);
+    // 2 episodes: first.md + second.md from dir scan.
+    // .json file is correctly skipped.
+    assert_eq!(
+        episodes, 2,
+        "expected 2 episodes (first.md + second.md), got {episodes}"
+    );
+}
+
+#[test]
+fn ingest_dir_deduplicates_overlapping_files() {
+    let dir = TempDir::new().unwrap();
+
+    let docs_dir = dir.path().join("docs");
+    std::fs::create_dir(&docs_dir).unwrap();
+
+    std::fs::write(
+        docs_dir.join("first.md"),
+        "First document about alpha and beta. Second sentence here. Third sentence final.",
+    )
+    .unwrap();
+    std::fs::write(
+        docs_dir.join("second.md"),
+        "Second document about gamma and delta. Another sentence follows. Done with this one.",
+    )
+    .unwrap();
+
+    // Provide first.md as both positional and via --dir. Dedup should prevent double ingestion.
     am_cmd(&dir)
         .args(["ingest", "--dir"])
         .arg(&docs_dir)
@@ -181,11 +220,9 @@ fn ingest_dir() {
     let episodes: usize = extract_stat_value(&stdout, "episodes:")
         .parse()
         .unwrap_or(0);
-    // 3 episodes: first.md (positional) + first.md (dir scan) + second.md (dir scan)
-    // .json file is correctly skipped
     assert_eq!(
-        episodes, 3,
-        "expected 3 episodes (first.md twice + second.md), got {episodes}"
+        episodes, 2,
+        "expected 2 episodes (first.md deduped + second.md), got {episodes}"
     );
 }
 

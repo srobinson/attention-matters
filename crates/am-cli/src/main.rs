@@ -116,14 +116,15 @@ enum Commands {
             with golden-angle phasor spacing. Supports .txt, .md, .html.",
         after_help = "\x1b[1mExamples:\x1b[0m\n  \
             am ingest README.md ARCHITECTURE.md\n  \
+            am ingest --dir ./docs\n  \
             am ingest --dir ./docs notes.txt"
     )]
     Ingest {
         /// File path(s) to ingest
-        #[arg(required = true)]
+        #[arg(required_unless_present = "dir")]
         files: Vec<PathBuf>,
 
-        /// Also ingest .txt/.md/.html files from this directory
+        /// Ingest .txt/.md/.html files from this directory
         #[arg(long)]
         dir: Option<PathBuf>,
     },
@@ -582,6 +583,14 @@ fn cmd_ingest(cli: &Cli, files: &[PathBuf], dir: Option<&std::path::Path>) -> Re
             }
         }
     }
+
+    // Deduplicate by canonical path so files listed both as positional args
+    // and found via --dir scan are only ingested once.
+    let mut seen = std::collections::HashSet::new();
+    paths.retain(|p| {
+        let key = p.canonicalize().unwrap_or_else(|_| p.clone());
+        seen.insert(key)
+    });
 
     for path in &paths {
         let content = std::fs::read_to_string(path)
