@@ -8,15 +8,31 @@ use crate::episode::Episode;
 use crate::neighborhood::{Neighborhood, NeighborhoodType};
 use crate::tokenizer::tokenize;
 
+/// Identifies which episode an occurrence or neighborhood belongs to.
+///
+/// Replaces the former `usize::MAX` sentinel convention with an explicit
+/// enum, making conscious vs. subconscious branching self-documenting
+/// and eliminating the risk of treating a sentinel as a valid index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum EpisodeRef {
+    /// The single conscious episode (salient memories).
+    Conscious,
+    /// A subconscious episode, indexed into `DAESystem::episodes`.
+    Subconscious(usize),
+}
+
+impl EpisodeRef {
+    #[must_use]
+    pub fn is_conscious(self) -> bool {
+        matches!(self, Self::Conscious)
+    }
+}
+
 /// Reference to an occurrence by its location in the episode/neighborhood/occurrence
 /// hierarchy. Uses positional indexes for O(1) access.
-///
-/// `episode_idx` of `usize::MAX` is a sentinel denoting the conscious episode.
-/// Any other value is an index into `DAESystem::episodes`. See the `DAESystem`
-/// doc comment for discussion of this design trade-off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OccurrenceRef {
-    pub episode_idx: usize,
+    pub episode_ref: EpisodeRef,
     pub neighborhood_idx: usize,
     pub occurrence_idx: usize,
 }
@@ -24,22 +40,22 @@ pub struct OccurrenceRef {
 impl OccurrenceRef {
     #[must_use]
     pub fn is_conscious(&self) -> bool {
-        self.episode_idx == usize::MAX
+        self.episode_ref.is_conscious()
     }
 }
 
 /// Reference to a neighborhood by its location in the episode/neighborhood
-/// hierarchy. Same `usize::MAX` sentinel convention as `OccurrenceRef`.
+/// hierarchy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NeighborhoodRef {
-    pub episode_idx: usize,
+    pub episode_ref: EpisodeRef,
     pub neighborhood_idx: usize,
 }
 
 impl NeighborhoodRef {
     #[must_use]
     pub fn is_conscious(&self) -> bool {
-        self.episode_idx == usize::MAX
+        self.episode_ref.is_conscious()
     }
 }
 
@@ -57,21 +73,10 @@ pub struct ActivationResult {
 ///
 /// # Conscious episode addressing
 ///
-/// `OccurrenceRef` and `NeighborhoodRef` use `episode_idx: usize::MAX` as a
-/// sentinel to denote the conscious episode, distinguishing it from subconscious
-/// episodes stored in the `episodes` Vec. This avoids storing the conscious
-/// episode inside the Vec (where its index would shift on insert/remove) at the
-/// cost of a sentinel check in every accessor.
-///
-/// A cleaner representation would be an enum:
-/// ```text
-/// enum EpisodeLocation { Conscious, Subconscious(usize) }
-/// ```
-/// This would eliminate the sentinel and make the branching explicit. The current
-/// design was chosen for compact representation (one `usize` per ref instead of
-/// an enum discriminant + payload) and compatibility with the original v0.7.2
-/// reference implementation. Migration to the enum form is a future option if
-/// the sentinel proves error-prone.
+/// `OccurrenceRef` and `NeighborhoodRef` use `EpisodeRef::Conscious` to denote
+/// the conscious episode, and `EpisodeRef::Subconscious(idx)` for episodes
+/// stored in the `episodes` Vec. This enum makes the branching explicit and
+/// eliminates sentinel-value bugs.
 ///
 /// # Public API (20 methods, as of v0.1.15)
 ///
@@ -89,7 +94,7 @@ pub struct ActivationResult {
 /// - `get_word_weight(word)` - IDF weight for a word
 /// - `get_word_occurrences(word)` - all occurrence refs for a word
 /// - `get_neighborhood_ref(id)` - neighborhood ref by UUID
-/// - `get_episode_idx_for_neighborhood(id)` - episode index for a neighborhood
+/// - `get_episode_ref_for_neighborhood(id)` - episode ref for a neighborhood
 ///
 /// **Mutating writes** (6):
 /// - `activate_word(word)` - increment activation across both manifolds
@@ -150,7 +155,7 @@ pub struct DAESystem {
     #[serde(skip)]
     neighborhood_index: HashMap<Uuid, NeighborhoodRef>,
     #[serde(skip)]
-    neighborhood_episode_index: HashMap<Uuid, usize>,
+    neighborhood_episode_index: HashMap<Uuid, EpisodeRef>,
     #[serde(skip)]
     index_dirty: bool,
 }
@@ -195,14 +200,15 @@ impl DAESystem {
 
         // Index subconscious episodes
         for (ep_idx, episode) in self.episodes.iter().enumerate() {
+            let ep_ref = EpisodeRef::Subconscious(ep_idx);
             for (n_idx, neighborhood) in episode.neighborhoods.iter().enumerate() {
                 let n_ref = NeighborhoodRef {
-                    episode_idx: ep_idx,
+                    episode_ref: ep_ref,
                     neighborhood_idx: n_idx,
                 };
                 self.neighborhood_index.insert(neighborhood.id, n_ref);
                 self.neighborhood_episode_index
-                    .insert(neighborhood.id, ep_idx);
+                    .insert(neighborhood.id, ep_ref);
 
                 for (o_idx, occ) in neighborhood.occurrences.iter().enumerate() {
                     let word = occ.word.to_lowercase();
@@ -214,7 +220,7 @@ impl DAESystem {
                         .entry(word)
                         .or_default()
                         .push(OccurrenceRef {
-                            episode_idx: ep_idx,
+                            episode_ref: ep_ref,
                             neighborhood_idx: n_idx,
                             occurrence_idx: o_idx,
                         });
@@ -225,12 +231,12 @@ impl DAESystem {
         // Index conscious episode
         for (n_idx, neighborhood) in self.conscious_episode.neighborhoods.iter().enumerate() {
             let n_ref = NeighborhoodRef {
-                episode_idx: usize::MAX,
+                episode_ref: EpisodeRef::Conscious,
                 neighborhood_idx: n_idx,
             };
             self.neighborhood_index.insert(neighborhood.id, n_ref);
             self.neighborhood_episode_index
-                .insert(neighborhood.id, usize::MAX);
+                .insert(neighborhood.id, EpisodeRef::Conscious);
 
             for (o_idx, occ) in neighborhood.occurrences.iter().enumerate() {
                 let word = occ.word.to_lowercase();
@@ -242,7 +248,7 @@ impl DAESystem {
                     .entry(word)
                     .or_default()
                     .push(OccurrenceRef {
-                        episode_idx: usize::MAX,
+                        episode_ref: EpisodeRef::Conscious,
                         neighborhood_idx: n_idx,
                         occurrence_idx: o_idx,
                     });
@@ -358,16 +364,29 @@ impl DAESystem {
         self.index_dirty = true;
     }
 
+    /// Resolve an `EpisodeRef` to an immutable episode reference.
+    #[must_use]
+    pub fn resolve_episode(&self, ep: EpisodeRef) -> &Episode {
+        match ep {
+            EpisodeRef::Conscious => &self.conscious_episode,
+            EpisodeRef::Subconscious(idx) => &self.episodes[idx],
+        }
+    }
+
+    /// Resolve an `EpisodeRef` to a mutable episode reference.
+    pub fn resolve_episode_mut(&mut self, ep: EpisodeRef) -> &mut Episode {
+        match ep {
+            EpisodeRef::Conscious => &mut self.conscious_episode,
+            EpisodeRef::Subconscious(idx) => &mut self.episodes[idx],
+        }
+    }
+
     /// Mark a neighborhood as superseded by another.
     /// Returns true if the neighborhood was found and marked.
     pub fn mark_superseded(&mut self, old_id: Uuid, new_id: Uuid) -> bool {
         self.ensure_indexes();
         if let Some(n_ref) = self.neighborhood_index.get(&old_id).copied() {
-            let episode = if n_ref.is_conscious() {
-                &mut self.conscious_episode
-            } else {
-                &mut self.episodes[n_ref.episode_idx]
-            };
+            let episode = self.resolve_episode_mut(n_ref.episode_ref);
             episode.neighborhoods[n_ref.neighborhood_idx].superseded_by = Some(new_id);
             true
         } else {
@@ -392,21 +411,13 @@ impl DAESystem {
     /// Get immutable occurrence by ref.
     #[must_use]
     pub fn get_occurrence(&self, r: OccurrenceRef) -> &crate::occurrence::Occurrence {
-        let episode = if r.is_conscious() {
-            &self.conscious_episode
-        } else {
-            &self.episodes[r.episode_idx]
-        };
+        let episode = self.resolve_episode(r.episode_ref);
         &episode.neighborhoods[r.neighborhood_idx].occurrences[r.occurrence_idx]
     }
 
     /// Get mutable occurrence by ref.
     pub fn get_occurrence_mut(&mut self, r: OccurrenceRef) -> &mut crate::occurrence::Occurrence {
-        let episode = if r.is_conscious() {
-            &mut self.conscious_episode
-        } else {
-            &mut self.episodes[r.episode_idx]
-        };
+        let episode = self.resolve_episode_mut(r.episode_ref);
         &mut episode.neighborhoods[r.neighborhood_idx].occurrences[r.occurrence_idx]
     }
 
@@ -419,37 +430,28 @@ impl DAESystem {
     /// Get neighborhood by ref.
     #[must_use]
     pub fn get_neighborhood(&self, r: NeighborhoodRef) -> &Neighborhood {
-        let episode = if r.is_conscious() {
-            &self.conscious_episode
-        } else {
-            &self.episodes[r.episode_idx]
-        };
+        let episode = self.resolve_episode(r.episode_ref);
         &episode.neighborhoods[r.neighborhood_idx]
     }
 
     /// Get neighborhood that contains an occurrence.
     #[must_use]
     pub fn get_neighborhood_for_occurrence(&self, r: OccurrenceRef) -> &Neighborhood {
-        let episode = if r.is_conscious() {
-            &self.conscious_episode
-        } else {
-            &self.episodes[r.episode_idx]
-        };
+        let episode = self.resolve_episode(r.episode_ref);
         &episode.neighborhoods[r.neighborhood_idx]
     }
 
     /// Get episode that contains an occurrence.
     #[must_use]
     pub fn get_episode_for_occurrence(&self, r: OccurrenceRef) -> &Episode {
-        if r.is_conscious() {
-            &self.conscious_episode
-        } else {
-            &self.episodes[r.episode_idx]
-        }
+        self.resolve_episode(r.episode_ref)
     }
 
-    /// Get episode index for a neighborhood UUID.
-    pub fn get_episode_idx_for_neighborhood(&mut self, neighborhood_id: Uuid) -> Option<usize> {
+    /// Get `EpisodeRef` for a neighborhood UUID.
+    pub fn get_episode_ref_for_neighborhood(
+        &mut self,
+        neighborhood_id: Uuid,
+    ) -> Option<EpisodeRef> {
         self.ensure_indexes();
         self.neighborhood_episode_index
             .get(&neighborhood_id)

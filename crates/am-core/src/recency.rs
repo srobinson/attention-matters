@@ -4,19 +4,15 @@
 //! applies a hyperbolic decay to scoring. Decision and Preference
 //! neighborhoods are exempt from recency decay in the caller.
 
-use crate::system::DAESystem;
+use crate::system::{DAESystem, EpisodeRef};
 
 /// Recency decay coefficient for non-decision memories.
 /// score *= 1.0 / (1.0 + `days_old` * `RECENCY_DECAY_RATE`)
 pub(crate) const RECENCY_DECAY_RATE: f64 = 0.01;
 
 /// Compute days since an episode's timestamp (empty or unparseable returns 0.0).
-pub(crate) fn days_since_episode(system: &DAESystem, episode_idx: usize) -> f64 {
-    let timestamp = if episode_idx == usize::MAX {
-        &system.conscious_episode.timestamp
-    } else {
-        &system.episodes[episode_idx].timestamp
-    };
+pub(crate) fn days_since_episode(system: &DAESystem, episode_ref: EpisodeRef) -> f64 {
+    let timestamp = &system.resolve_episode(episode_ref).timestamp;
     if timestamp.is_empty() {
         return 0.0;
     }

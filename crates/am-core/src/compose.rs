@@ -258,7 +258,7 @@ pub fn compose_context(
         selected_ids.insert(entry.neighborhood_id);
         subconscious_ids.push(entry.neighborhood_id);
         te_subconscious += estimate_llm_tokens(&entry.text);
-        let ep_name = get_episode_name(system, entry.episode_idx);
+        let ep_name = get_episode_name(system, entry.episode_ref);
         if !parts.is_empty() {
             parts.push(String::new());
         }
@@ -286,7 +286,7 @@ pub fn compose_context(
         selected_ids.insert(best.neighborhood_id);
         novel_ids.push(best.neighborhood_id);
         te_novel += estimate_llm_tokens(&best.text);
-        let ep_name = get_episode_name(system, best.episode_idx);
+        let ep_name = get_episode_name(system, best.episode_ref);
         if !parts.is_empty() {
             parts.push(String::new());
         }
@@ -388,7 +388,7 @@ pub fn compose_context_budgeted(
         }
         selected_ids.insert(candidate.neighborhood_id);
         *tokens_used += cost;
-        let ep_name = get_episode_name(system, candidate.episode_idx);
+        let ep_name = get_episode_name(system, candidate.episode_ref);
         included.push(IncludedFragment {
             neighborhood_id: candidate.neighborhood_id,
             episode_name: ep_name,
@@ -701,17 +701,15 @@ pub fn retrieve_by_ids(system: &mut DAESystem, ids: &[Uuid]) -> Vec<IncludedFrag
             continue;
         };
 
-        let (nbhd, episode_name, category) = if n_ref.is_conscious() {
-            let nbhd = &system.conscious_episode.neighborhoods[n_ref.neighborhood_idx];
+        let episode = system.resolve_episode(n_ref.episode_ref);
+        let nbhd = &episode.neighborhoods[n_ref.neighborhood_idx];
+        let (episode_name, category) = if n_ref.is_conscious() {
             (
-                nbhd,
                 "Previously marked salient".to_string(),
                 RecallCategory::Conscious,
             )
         } else {
-            let episode = &system.episodes[n_ref.episode_idx];
-            let nbhd = &episode.neighborhoods[n_ref.neighborhood_idx];
-            (nbhd, episode.name.clone(), RecallCategory::Subconscious)
+            (episode.name.clone(), RecallCategory::Subconscious)
         };
 
         let text = if nbhd.source_text.is_empty() {
@@ -752,6 +750,7 @@ mod tests {
     use crate::salient::{detect_neighborhood_type, extract_salient, mark_salient_typed};
     use crate::scoring::idf_weighted_overlap;
     use crate::surface::compute_surface;
+    use crate::system::EpisodeRef;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 
@@ -2320,7 +2319,7 @@ mod tests {
         let candidates = vec![
             RankedCandidate {
                 neighborhood_id: decision_id,
-                episode_idx: usize::MAX,
+                episode_ref: EpisodeRef::Conscious,
                 category: RecallCategory::Conscious,
                 score: 10.0,
                 text: "decision".to_string(),
@@ -2329,7 +2328,7 @@ mod tests {
             },
             RankedCandidate {
                 neighborhood_id: standard_id,
-                episode_idx: 0,
+                episode_ref: EpisodeRef::Subconscious(0),
                 category: RecallCategory::Subconscious,
                 score: 10.0,
                 text: "standard".to_string(),
@@ -2433,7 +2432,7 @@ mod tests {
         let mut candidates = [
             RankedCandidate {
                 neighborhood_id: Uuid::new_v4(),
-                episode_idx: 0,
+                episode_ref: EpisodeRef::Subconscious(0),
                 category: RecallCategory::Conscious,
                 score: 0.5,
                 text: "normal".to_string(),
@@ -2442,7 +2441,7 @@ mod tests {
             },
             RankedCandidate {
                 neighborhood_id: Uuid::new_v4(),
-                episode_idx: 1,
+                episode_ref: EpisodeRef::Subconscious(1),
                 category: RecallCategory::Conscious,
                 score: f64::NAN,
                 text: "degenerate".to_string(),
@@ -2451,7 +2450,7 @@ mod tests {
             },
             RankedCandidate {
                 neighborhood_id: Uuid::new_v4(),
-                episode_idx: 2,
+                episode_ref: EpisodeRef::Subconscious(2),
                 category: RecallCategory::Conscious,
                 score: 0.8,
                 text: "high".to_string(),
@@ -2460,7 +2459,7 @@ mod tests {
             },
             RankedCandidate {
                 neighborhood_id: Uuid::new_v4(),
-                episode_idx: 3,
+                episode_ref: EpisodeRef::Subconscious(3),
                 category: RecallCategory::Conscious,
                 score: f64::INFINITY,
                 text: "inf".to_string(),

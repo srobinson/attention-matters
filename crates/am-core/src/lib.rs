@@ -71,6 +71,6 @@ pub use query::{QueryEngine, QueryResult};
 pub use salient::{detect_neighborhood_type, extract_salient, mark_salient_typed};
 pub use serde_compat::{CURRENT_VERSION, export_json, import_json};
 pub use surface::{SurfaceResult, compute_surface};
-pub use system::{DAESystem, NeighborhoodRef, OccurrenceRef};
+pub use system::{DAESystem, EpisodeRef, NeighborhoodRef, OccurrenceRef};
 pub use time::{now_iso8601, now_unix_secs, unix_to_iso8601};
 pub use tokenizer::{ingest_text, token_count, tokenize};
