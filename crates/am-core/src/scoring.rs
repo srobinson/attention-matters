@@ -8,14 +8,13 @@ use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
 
+use crate::compose::RecallCategory;
 use crate::neighborhood::NeighborhoodType;
 use crate::query::{InterferenceResult, QueryResult};
 use crate::recency::{RECENCY_DECAY_RATE, days_since_episode};
 use crate::surface::SurfaceResult;
 use crate::system::{DAESystem, OccurrenceRef};
 use crate::tokenizer::token_count;
-
-use super::compose::RecallCategory;
 
 /// Multiplier for Decision/Preference neighborhoods.
 /// Decisions that genuinely match the query score this many times higher.
