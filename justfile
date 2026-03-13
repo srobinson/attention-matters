@@ -15,5 +15,8 @@ clippy:
 
 check: fmt clippy
 
+audit:
+    cargo audit
+
 install:
     cargo install --path crates/am-cli
