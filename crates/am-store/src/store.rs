@@ -1445,6 +1445,96 @@ mod tests {
         );
     }
 
+    /// Regression guard for the single-JOIN load_system implementation.
+    /// Builds a system with 500+ occurrences across multiple episodes and
+    /// neighborhoods, round-trips through SQLite, and asserts structural
+    /// and numerical equivalence.
+    #[test]
+    fn test_load_system_roundtrip_500_occurrences() {
+        let store = Store::open_in_memory().unwrap();
+        let mut rng = rng();
+        let mut sys = DAESystem::new("roundtrip-agent");
+
+        // 10 episodes x 5 neighborhoods x 12 tokens = 600 occurrences
+        let words: Vec<String> = (0..12).map(|i| format!("word{i}")).collect();
+        for ep_idx in 0..10 {
+            let mut ep = Episode::new(&format!("ep-{ep_idx}"));
+            for _ in 0..5 {
+                let n = Neighborhood::from_tokens(&words, None, "source text", &mut rng);
+                ep.add_neighborhood(n);
+            }
+            sys.add_episode(ep);
+        }
+        // Add conscious content
+        sys.add_to_conscious("conscious roundtrip content", &mut rng);
+
+        // Set varied activation counts to test numeric fidelity
+        for (i, ep) in sys.episodes.iter_mut().enumerate() {
+            for nbhd in &mut ep.neighborhoods {
+                for (j, occ) in nbhd.occurrences.iter_mut().enumerate() {
+                    occ.activation_count = (i * 100 + j) as u32;
+                }
+            }
+        }
+
+        let total_before: usize = sys
+            .episodes
+            .iter()
+            .chain(std::iter::once(&sys.conscious_episode))
+            .map(|e| {
+                e.neighborhoods
+                    .iter()
+                    .map(|n| n.occurrences.len())
+                    .sum::<usize>()
+            })
+            .sum();
+        assert!(
+            total_before >= 500,
+            "precondition: need 500+ occurrences, got {total_before}"
+        );
+
+        store.save_system(&sys).unwrap();
+        let loaded = store.load_system().unwrap();
+
+        // Structural equivalence
+        assert_eq!(loaded.agent_name, "roundtrip-agent");
+        assert_eq!(loaded.episodes.len(), sys.episodes.len());
+        assert!(loaded.conscious_episode.is_conscious);
+
+        let total_after: usize = loaded
+            .episodes
+            .iter()
+            .chain(std::iter::once(&loaded.conscious_episode))
+            .map(|e| {
+                e.neighborhoods
+                    .iter()
+                    .map(|n| n.occurrences.len())
+                    .sum::<usize>()
+            })
+            .sum();
+        assert_eq!(total_before, total_after);
+
+        // Per-episode neighborhood count
+        for (orig, loaded_ep) in sys.episodes.iter().zip(loaded.episodes.iter()) {
+            assert_eq!(orig.neighborhoods.len(), loaded_ep.neighborhoods.len());
+            assert_eq!(orig.name, loaded_ep.name);
+        }
+
+        // Spot-check activation counts survive roundtrip
+        assert_eq!(
+            loaded.episodes[3].neighborhoods[2].occurrences[1].activation_count,
+            (3 * 100 + 1) as u32,
+        );
+
+        // Quaternion precision
+        let orig_pos = sys.episodes[0].neighborhoods[0].occurrences[0].position;
+        let load_pos = loaded.episodes[0].neighborhoods[0].occurrences[0].position;
+        assert!(
+            orig_pos.angular_distance(load_pos) < 1e-10,
+            "quaternion drift on roundtrip"
+        );
+    }
+
     #[test]
     fn test_health_check() {
         let store = Store::open_in_memory().unwrap();
