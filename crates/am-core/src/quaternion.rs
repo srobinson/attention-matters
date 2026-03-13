@@ -62,10 +62,16 @@ impl Quaternion {
         self.w * other.w + self.x * other.x + self.y * other.y + self.z * other.z
     }
 
-    /// Geodesic distance on S³. Range: [0, π].
-    /// Uses abs(dot) to handle antipodal equivalence.
+    /// Geodesic distance in SO(3) rotation space. Range: [0, π].
+    ///
+    /// Uses `abs(dot)` so that antipodal quaternions q and -q return distance 0,
+    /// because they represent the same rotation. This differs from raw S³ manifold
+    /// distance, where q and -q are π apart.
+    ///
+    /// The SLERP implementation handles antipodal pairs differently: it flips the
+    /// sign to take the shorter arc rather than collapsing to zero.
     pub fn angular_distance(self, other: Self) -> f64 {
-        let d = self.dot(other).abs().clamp(-1.0, 1.0);
+        let d = self.dot(other).abs().clamp(0.0, 1.0);
         2.0 * d.acos()
     }
 
