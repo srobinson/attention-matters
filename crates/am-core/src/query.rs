@@ -56,7 +56,24 @@ impl QueryEngine {
         result
     }
 
-    /// Full query pipeline: activate → drift → interference → Kuramoto → return.
+    /// Full query pipeline: activate, drift, interference, Kuramoto, return.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use am_core::{DAESystem, QueryEngine, ingest_text};
+    /// use rand::SeedableRng;
+    /// use rand::rngs::SmallRng;
+    ///
+    /// let mut system = DAESystem::new("test");
+    /// let mut rng = SmallRng::seed_from_u64(42);
+    /// let episode = ingest_text("Rust ownership and borrowing rules", None, &mut rng);
+    /// system.add_episode(episode);
+    ///
+    /// let result = QueryEngine::process_query(&mut system, "ownership");
+    /// // Activation should find at least one occurrence of "ownership"
+    /// assert!(!result.activation.subconscious.is_empty());
+    /// ```
     pub fn process_query(system: &mut DAESystem, query: &str) -> QueryResult {
         let activation = Self::activate(system, query);
 

@@ -10,6 +10,35 @@ use crate::constants::{EPSILON, SLERP_THRESHOLD};
 /// Always normalized. Represents rotations and positions on the 3-sphere.
 /// Antipodal quaternions (q and -q) represent the same rotation but different
 /// points on S³ - the geodesic distance function handles this via abs(dot).
+///
+/// # Examples
+///
+/// ```
+/// use am_core::Quaternion;
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// // Create a unit quaternion (auto-normalized)
+/// let q = Quaternion::new(1.0, 2.0, 3.0, 4.0);
+/// let norm = (q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z).sqrt();
+/// assert!((norm - 1.0).abs() < 1e-10);
+///
+/// // Random quaternion on S³
+/// let mut rng = SmallRng::seed_from_u64(42);
+/// let r = Quaternion::random(&mut rng);
+/// let r_norm = (r.w * r.w + r.x * r.x + r.y * r.y + r.z * r.z).sqrt();
+/// assert!((r_norm - 1.0).abs() < 1e-10);
+///
+/// // SLERP interpolation
+/// let a = Quaternion::identity();
+/// let b = Quaternion::random(&mut rng);
+/// let mid = a.slerp(b, 0.5);
+/// let mid_norm = (mid.w * mid.w + mid.x * mid.x + mid.y * mid.y + mid.z * mid.z).sqrt();
+/// assert!((mid_norm - 1.0).abs() < 1e-10);
+///
+/// // Geodesic distance: self-distance is zero
+/// assert!(a.angular_distance(a) < 1e-7);
+/// ```
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Quaternion {
     pub w: f64,

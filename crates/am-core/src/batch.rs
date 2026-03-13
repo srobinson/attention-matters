@@ -37,6 +37,27 @@ pub struct BatchQueryResult {
 }
 
 /// Batch query engine that amortizes activation and IDF across multiple queries.
+///
+/// # Examples
+///
+/// ```
+/// use am_core::{DAESystem, BatchQueryEngine, BatchQueryRequest, ingest_text};
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// let mut system = DAESystem::new("test");
+/// let mut rng = SmallRng::seed_from_u64(42);
+/// let ep = ingest_text("Geometric algebra for computer graphics", None, &mut rng);
+/// system.add_episode(ep);
+///
+/// let requests = vec![
+///     BatchQueryRequest { query: "algebra".into(), max_tokens: None },
+///     BatchQueryRequest { query: "graphics".into(), max_tokens: Some(500) },
+/// ];
+///
+/// let results = BatchQueryEngine::batch_query(&mut system, &requests);
+/// assert_eq!(results.len(), 2);
+/// ```
 pub struct BatchQueryEngine;
 
 impl BatchQueryEngine {

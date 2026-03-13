@@ -114,6 +114,25 @@ pub struct ActivationResult {
 /// The current design is acceptable because all methods operate on the same
 /// two fields (`episodes` + `conscious_episode`) and the four index maps are
 /// cache-like derived state, not independent concerns.
+///
+/// # Examples
+///
+/// ```
+/// use am_core::{DAESystem, ingest_text};
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// let mut system = DAESystem::new("test-agent");
+/// assert_eq!(system.n(), 0);
+///
+/// // Ingest text into an episode, then add it to the system
+/// let mut rng = SmallRng::seed_from_u64(42);
+/// let episode = ingest_text("The quick brown fox jumps over the lazy dog", None, &mut rng);
+/// system.add_episode(episode);
+///
+/// assert!(system.n() > 0);
+/// assert_eq!(system.episodes.len(), 1);
+/// ```
 #[derive(Serialize, Deserialize)]
 pub struct DAESystem {
     pub episodes: Vec<Episode>,

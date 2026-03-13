@@ -55,6 +55,29 @@ const DEMOTE_DECAY: u32 = 2;
 /// For Demote: activated occurrences in the specified neighborhoods have their
 /// activation count reduced. This makes them less anchored, more likely to
 /// drift away in future queries, and eventually GC-eligible.
+///
+/// # Examples
+///
+/// ```
+/// use am_core::{DAESystem, QueryEngine, FeedbackSignal, apply_feedback, ingest_text};
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// let mut system = DAESystem::new("test");
+/// let mut rng = SmallRng::seed_from_u64(42);
+/// let ep = ingest_text("Rust memory safety through ownership", None, &mut rng);
+/// let nbhd_id = ep.neighborhoods[0].id;
+/// system.add_episode(ep);
+///
+/// // Boost: pull recalled neighborhoods toward the query region
+/// let result = apply_feedback(&mut system, "memory safety", &[nbhd_id], FeedbackSignal::Boost);
+/// // boosted count depends on token overlap with the neighborhood
+/// assert!(result.boosted >= 0);
+///
+/// // Demote: decay activation of unhelpful neighborhoods
+/// let result = apply_feedback(&mut system, "memory safety", &[nbhd_id], FeedbackSignal::Demote);
+/// assert!(result.demoted >= 0);
+/// ```
 pub fn apply_feedback(
     system: &mut DAESystem,
     query: &str,

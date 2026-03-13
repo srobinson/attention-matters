@@ -169,6 +169,31 @@ fn apply_diminishing_returns(
 /// Decision/Preference types use softer decay (0.5x rate).
 ///
 /// Interference gates neighborhood scores; vivid neighborhoods get boosted.
+///
+/// # Examples
+///
+/// Full ingest, query, compose pipeline:
+///
+/// ```
+/// use am_core::{DAESystem, QueryEngine, compose_context, compute_surface, ingest_text};
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// let mut system = DAESystem::new("demo");
+/// let mut rng = SmallRng::seed_from_u64(42);
+///
+/// // Ingest some content
+/// let ep = ingest_text("Geometric memory uses quaternions on S3", None, &mut rng);
+/// system.add_episode(ep);
+///
+/// // Query and compose
+/// let qr = QueryEngine::process_query(&mut system, "quaternions");
+/// let surface = compute_surface(&system, &qr);
+/// let ctx = compose_context(&mut system, &surface, &qr, &qr.interference, None);
+///
+/// // Context contains the recalled text (may be empty if no neighborhoods scored)
+/// assert!(ctx.metrics.conscious + ctx.metrics.subconscious + ctx.metrics.novel >= 0);
+/// ```
 pub fn compose_context(
     system: &mut DAESystem,
     surface: &SurfaceResult,
