@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -73,6 +73,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_occ_word ON occurrences(word);
         CREATE INDEX IF NOT EXISTS idx_occ_neighborhood ON occurrences(neighborhood_id);
         CREATE INDEX IF NOT EXISTS idx_nbhd_episode ON neighborhoods(episode_id);
+
         ",
     )?;
 
@@ -103,6 +104,15 @@ pub fn initialize(conn: &Connection) -> Result<()> {
     {
         conn.execute_batch("ALTER TABLE neighborhoods ADD COLUMN superseded_by TEXT;")?;
     }
+
+    // v6: Add indexes for GC and query paths (after column migrations above)
+    conn.execute_batch(
+        "
+        CREATE INDEX IF NOT EXISTS idx_ep_conscious ON episodes(is_conscious);
+        CREATE INDEX IF NOT EXISTS idx_occ_activation ON occurrences(activation_count);
+        CREATE INDEX IF NOT EXISTS idx_nbhd_episode_epoch ON neighborhoods(episode_id, epoch);
+        ",
+    )?;
 
     // Backfill empty timestamps on existing episodes using rowid order.
     // Episodes are inserted chronologically, so rowid gives relative ordering.
