@@ -38,7 +38,7 @@ impl Occurrence {
 
     /// Increment activation count.
     pub fn activate(&mut self) {
-        self.activation_count += 1;
+        self.activation_count = self.activation_count.saturating_add(1);
     }
 
     /// OpenClaw drift rate formula: ratio / THRESHOLD, capped at 0.
@@ -173,5 +173,16 @@ mod tests {
     fn test_drift_rate_zero_container() {
         let occ = make_occ("test", 5);
         assert_eq!(occ.drift_rate(0), 0.0);
+    }
+
+    #[test]
+    fn test_activate_saturates_at_max() {
+        let mut occ = make_occ("test", u32::MAX);
+        occ.activate();
+        assert_eq!(
+            occ.activation_count,
+            u32::MAX,
+            "activation_count should saturate at u32::MAX, not wrap to 0"
+        );
     }
 }
