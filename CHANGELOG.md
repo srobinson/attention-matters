@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.17](https://github.com/srobinson/attention-matters/compare/v0.1.16...v0.1.17) (2026-03-13)
+
+
+### Features
+
+* post-v0.1.16 remediation — incremental persistence, core math hardening, CLI/server fixes ([#29](https://github.com/srobinson/attention-matters/issues/29)) ([6123f95](https://github.com/srobinson/attention-matters/commit/6123f95f9942afa40201ee1239ecfa099674149c))
+
 ## [0.1.16](https://github.com/srobinson/attention-matters/compare/v0.1.15...v0.1.16) (2026-03-13)
 
 
