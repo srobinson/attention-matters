@@ -27,6 +27,17 @@ const DEDUP_WINDOW_SECS: u64 = 60;
 /// Maximum input size for text-accepting MCP tools (1 MB).
 const MAX_TOOL_INPUT_BYTES: usize = 1_048_576;
 
+/// Reject input that exceeds the per-tool byte limit.
+fn check_input_size(value: &str, field: &str) -> Result<(), McpError> {
+    if value.len() > MAX_TOOL_INPUT_BYTES {
+        return Err(McpError::invalid_params(
+            format!("{field} exceeds {} byte limit", MAX_TOOL_INPUT_BYTES),
+            None,
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct AmServer {
     state: Arc<Mutex<ServerState>>,
@@ -249,6 +260,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         // Snapshot session_recalled before destructuring (avoids borrow conflict)
         let session_recalled_snapshot = state.session_recalled.clone();
@@ -398,6 +410,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<QueryIndexRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         let session_recalled_snapshot = state.session_recalled.clone();
         let ServerState {
@@ -503,6 +516,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<ActivateResponseRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         let ServerState { system, store, .. } = &mut *state;
 
@@ -542,12 +556,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<SalientRequest>,
     ) -> Result<CallToolResult, McpError> {
-        if req.text.len() > MAX_TOOL_INPUT_BYTES {
-            return Err(McpError::invalid_params(
-                format!("text exceeds {} byte limit", MAX_TOOL_INPUT_BYTES),
-                None,
-            ));
-        }
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         let ServerState {
             system, store, rng, ..
@@ -694,12 +703,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<IngestRequest>,
     ) -> Result<CallToolResult, McpError> {
-        if req.text.len() > MAX_TOOL_INPUT_BYTES {
-            return Err(McpError::invalid_params(
-                format!("text exceeds {} byte limit", MAX_TOOL_INPUT_BYTES),
-                None,
-            ));
-        }
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         let ServerState {
             system, store, rng, ..
@@ -800,6 +804,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<FeedbackRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.query, "query")?;
         let mut state = self.state.lock().await;
         let ServerState { system, store, .. } = &mut *state;
 
@@ -854,6 +859,16 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<McpBatchQueryRequest>,
     ) -> Result<CallToolResult, McpError> {
+        let total_len: usize = req.queries.iter().map(|q| q.query.len()).sum();
+        if total_len > MAX_TOOL_INPUT_BYTES {
+            return Err(McpError::invalid_params(
+                format!(
+                    "aggregate query text ({total_len} bytes) exceeds {} byte limit",
+                    MAX_TOOL_INPUT_BYTES
+                ),
+                None,
+            ));
+        }
         let mut state = self.state.lock().await;
         let ServerState {
             system, store, rng, ..
@@ -1956,5 +1971,77 @@ mod tests {
         let budget_large = &results[1]["budget"];
         assert_eq!(budget_small["tokens_budget"], 50);
         assert_eq!(budget_large["tokens_budget"], 5000);
+    }
+
+    #[tokio::test]
+    async fn test_am_query_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_query(Parameters(QueryRequest {
+                text: oversized,
+                max_tokens: None,
+            }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_activate_response_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_activate_response(Parameters(ActivateResponseRequest { text: oversized }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_rejects_oversized_query() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: oversized,
+                neighborhood_ids: vec![],
+                signal: "boost".to_string(),
+            }))
+            .await;
+        assert!(result.is_err(), "should reject query exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_batch_query_rejects_oversized_aggregate() {
+        let server = make_server();
+        // Each query is half the limit; together they exceed it
+        let half_plus = "x".repeat(MAX_TOOL_INPUT_BYTES / 2 + 1);
+        let result = server
+            .am_batch_query(Parameters(McpBatchQueryRequest {
+                queries: vec![
+                    BatchQueryItem {
+                        query: half_plus.clone(),
+                        max_tokens: None,
+                    },
+                    BatchQueryItem {
+                        query: half_plus,
+                        max_tokens: None,
+                    },
+                ],
+            }))
+            .await;
+        assert!(
+            result.is_err(),
+            "should reject aggregate payload exceeding size limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_query_index_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_query_index(Parameters(QueryIndexRequest { text: oversized }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
     }
 }

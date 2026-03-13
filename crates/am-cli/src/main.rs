@@ -8,7 +8,7 @@ use std::io::Write;
 use am_core::{QueryEngine, compose_context, compute_surface, export_json, ingest_text};
 use am_store::{BrainStore, Config};
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ColorChoice, Parser, Subcommand, ValueEnum};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rmcp::{ServiceExt, transport::stdio};
@@ -63,7 +63,8 @@ Configuration:  ~/.attention-matters/.am.config.toml
     AM_DB_SIZE_MB   DB size limit in MB for GC threshold (default: 50)
 
 https://github.com/srobinson/attention-matters",
-    version
+    version,
+    color = ColorChoice::Auto
 )]
 struct Cli {
     /// Enable verbose debug output
