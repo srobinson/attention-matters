@@ -46,6 +46,28 @@ struct ServerState {
     dedup_window: HashMap<u64, Instant>,
 }
 
+/// Flush orphaned buffer entries from the store into the system as a conversation episode.
+///
+/// Called at the start of query paths to ensure buffered exchanges from previous
+/// sessions are ingested before recall. Persists the system state after ingestion.
+fn flush_orphaned_buffer(store: &BrainStore, system: &mut DAESystem, rng: &mut SmallRng) {
+    let orphaned = store.store().buffer_count().unwrap_or(0);
+    if orphaned > 0
+        && let Ok(exchanges) = store.store().drain_buffer()
+    {
+        let combined: String = exchanges
+            .iter()
+            .map(|(u, a)| format!("{u}\n{a}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let episode = ingest_text(&combined, Some("conversation"), rng);
+        system.add_episode(episode);
+        if let Err(e) = store.save_system(system) {
+            tracing::error!("failed to persist flushed buffer episode: {e}");
+        }
+    }
+}
+
 impl AmServer {
     pub fn new(store: BrainStore) -> std::result::Result<Self, String> {
         let system = store
@@ -211,22 +233,7 @@ impl AmServer {
             system, store, rng, ..
         } = &mut *state;
 
-        // Flush any orphaned buffer from previous sessions into an episode
-        let orphaned = store.store().buffer_count().unwrap_or(0);
-        if orphaned > 0
-            && let Ok(exchanges) = store.store().drain_buffer()
-        {
-            let combined: String = exchanges
-                .iter()
-                .map(|(u, a)| format!("{u}\n{a}"))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let episode = ingest_text(&combined, Some("conversation"), rng);
-            system.add_episode(episode);
-            if let Err(e) = store.save_system(system) {
-                tracing::error!("failed to persist flushed buffer episode: {e}");
-            }
-        }
+        flush_orphaned_buffer(store, system, rng);
 
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
@@ -374,22 +381,7 @@ impl AmServer {
             system, store, rng, ..
         } = &mut *state;
 
-        // Flush any orphaned buffer
-        let orphaned = store.store().buffer_count().unwrap_or(0);
-        if orphaned > 0
-            && let Ok(exchanges) = store.store().drain_buffer()
-        {
-            let combined: String = exchanges
-                .iter()
-                .map(|(u, a)| format!("{u}\n{a}"))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let episode = ingest_text(&combined, Some("conversation"), rng);
-            system.add_episode(episode);
-            if let Err(e) = store.save_system(system) {
-                tracing::error!("failed to persist flushed buffer episode: {e}");
-            }
-        }
+        flush_orphaned_buffer(store, system, rng);
 
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
@@ -840,22 +832,11 @@ impl AmServer {
         Parameters(req): Parameters<McpBatchQueryRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
-        let ServerState { system, store, .. } = &mut *state;
+        let ServerState {
+            system, store, rng, ..
+        } = &mut *state;
 
-        // Flush orphaned buffer (same as am_query)
-        let orphaned = store.store().buffer_count().unwrap_or(0);
-        if orphaned > 0
-            && let Ok(exchanges) = store.store().drain_buffer()
-        {
-            let combined: String = exchanges
-                .iter()
-                .map(|(u, a)| format!("{u}\n{a}"))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let rng = &mut SmallRng::from_os_rng();
-            let episode = ingest_text(&combined, Some("conversation"), rng);
-            system.add_episode(episode);
-        }
+        flush_orphaned_buffer(store, system, rng);
 
         let requests: Vec<am_core::batch::BatchQueryRequest> = req
             .queries
