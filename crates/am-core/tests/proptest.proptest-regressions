@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 86a1dc3c6d63e25fb3760cdae59c2873f9f3c48e8210da2bbbd888fdb30ca8f3 # shrinks to a = Quaternion { w: -0.5, x: -0.5, y: -0.5, z: -0.5 }, b = Quaternion { w: -0.4999999986712942, x: -0.5000000004429019, y: -0.5000000004429019, z: -0.5000000004429019 }, c = Quaternion { w: -0.2919890277456276, x: -0.552190307676669, y: -0.552190307676669, z: -0.552190307676669 }
+cc d176550191ca01e5cbf64d05b73a71c4094f60d1c3d31a8b23e0fb94025adb9f # shrinks to q = Quaternion { w: -0.5, x: -0.5, y: -0.49999999999999983, z: -0.5 }

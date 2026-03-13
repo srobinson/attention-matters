@@ -10,9 +10,7 @@ impl Store {
     /// Import a v0.7.2 JSON export file into this store.
     /// Handles both "phasor" and "theta" field names (via am-core serde alias).
     pub fn import_json_file(&self, path: &Path) -> Result<()> {
-        let json = fs::read_to_string(path).map_err(|e| {
-            StoreError::InvalidData(format!("failed to read {}: {e}", path.display()))
-        })?;
+        let json = fs::read_to_string(path)?;
         let system = import_json(&json)
             .map_err(|e| StoreError::InvalidData(format!("invalid JSON: {e}")))?;
         self.save_system(&system)
@@ -28,9 +26,10 @@ impl Store {
     /// Export the store contents to a v0.7.2 JSON file.
     pub fn export_json_file(&self, path: &Path) -> Result<()> {
         let json = self.export_json_string()?;
-        fs::write(path, json).map_err(|e| {
-            StoreError::InvalidData(format!("failed to write {}: {e}", path.display()))
-        })
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, json)?;
+        fs::rename(&tmp, path)?;
+        Ok(())
     }
 
     /// Export the store contents as a v0.7.2 JSON string.

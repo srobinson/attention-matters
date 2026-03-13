@@ -75,10 +75,6 @@ impl Store {
         Ok(Self { conn })
     }
 
-    pub fn conn(&self) -> &Connection {
-        &self.conn
-    }
-
     /// Verify the connection is still usable.
     pub fn health_check(&self) -> Result<()> {
         self.conn
@@ -237,109 +233,123 @@ impl Store {
 
         let mut system = DAESystem::new(&agent_name);
 
-        let mut ep_stmt = self
-            .conn
-            .prepare("SELECT id, name, is_conscious, timestamp FROM episodes ORDER BY rowid")?;
+        // Single three-way JOIN replaces the previous 1 + N + N*M query pattern.
+        // LEFT JOINs handle episodes with no neighborhoods and neighborhoods with no occurrences.
+        let mut stmt = self.conn.prepare(
+            "SELECT e.id, e.name, e.is_conscious, e.timestamp,
+                    n.id, n.seed_w, n.seed_x, n.seed_y, n.seed_z,
+                    n.source_text, COALESCE(n.neighborhood_type, 'memory'),
+                    n.epoch, n.superseded_by,
+                    o.id, o.word, o.pos_w, o.pos_x, o.pos_y, o.pos_z,
+                    o.phasor_theta, o.activation_count
+             FROM episodes e
+             LEFT JOIN neighborhoods n ON n.episode_id = e.id
+             LEFT JOIN occurrences o ON o.neighborhood_id = n.id
+             ORDER BY e.rowid, n.rowid, o.rowid",
+        )?;
 
-        let episodes: Vec<(String, String, bool, String)> = ep_stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, i32>(2)? != 0,
-                    row.get::<_, String>(3)?,
-                ))
-            })?
-            .collect::<std::result::Result<_, _>>()?;
+        // Track current episode and neighborhood being assembled.
+        let mut current_ep_id: Option<String> = None;
+        let mut current_nbhd_id: Option<String> = None;
+        let mut current_episode: Option<Episode> = None;
+        let mut current_nbhd: Option<Neighborhood> = None;
 
-        for (ep_id_str, name, is_conscious, timestamp) in episodes {
-            let ep_id = parse_uuid(&ep_id_str)?;
-            let neighborhoods = self.load_neighborhoods(&ep_id_str)?;
+        let mut rows = stmt.query([])?;
+        while let Some(row) = rows.next()? {
+            let ep_id_str: String = row.get(0)?;
+            let nbhd_id_str: Option<String> = row.get(4)?;
+            let occ_id_str: Option<String> = row.get(13)?;
 
-            let episode = Episode {
-                id: ep_id,
-                name,
-                is_conscious,
-                timestamp,
-                neighborhoods,
-            };
+            // Episode boundary: flush previous neighborhood and episode
+            if current_ep_id.as_ref() != Some(&ep_id_str) {
+                if let Some(nbhd) = current_nbhd.take()
+                    && let Some(ep) = current_episode.as_mut()
+                {
+                    ep.neighborhoods.push(nbhd);
+                }
+                current_nbhd_id = None;
+                if let Some(ep) = current_episode.take() {
+                    if ep.is_conscious {
+                        system.conscious_episode = ep;
+                    } else {
+                        system.episodes.push(ep);
+                    }
+                }
 
-            if is_conscious {
-                system.conscious_episode = episode;
+                let ep_id = parse_uuid(&ep_id_str)?;
+                current_episode = Some(Episode {
+                    id: ep_id,
+                    name: row.get(1)?,
+                    is_conscious: row.get::<_, i32>(2)? != 0,
+                    timestamp: row.get(3)?,
+                    neighborhoods: Vec::new(),
+                });
+                current_ep_id = Some(ep_id_str);
+            }
+
+            // Neighborhood boundary
+            if let Some(ref nid) = nbhd_id_str
+                && current_nbhd_id.as_ref() != Some(nid)
+            {
+                if let Some(nbhd) = current_nbhd.take()
+                    && let Some(ep) = current_episode.as_mut()
+                {
+                    ep.neighborhoods.push(nbhd);
+                }
+
+                let id = parse_uuid(nid)?;
+                let superseded_by: Option<String> = row.get(12)?;
+                current_nbhd = Some(Neighborhood {
+                    id,
+                    seed: Quaternion::new(row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?),
+                    occurrences: Vec::new(),
+                    source_text: row.get(9)?,
+                    neighborhood_type: NeighborhoodType::from_str_lossy(&row.get::<_, String>(10)?),
+                    epoch: row.get(11)?,
+                    superseded_by: superseded_by.and_then(|s| Uuid::parse_str(&s).ok()),
+                });
+                current_nbhd_id = Some(nid.clone());
+            }
+
+            // Occurrence row
+            if let (Some(oid), Some(nid)) = (&occ_id_str, &nbhd_id_str) {
+                let id = parse_uuid(oid)?;
+                let nbhd_uuid = parse_uuid(nid)?;
+                if let Some(nbhd) = current_nbhd.as_mut() {
+                    nbhd.occurrences.push(Occurrence {
+                        id,
+                        neighborhood_id: nbhd_uuid,
+                        word: row.get(14)?,
+                        position: Quaternion::new(
+                            row.get(15)?,
+                            row.get(16)?,
+                            row.get(17)?,
+                            row.get(18)?,
+                        ),
+                        phasor: DaemonPhasor::new(row.get(19)?),
+                        activation_count: row.get(20)?,
+                    });
+                }
+            }
+        }
+
+        // Flush remaining neighborhood and episode
+        if let Some(nbhd) = current_nbhd.take()
+            && let Some(ep) = current_episode.as_mut()
+        {
+            ep.neighborhoods.push(nbhd);
+        }
+        if let Some(ep) = current_episode.take() {
+            if ep.is_conscious {
+                system.conscious_episode = ep;
             } else {
-                system.episodes.push(episode);
+                system.episodes.push(ep);
             }
         }
 
         system.mark_dirty();
         system.sync_next_epoch();
         Ok(system)
-    }
-
-    fn load_neighborhoods(&self, episode_id: &str) -> Result<Vec<Neighborhood>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, seed_w, seed_x, seed_y, seed_z, source_text, COALESCE(neighborhood_type, 'memory'), epoch, superseded_by
-             FROM neighborhoods WHERE episode_id = ?1 ORDER BY rowid",
-        )?;
-
-        let mut neighborhoods = Vec::new();
-        let mut query_rows = stmt.query([episode_id])?;
-        while let Some(row) = query_rows.next()? {
-            let id_str: String = row.get(0)?;
-            let id = parse_uuid(&id_str)?;
-            let occurrences = self.load_occurrences(&id_str)?;
-            let superseded_by: Option<String> = row.get(8)?;
-
-            neighborhoods.push(Neighborhood {
-                id,
-                seed: Quaternion::new(row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?),
-                occurrences,
-                source_text: row.get(5)?,
-                neighborhood_type: NeighborhoodType::from_str_lossy(&row.get::<_, String>(6)?),
-                epoch: row.get(7)?,
-                superseded_by: superseded_by.and_then(|s| Uuid::parse_str(&s).ok()),
-            });
-        }
-
-        Ok(neighborhoods)
-    }
-
-    fn load_occurrences(&self, neighborhood_id: &str) -> Result<Vec<Occurrence>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, word, pos_w, pos_x, pos_y, pos_z, phasor_theta, activation_count
-             FROM occurrences WHERE neighborhood_id = ?1 ORDER BY rowid",
-        )?;
-
-        let occurrences = stmt
-            .query_map([neighborhood_id], |row| {
-                let id_str: String = row.get(0)?;
-                let word: String = row.get(1)?;
-                let w: f64 = row.get(2)?;
-                let x: f64 = row.get(3)?;
-                let y: f64 = row.get(4)?;
-                let z: f64 = row.get(5)?;
-                let theta: f64 = row.get(6)?;
-                let activation_count: u32 = row.get(7)?;
-                Ok((id_str, word, w, x, y, z, theta, activation_count))
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-
-        let nbhd_id = parse_uuid(neighborhood_id)?;
-
-        occurrences
-            .into_iter()
-            .map(|(id_str, word, w, x, y, z, theta, activation_count)| {
-                let id = parse_uuid(&id_str)?;
-                Ok(Occurrence {
-                    id,
-                    neighborhood_id: nbhd_id,
-                    word,
-                    position: Quaternion::new(w, x, y, z),
-                    phasor: DaemonPhasor::new(theta),
-                    activation_count,
-                })
-            })
-            .collect()
     }
 
     // --- Targeted updates (no full rewrite) ---
@@ -412,14 +422,24 @@ impl Store {
     }
 
     pub fn drain_buffer(&self) -> Result<Vec<(String, String)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT user_text, assistant_text FROM conversation_buffer ORDER BY id")?;
-        let rows: Vec<(String, String)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        let tx = self.conn.unchecked_transaction()?;
+
+        let mut stmt = tx
+            .prepare("SELECT id, user_text, assistant_text FROM conversation_buffer ORDER BY id")?;
+        let entries: Vec<(i64, String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
             .collect::<std::result::Result<_, _>>()?;
-        self.conn.execute_batch("DELETE FROM conversation_buffer")?;
-        Ok(rows)
+        drop(stmt);
+
+        if !entries.is_empty() {
+            // Safe to delete all rows: the transaction guarantees no new entries
+            // appear between the SELECT and DELETE, and we read every row above.
+            tx.execute("DELETE FROM conversation_buffer", [])?;
+        }
+
+        tx.commit()?;
+
+        Ok(entries.into_iter().map(|(_, u, a)| (u, a)).collect())
     }
 
     pub fn buffer_count(&self) -> Result<usize> {
@@ -647,6 +667,20 @@ impl Store {
             .query_row("SELECT COUNT(*) FROM neighborhoods", [], |row| row.get(0))?)
     }
 
+    /// Count occurrences eligible for GC eviction at the given activation floor.
+    /// Excludes conscious episodes.
+    pub fn gc_eligible_count(&self, activation_floor: u32) -> Result<u64> {
+        let count: u64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM occurrences o
+             JOIN neighborhoods n ON o.neighborhood_id = n.id
+             JOIN episodes e ON n.episode_id = e.id
+             WHERE e.is_conscious = 0 AND o.activation_count <= ?1",
+            [activation_floor],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
     /// Run a GC pass: evict cold occurrences, clean empty structures, VACUUM.
     /// Returns (evicted_occurrences, removed_episodes).
     /// Conscious episodes (is_conscious = 1) are never touched.
@@ -672,9 +706,11 @@ impl Store {
         let before_occs = self.occurrence_count()?;
         let before_size = self.db_size();
 
-        // Build retention filter clauses
-        let mut retention_clauses = String::new();
-        if retention.grace_epochs > 0 {
+        // Compute retention parameters. When a retention dimension is disabled,
+        // use sentinel -1 which makes the SQL clause a no-op via short-circuit:
+        //   ?2 = -1 bypasses the epoch filter
+        //   ?3 = -1 bypasses the timestamp filter
+        let epoch_floor: i64 = if retention.grace_epochs > 0 {
             let max_epoch: u64 = self
                 .conn
                 .query_row(
@@ -683,34 +719,33 @@ impl Store {
                     |row| row.get(0),
                 )
                 .unwrap_or(0);
-            let epoch_floor = max_epoch.saturating_sub(retention.grace_epochs);
-            retention_clauses.push_str(&format!(
-                "\n                     AND n.epoch < {epoch_floor}"
-            ));
-        }
-        if retention.retention_days > 0 {
-            let retention_secs = retention.retention_days * 86400;
-            retention_clauses.push_str(&format!(
-                "\n                     AND (e.timestamp = ''
-                          OR REPLACE(REPLACE(e.timestamp, 'T', ' '), 'Z', '')
-                             < datetime('now', '-{retention_secs} seconds'))"
-            ));
-        }
+            max_epoch.saturating_sub(retention.grace_epochs) as i64
+        } else {
+            -1
+        };
+        let retention_secs: i64 = if retention.retention_days > 0 {
+            (retention.retention_days as i64) * 86400
+        } else {
+            -1
+        };
 
         let tx = self.conn.unchecked_transaction()?;
 
         // 1. Delete occurrences at or below the activation floor,
         //    but only from non-conscious episodes, and respecting retention.
+        // Fixed SQL shape: ?2 = -1 disables epoch check, ?3 = -1 disables retention check.
         let evicted_occs: u64 = tx.execute(
-            &format!(
-                "DELETE FROM occurrences WHERE activation_count <= ?1
-                 AND neighborhood_id IN (
-                     SELECT n.id FROM neighborhoods n
-                     JOIN episodes e ON n.episode_id = e.id
-                     WHERE e.is_conscious = 0{retention_clauses}
-                 )"
-            ),
-            [activation_floor],
+            "DELETE FROM occurrences WHERE activation_count <= ?1
+             AND neighborhood_id IN (
+                 SELECT n.id FROM neighborhoods n
+                 JOIN episodes e ON n.episode_id = e.id
+                 WHERE e.is_conscious = 0
+                   AND (?2 = -1 OR n.epoch < ?2)
+                   AND (?3 = -1 OR e.timestamp = ''
+                        OR REPLACE(REPLACE(e.timestamp, 'T', ' '), 'Z', '')
+                           < datetime('now', '-' || ?3 || ' seconds'))
+             )",
+            rusqlite::params![activation_floor, epoch_floor, retention_secs],
         )? as u64;
 
         // 2. Delete neighborhoods that have no remaining occurrences
@@ -763,7 +798,8 @@ impl Store {
         let before_occs = self.occurrence_count()?;
         let before_size = self.db_size();
 
-        // Build retention filter clauses
+        // Parameters: ?1 = max_epoch_f, ?2 = recency_weight,
+        // ?3 = epoch_floor (-1 sentinel disables), ?4 = retention_secs (-1 sentinel disables).
         let max_epoch: u64 = self
             .conn
             .query_row(
@@ -774,35 +810,44 @@ impl Store {
             .unwrap_or(0);
         let max_epoch_f = (max_epoch as f64).max(1.0);
 
-        let mut retention_clauses = String::new();
-        if retention.grace_epochs > 0 {
-            let epoch_floor = max_epoch.saturating_sub(retention.grace_epochs);
-            retention_clauses.push_str(&format!("\n                 AND n.epoch < {epoch_floor}"));
-        }
-        if retention.retention_days > 0 {
-            let retention_secs = retention.retention_days * 86400;
-            retention_clauses.push_str(&format!(
-                "\n                 AND (e.timestamp = ''
-                      OR REPLACE(REPLACE(e.timestamp, 'T', ' '), 'Z', '')
-                         < datetime('now', '-{retention_secs} seconds'))"
-            ));
-        }
+        // Sentinel -1 disables the clause via short-circuit in SQL.
+        let epoch_floor: i64 = if retention.grace_epochs > 0 {
+            max_epoch.saturating_sub(retention.grace_epochs) as i64
+        } else {
+            -1
+        };
+        let retention_secs: i64 = if retention.retention_days > 0 {
+            (retention.retention_days as i64) * 86400
+        } else {
+            -1
+        };
 
         // Get occurrences sorted by composite eviction score (most evictable first).
         // Score = activation_count - (epoch / max_epoch) * recency_weight
         // Lower score = higher eviction priority.
-        let query = format!(
+        // Fixed SQL shape: ?3 = -1 disables epoch check, ?4 = -1 disables retention check.
+        let mut stmt = self.conn.prepare(
             "SELECT o.id, o.activation_count FROM occurrences o
                  JOIN neighborhoods n ON o.neighborhood_id = n.id
                  JOIN episodes e ON n.episode_id = e.id
-                 WHERE e.is_conscious = 0{retention_clauses}
-                 ORDER BY (o.activation_count - (CAST(n.epoch AS REAL) / {max_epoch_f}) * {w}) ASC",
-            w = retention.recency_weight,
-        );
-        let mut stmt = self.conn.prepare(&query)?;
+                 WHERE e.is_conscious = 0
+                   AND (?3 = -1 OR n.epoch < ?3)
+                   AND (?4 = -1 OR e.timestamp = ''
+                        OR REPLACE(REPLACE(e.timestamp, 'T', ' '), 'Z', '')
+                           < datetime('now', '-' || ?4 || ' seconds'))
+                 ORDER BY (o.activation_count - (CAST(n.epoch AS REAL) / ?1) * ?2) ASC",
+        )?;
 
         let rows: Vec<(String, u32)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .query_map(
+                rusqlite::params![
+                    max_epoch_f,
+                    retention.recency_weight,
+                    epoch_floor,
+                    retention_secs
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )?
             .collect::<std::result::Result<_, _>>()?;
 
         if rows.is_empty() {
@@ -1592,5 +1637,82 @@ mod tests {
 
         let (removed, _, _) = store.forget_term("nonexistent").unwrap();
         assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn test_drain_buffer_idempotent() {
+        let store = Store::open_in_memory().unwrap();
+        store.append_buffer("hello", "world").unwrap();
+        store.append_buffer("foo", "bar").unwrap();
+
+        let first = store.drain_buffer().unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0], ("hello".to_string(), "world".to_string()));
+        assert_eq!(first[1], ("foo".to_string(), "bar".to_string()));
+
+        // Second drain returns empty: rows were deleted atomically
+        let second = store.drain_buffer().unwrap();
+        assert!(second.is_empty(), "second drain should return empty");
+    }
+
+    /// Regression test for ALP-1239: drain_buffer atomicity.
+    ///
+    /// The pre-fix implementation performed SELECT then DELETE without a
+    /// transaction, creating a crash window where rows could be deleted from
+    /// the database but never returned to the caller. The fix wraps both
+    /// operations in a single transaction so they commit atomically.
+    ///
+    /// This test verifies the data integrity invariant: every buffered row
+    /// is returned exactly once across interleaved append/drain cycles, with
+    /// buffer_count staying consistent at each step. The pre-fix code could
+    /// violate this invariant under concurrent access or crash recovery.
+    #[test]
+    fn test_drain_buffer_atomicity_no_lost_rows() {
+        let store = Store::open_in_memory().unwrap();
+
+        // Phase 1: buffer 5 entries, drain, verify all returned and count is 0
+        for i in 0..5 {
+            store
+                .append_buffer(&format!("user_{i}"), &format!("asst_{i}"))
+                .unwrap();
+        }
+        assert_eq!(store.buffer_count().unwrap(), 5);
+
+        let drained = store.drain_buffer().unwrap();
+        assert_eq!(drained.len(), 5, "all 5 rows must be returned");
+        assert_eq!(
+            store.buffer_count().unwrap(),
+            0,
+            "buffer must be empty after drain"
+        );
+
+        // Verify exact content and ordering
+        for (i, (user, asst)) in drained.iter().enumerate() {
+            assert_eq!(user, &format!("user_{i}"));
+            assert_eq!(asst, &format!("asst_{i}"));
+        }
+
+        // Phase 2: interleave appends and drains
+        store.append_buffer("a", "1").unwrap();
+        store.append_buffer("b", "2").unwrap();
+        assert_eq!(store.buffer_count().unwrap(), 2);
+
+        let batch1 = store.drain_buffer().unwrap();
+        assert_eq!(batch1.len(), 2);
+        assert_eq!(store.buffer_count().unwrap(), 0);
+
+        // Drain on empty is safe
+        let empty = store.drain_buffer().unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(store.buffer_count().unwrap(), 0);
+
+        // Phase 3: append after drain, verify no ghost rows from phase 1 or 2
+        store.append_buffer("c", "3").unwrap();
+        assert_eq!(store.buffer_count().unwrap(), 1);
+
+        let batch2 = store.drain_buffer().unwrap();
+        assert_eq!(batch2.len(), 1, "only the newly appended row should appear");
+        assert_eq!(batch2[0], ("c".to_string(), "3".to_string()));
+        assert_eq!(store.buffer_count().unwrap(), 0);
     }
 }

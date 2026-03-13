@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 7;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -22,8 +22,7 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         tracing::info!("startup WAL checkpoint complete");
     }
 
-    // Create tables. For existing databases, CREATE TABLE IF NOT EXISTS is a no-op,
-    // so we ALTER TABLE below to add any missing columns from later schema versions.
+    // Create tables. For existing databases, CREATE TABLE IF NOT EXISTS is a no-op.
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS metadata (
@@ -73,42 +72,73 @@ pub fn initialize(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_occ_word ON occurrences(word);
         CREATE INDEX IF NOT EXISTS idx_occ_neighborhood ON occurrences(neighborhood_id);
         CREATE INDEX IF NOT EXISTS idx_nbhd_episode ON neighborhoods(episode_id);
+
         ",
     )?;
 
-    // Add neighborhood_type to older databases that lack it
-    if conn
-        .prepare("SELECT neighborhood_type FROM neighborhoods LIMIT 0")
-        .is_err()
+    // Read stored version. Returns 0 for fresh databases (no metadata row yet).
+    let stored_version = get_schema_version(conn)?.unwrap_or(0);
+
+    // v2: Add neighborhood_type column
+    if stored_version < 2
+        && conn
+            .prepare("SELECT neighborhood_type FROM neighborhoods LIMIT 0")
+            .is_err()
     {
         conn.execute_batch(
-            "ALTER TABLE neighborhoods ADD COLUMN neighborhood_type TEXT NOT NULL DEFAULT 'memory';",
-        )?;
+                "ALTER TABLE neighborhoods ADD COLUMN neighborhood_type TEXT NOT NULL DEFAULT 'memory';",
+            )?;
     }
 
-    // Add epoch to older databases that lack it
-    if conn
-        .prepare("SELECT epoch FROM neighborhoods LIMIT 0")
-        .is_err()
+    // v3: Add epoch column
+    if stored_version < 3
+        && conn
+            .prepare("SELECT epoch FROM neighborhoods LIMIT 0")
+            .is_err()
     {
         conn.execute_batch(
             "ALTER TABLE neighborhoods ADD COLUMN epoch INTEGER NOT NULL DEFAULT 0;",
         )?;
     }
 
-    // Add superseded_by to older databases that lack it
-    if conn
-        .prepare("SELECT superseded_by FROM neighborhoods LIMIT 0")
-        .is_err()
+    // v4: Add superseded_by column
+    if stored_version < 4
+        && conn
+            .prepare("SELECT superseded_by FROM neighborhoods LIMIT 0")
+            .is_err()
     {
         conn.execute_batch("ALTER TABLE neighborhoods ADD COLUMN superseded_by TEXT;")?;
     }
 
-    // Backfill empty timestamps on existing episodes using rowid order.
-    // Episodes are inserted chronologically, so rowid gives relative ordering.
-    // We distribute timestamps from 2026-02-01 to now, spaced evenly.
-    backfill_empty_timestamps(conn)?;
+    // v5: Backfill empty timestamps on episodes
+    if stored_version < 5 {
+        backfill_empty_timestamps(conn)?;
+    }
 
+    // v6: Add indexes for GC and query paths
+    if stored_version < 6 {
+        conn.execute_batch(
+            "
+            CREATE INDEX IF NOT EXISTS idx_ep_conscious ON episodes(is_conscious);
+            CREATE INDEX IF NOT EXISTS idx_occ_activation ON occurrences(activation_count);
+            CREATE INDEX IF NOT EXISTS idx_nbhd_episode_epoch ON neighborhoods(episode_id, epoch);
+            ",
+        )?;
+    }
+
+    // v7: Replace standalone activation index with compound index that covers
+    // the GC query shape (WHERE activation_count <= ? AND neighborhood_id IN ...)
+    if stored_version < 7 {
+        conn.execute_batch(
+            "
+            DROP INDEX IF EXISTS idx_occ_activation;
+            CREATE INDEX IF NOT EXISTS idx_occ_nbhd_activation
+                ON occurrences(neighborhood_id, activation_count);
+            ",
+        )?;
+    }
+
+    // Store current schema version
     conn.execute(
         "INSERT OR REPLACE INTO metadata (key, value) VALUES ('schema_version', ?1)",
         [SCHEMA_VERSION.to_string()],
@@ -317,5 +347,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(nbhd_type, "decision");
+    }
+
+    #[test]
+    fn test_version_gated_migrations_skip_on_current() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize(&conn).unwrap();
+
+        let version = get_schema_version(&conn).unwrap();
+        assert_eq!(version, Some(SCHEMA_VERSION));
+
+        // Second initialize should skip all migrations (already at current version)
+        // and succeed without error
+        initialize(&conn).unwrap();
+
+        let version2 = get_schema_version(&conn).unwrap();
+        assert_eq!(version2, Some(SCHEMA_VERSION));
     }
 }

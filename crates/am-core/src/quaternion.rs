@@ -10,12 +10,73 @@ use crate::constants::{EPSILON, SLERP_THRESHOLD};
 /// Always normalized. Represents rotations and positions on the 3-sphere.
 /// Antipodal quaternions (q and -q) represent the same rotation but different
 /// points on S³ - the geodesic distance function handles this via abs(dot).
+///
+/// # Examples
+///
+/// ```
+/// use am_core::Quaternion;
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// // Create a unit quaternion (auto-normalized)
+/// let q = Quaternion::new(1.0, 2.0, 3.0, 4.0);
+/// let norm = (q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z).sqrt();
+/// assert!((norm - 1.0).abs() < 1e-10);
+///
+/// // Random quaternion on S³
+/// let mut rng = SmallRng::seed_from_u64(42);
+/// let r = Quaternion::random(&mut rng);
+/// let r_norm = (r.w * r.w + r.x * r.x + r.y * r.y + r.z * r.z).sqrt();
+/// assert!((r_norm - 1.0).abs() < 1e-10);
+///
+/// // SLERP interpolation
+/// let a = Quaternion::identity();
+/// let b = Quaternion::random(&mut rng);
+/// let mid = a.slerp(b, 0.5);
+/// let mid_norm = (mid.w * mid.w + mid.x * mid.x + mid.y * mid.y + mid.z * mid.z).sqrt();
+/// assert!((mid_norm - 1.0).abs() < 1e-10);
+///
+/// // Geodesic distance: self-distance is zero
+/// assert!(a.angular_distance(a) < 1e-7);
+/// ```
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct Quaternion {
     pub w: f64,
     pub x: f64,
     pub y: f64,
     pub z: f64,
+}
+
+/// Accumulated weighted R⁴ sum produced by `Quaternion::weighted_sum`.
+/// Used for centroid computation and leave-one-out centroid drift.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WeightedSum {
+    pub w: f64,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+    pub total_weight: f64,
+}
+
+impl WeightedSum {
+    /// Compute the leave-one-out centroid by subtracting one element's
+    /// contribution from the accumulated sum and projecting to S³.
+    ///
+    /// Returns `None` if the remaining weight is below `EPSILON` or the
+    /// resulting vector has near-zero norm.
+    #[must_use]
+    pub fn leave_one_out(&self, pos: Quaternion, weight: f64) -> Option<Quaternion> {
+        let rem_weight = self.total_weight - weight;
+        if rem_weight < EPSILON {
+            return None;
+        }
+        Quaternion::from_r4_projection(
+            (self.w - pos.w * weight) / rem_weight,
+            (self.x - pos.x * weight) / rem_weight,
+            (self.y - pos.y * weight) / rem_weight,
+            (self.z - pos.z * weight) / rem_weight,
+        )
+    }
 }
 
 impl PartialEq for Quaternion {
@@ -29,11 +90,13 @@ impl PartialEq for Quaternion {
 
 impl Quaternion {
     /// Create a new quaternion, automatically normalized.
+    #[must_use]
     pub fn new(w: f64, x: f64, y: f64, z: f64) -> Self {
         Self { w, x, y, z }.normalize()
     }
 
     /// Identity quaternion (1, 0, 0, 0).
+    #[must_use]
     pub fn identity() -> Self {
         Self {
             w: 1.0,
@@ -44,6 +107,7 @@ impl Quaternion {
     }
 
     /// Normalize to unit length. Returns identity if near-zero magnitude.
+    #[must_use]
     pub fn normalize(self) -> Self {
         let norm = (self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
         if norm < EPSILON {
@@ -58,18 +122,27 @@ impl Quaternion {
     }
 
     /// 4D dot product.
+    #[must_use]
     pub fn dot(self, other: Self) -> f64 {
         self.w * other.w + self.x * other.x + self.y * other.y + self.z * other.z
     }
 
-    /// Geodesic distance on S³. Range: [0, π].
-    /// Uses abs(dot) to handle antipodal equivalence.
+    /// Geodesic distance in SO(3) rotation space. Range: [0, π].
+    ///
+    /// Uses `abs(dot)` so that antipodal quaternions q and -q return distance 0,
+    /// because they represent the same rotation. This differs from raw S³ manifold
+    /// distance, where q and -q are π apart.
+    ///
+    /// The SLERP implementation handles antipodal pairs differently: it flips the
+    /// sign to take the shorter arc rather than collapsing to zero.
+    #[must_use]
     pub fn angular_distance(self, other: Self) -> f64 {
-        let d = self.dot(other).abs().clamp(-1.0, 1.0);
+        let d = self.dot(other).abs().clamp(0.0, 1.0);
         2.0 * d.acos()
     }
 
     /// Spherical linear interpolation with antipodal flip and NLERP fallback.
+    #[must_use]
     pub fn slerp(self, other: Self, t: f64) -> Self {
         if t <= 0.0 {
             return self;
@@ -175,13 +248,71 @@ impl Quaternion {
     }
 
     /// Convert to [w, x, y, z] array for serialization.
+    #[must_use]
     pub fn to_array(self) -> [f64; 4] {
         [self.w, self.x, self.y, self.z]
     }
 
     /// Create from [w, x, y, z] array.
+    #[must_use]
     pub fn from_array(arr: [f64; 4]) -> Self {
         Self::new(arr[0], arr[1], arr[2], arr[3])
+    }
+
+    /// Accumulate a weighted sum in R⁴. Returns the raw component sums
+    /// and total weight. This is the shared accumulation step used by
+    /// `weighted_centroid` and leave-one-out centroid drift in `query.rs`.
+    ///
+    /// Returns `None` if the input is empty or lengths mismatch.
+    #[must_use]
+    pub fn weighted_sum(positions: &[Quaternion], weights: &[f64]) -> Option<WeightedSum> {
+        if positions.is_empty() || positions.len() != weights.len() {
+            return None;
+        }
+
+        let mut sum = WeightedSum::default();
+
+        for (pos, w) in positions.iter().zip(weights.iter()) {
+            sum.w += pos.w * w;
+            sum.x += pos.x * w;
+            sum.y += pos.y * w;
+            sum.z += pos.z * w;
+            sum.total_weight += w;
+        }
+
+        Some(sum)
+    }
+
+    /// Project an R⁴ vector to S³ via normalization.
+    /// Returns `None` if the vector norm is below `EPSILON` (antipodal
+    /// cancellation or zero-weight input).
+    #[must_use]
+    pub fn from_r4_projection(w: f64, x: f64, y: f64, z: f64) -> Option<Quaternion> {
+        let norm = (w * w + x * x + y * y + z * z).sqrt();
+        if norm < EPSILON {
+            return None;
+        }
+        Some(Quaternion::new(w / norm, x / norm, y / norm, z / norm))
+    }
+
+    /// Compute the weighted centroid of quaternion positions in R⁴,
+    /// projected back to S³ via normalization.
+    ///
+    /// Returns `None` if the input is empty, lengths mismatch, total weight
+    /// is below `EPSILON`, or the resulting centroid has near-zero norm
+    /// (antipodal cancellation).
+    #[must_use]
+    pub fn weighted_centroid(positions: &[Quaternion], weights: &[f64]) -> Option<Quaternion> {
+        let sum = Self::weighted_sum(positions, weights)?;
+        if sum.total_weight < EPSILON {
+            return None;
+        }
+        Self::from_r4_projection(
+            sum.w / sum.total_weight,
+            sum.x / sum.total_weight,
+            sum.y / sum.total_weight,
+            sum.z / sum.total_weight,
+        )
     }
 }
 
@@ -424,5 +555,64 @@ mod tests {
         let b = Quaternion::new(-0.9, -0.1, 0.0, 0.0);
         let mid = a.slerp(b, 0.5);
         assert_unit(mid);
+    }
+
+    #[test]
+    fn test_weighted_centroid_empty_input() {
+        assert!(Quaternion::weighted_centroid(&[], &[]).is_none());
+    }
+
+    #[test]
+    fn test_weighted_centroid_length_mismatch() {
+        let p = Quaternion::identity();
+        assert!(Quaternion::weighted_centroid(&[p], &[1.0, 2.0]).is_none());
+    }
+
+    #[test]
+    fn test_weighted_centroid_single_point() {
+        let p = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let centroid = Quaternion::weighted_centroid(&[p], &[1.0]).unwrap();
+        assert_approx_eq(centroid, p, 1e-10);
+    }
+
+    #[test]
+    fn test_weighted_centroid_equal_weights() {
+        let p1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let p2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
+        let centroid = Quaternion::weighted_centroid(&[p1, p2], &[1.0, 1.0]).unwrap();
+        assert_unit(centroid);
+        // Equidistant from both inputs
+        let d1 = p1.angular_distance(centroid);
+        let d2 = p2.angular_distance(centroid);
+        assert!(
+            (d1 - d2).abs() < 0.01,
+            "equal-weight centroid should be equidistant: {d1} vs {d2}"
+        );
+    }
+
+    #[test]
+    fn test_weighted_centroid_skewed_weights() {
+        let p1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let p2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
+        let centroid = Quaternion::weighted_centroid(&[p1, p2], &[10.0, 1.0]).unwrap();
+        assert_unit(centroid);
+        let d1 = p1.angular_distance(centroid);
+        let d2 = p2.angular_distance(centroid);
+        assert!(
+            d1 < d2,
+            "centroid should be closer to heavily-weighted point: {d1} vs {d2}"
+        );
+    }
+
+    #[test]
+    fn test_weighted_centroid_result_is_unit() {
+        let mut rng = rng();
+        for _ in 0..20 {
+            let positions: Vec<Quaternion> = (0..5).map(|_| Quaternion::random(&mut rng)).collect();
+            let weights: Vec<f64> = (0..5).map(|i| f64::from(i + 1)).collect();
+            if let Some(c) = Quaternion::weighted_centroid(&positions, &weights) {
+                assert_unit(c);
+            }
+        }
     }
 }

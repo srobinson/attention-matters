@@ -21,6 +21,7 @@ pub struct SurfaceResult {
 }
 
 /// Compute which content surfaces from activation and interference.
+#[must_use]
 pub fn compute_surface(system: &DAESystem, query_result: &QueryResult) -> SurfaceResult {
     let n = system.n();
     let mut surfaced: HashSet<OccurrenceRef> = HashSet::new();
@@ -121,7 +122,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     #[test]
@@ -383,7 +384,7 @@ mod tests {
             Neighborhood::from_tokens(&to_tokens(&["a", "b", "c", "d"]), None, "a b c d", &mut rng);
 
         // neighborhood has 4 occurrences
-        // is_vivid checks: count > episode_count * THRESHOLD
+        // is_vivid checks: count > episode_occurrence_count * THRESHOLD
         // 4 > 6 * 0.5 → 4 > 3 → true
         assert!(nbhd.is_vivid(6), "4 > 6*0.5=3 should be vivid");
 
@@ -399,8 +400,11 @@ mod tests {
         // 4 > 2 * 0.5 → 4 > 1 → true
         assert!(nbhd.is_vivid(2), "4 > 2*0.5=1 should be vivid");
 
-        // edge: episode_count = 0
-        assert!(!nbhd.is_vivid(0), "zero episode count should not be vivid");
+        // edge: episode_occurrence_count = 0
+        assert!(
+            !nbhd.is_vivid(0),
+            "zero episode occurrence count should not be vivid"
+        );
     }
 
     #[test]

@@ -8,9 +8,12 @@ use crate::episode::Episode;
 use crate::neighborhood::{Neighborhood, NeighborhoodType};
 use crate::tokenizer::tokenize;
 
-/// Reference to an occurrence by its location in the hierarchy.
-/// (episode_idx, neighborhood_idx, occurrence_idx)
-/// episode_idx: usize::MAX means conscious_episode, otherwise index into episodes vec.
+/// Reference to an occurrence by its location in the episode/neighborhood/occurrence
+/// hierarchy. Uses positional indexes for O(1) access.
+///
+/// `episode_idx` of `usize::MAX` is a sentinel denoting the conscious episode.
+/// Any other value is an index into `DAESystem::episodes`. See the `DAESystem`
+/// doc comment for discussion of this design trade-off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OccurrenceRef {
     pub episode_idx: usize,
@@ -19,12 +22,14 @@ pub struct OccurrenceRef {
 }
 
 impl OccurrenceRef {
+    #[must_use]
     pub fn is_conscious(&self) -> bool {
         self.episode_idx == usize::MAX
     }
 }
 
-/// Reference to a neighborhood by its location in the hierarchy.
+/// Reference to a neighborhood by its location in the episode/neighborhood
+/// hierarchy. Same `usize::MAX` sentinel convention as `OccurrenceRef`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NeighborhoodRef {
     pub episode_idx: usize,
@@ -32,6 +37,7 @@ pub struct NeighborhoodRef {
 }
 
 impl NeighborhoodRef {
+    #[must_use]
     pub fn is_conscious(&self) -> bool {
         self.episode_idx == usize::MAX
     }
@@ -45,9 +51,88 @@ pub struct ActivationResult {
 
 /// Top-level DAE system container with lazy-rebuilt indexes.
 ///
-/// Episodes are the subconscious manifold. The conscious_episode is the
+/// Episodes are the subconscious manifold. The `conscious_episode` is the
 /// single conscious manifold. Indexes map words to their locations for
 /// fast lookup during activation and IDF computation.
+///
+/// # Conscious episode addressing
+///
+/// `OccurrenceRef` and `NeighborhoodRef` use `episode_idx: usize::MAX` as a
+/// sentinel to denote the conscious episode, distinguishing it from subconscious
+/// episodes stored in the `episodes` Vec. This avoids storing the conscious
+/// episode inside the Vec (where its index would shift on insert/remove) at the
+/// cost of a sentinel check in every accessor.
+///
+/// A cleaner representation would be an enum:
+/// ```text
+/// enum EpisodeLocation { Conscious, Subconscious(usize) }
+/// ```
+/// This would eliminate the sentinel and make the branching explicit. The current
+/// design was chosen for compact representation (one `usize` per ref instead of
+/// an enum discriminant + payload) and compatibility with the original v0.7.2
+/// reference implementation. Migration to the enum form is a future option if
+/// the sentinel proves error-prone.
+///
+/// # Public API (20 methods, as of v0.1.15)
+///
+/// **Read-only queries** (7):
+/// - `n()` - total occurrence count across both manifolds
+/// - `total_neighborhoods()` - total neighborhood count
+/// - `get_occurrence(ref)` - immutable occurrence by ref
+/// - `get_neighborhood(ref)` - immutable neighborhood by ref
+/// - `get_neighborhood_for_occurrence(ref)` - neighborhood containing an occurrence
+/// - `get_episode_for_occurrence(ref)` - episode containing an occurrence
+/// - `get_occurrence_mut(ref)` - mutable occurrence access (read-write but listed
+///   here because it returns a reference, does not drive a mutation workflow)
+///
+/// **Index-dependent lookups** (4, trigger lazy rebuild):
+/// - `get_word_weight(word)` - IDF weight for a word
+/// - `get_word_occurrences(word)` - all occurrence refs for a word
+/// - `get_neighborhood_ref(id)` - neighborhood ref by UUID
+/// - `get_episode_idx_for_neighborhood(id)` - episode index for a neighborhood
+///
+/// **Mutating writes** (6):
+/// - `activate_word(word)` - increment activation across both manifolds
+/// - `add_to_conscious(text, rng)` - add insight to conscious episode
+/// - `add_to_conscious_typed(text, type, rng)` - add typed entry to conscious
+/// - `add_episode(episode)` - add subconscious episode with epoch assignment
+/// - `mark_superseded(old_id, new_id)` - mark neighborhood as superseded
+/// - `mark_dirty()` - flag indexes for rebuild
+///
+/// **Lifecycle** (3):
+/// - `new(agent_name)` - constructor
+/// - `rebuild_indexes()` - full index rebuild from episode data
+/// - `sync_next_epoch()` - align epoch counter after load
+///
+/// # Decomposition threshold
+///
+/// At 20 public methods, this struct is near the upper bound for a single
+/// responsibility. If method count reaches 25+, consider extracting:
+/// - `SystemView` - read-only query interface (borrows `&DAESystem`)
+/// - `SystemIndex` - index management separated from mutation logic
+///
+/// The current design is acceptable because all methods operate on the same
+/// two fields (`episodes` + `conscious_episode`) and the four index maps are
+/// cache-like derived state, not independent concerns.
+///
+/// # Examples
+///
+/// ```
+/// use am_core::{DAESystem, ingest_text};
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// let mut system = DAESystem::new("test-agent");
+/// assert_eq!(system.n(), 0);
+///
+/// // Ingest text into an episode, then add it to the system
+/// let mut rng = SmallRng::seed_from_u64(42);
+/// let episode = ingest_text("The quick brown fox jumps over the lazy dog", None, &mut rng);
+/// system.add_episode(episode);
+///
+/// assert!(system.n() > 0);
+/// assert_eq!(system.episodes.len(), 1);
+/// ```
 #[derive(Serialize, Deserialize)]
 pub struct DAESystem {
     pub episodes: Vec<Episode>,
@@ -71,6 +156,7 @@ pub struct DAESystem {
 }
 
 impl DAESystem {
+    #[must_use]
     pub fn new(agent_name: &str) -> Self {
         Self {
             episodes: Vec::new(),
@@ -86,8 +172,13 @@ impl DAESystem {
     }
 
     /// Total occurrence count across all episodes (both manifolds).
+    #[must_use]
     pub fn n(&self) -> usize {
-        let sub: usize = self.episodes.iter().map(|e| e.count()).sum();
+        let sub: usize = self
+            .episodes
+            .iter()
+            .map(super::episode::Episode::count)
+            .sum();
         sub + self.conscious_episode.count()
     }
 
@@ -299,6 +390,7 @@ impl DAESystem {
     }
 
     /// Get immutable occurrence by ref.
+    #[must_use]
     pub fn get_occurrence(&self, r: OccurrenceRef) -> &crate::occurrence::Occurrence {
         let episode = if r.is_conscious() {
             &self.conscious_episode
@@ -325,6 +417,7 @@ impl DAESystem {
     }
 
     /// Get neighborhood by ref.
+    #[must_use]
     pub fn get_neighborhood(&self, r: NeighborhoodRef) -> &Neighborhood {
         let episode = if r.is_conscious() {
             &self.conscious_episode
@@ -335,6 +428,7 @@ impl DAESystem {
     }
 
     /// Get neighborhood that contains an occurrence.
+    #[must_use]
     pub fn get_neighborhood_for_occurrence(&self, r: OccurrenceRef) -> &Neighborhood {
         let episode = if r.is_conscious() {
             &self.conscious_episode
@@ -345,6 +439,7 @@ impl DAESystem {
     }
 
     /// Get episode that contains an occurrence.
+    #[must_use]
     pub fn get_episode_for_occurrence(&self, r: OccurrenceRef) -> &Episode {
         if r.is_conscious() {
             &self.conscious_episode
@@ -362,6 +457,7 @@ impl DAESystem {
     }
 
     /// Get the total number of neighborhoods across all episodes.
+    #[must_use]
     pub fn total_neighborhoods(&self) -> usize {
         let sub: usize = self.episodes.iter().map(|e| e.neighborhoods.len()).sum();
         sub + self.conscious_episode.neighborhoods.len()
@@ -394,7 +490,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_system_with_data() -> DAESystem {

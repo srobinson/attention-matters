@@ -24,6 +24,7 @@ pub fn tokenize(text: &str) -> Vec<String> {
 
 /// Count tokens in text without allocating the full token vector.
 /// Used for budget estimation in context composition.
+#[must_use]
 pub fn token_count(text: &str) -> usize {
     tokenize(text).len()
 }
@@ -35,7 +36,7 @@ fn split_sentences(text: &str) -> Vec<String> {
 
     for m in SENTENCE_END.find_iter(text) {
         let end = m.end();
-        let sentence = text[last..m.start() + 1].trim().to_string(); // include the punctuation
+        let sentence = text[last..=m.start()].trim().to_string(); // include the punctuation
         if !sentence.is_empty() {
             sentences.push(sentence);
         }

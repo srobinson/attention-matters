@@ -1,14 +1,12 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
 
-use rand::Rng;
-use regex::Regex;
 use uuid::Uuid;
 
 use crate::neighborhood::NeighborhoodType;
 use crate::query::{InterferenceResult, QueryResult};
+use crate::scoring::{MIN_SCORE_THRESHOLD, RankedCandidate, get_episode_name, rank_candidates};
 use crate::surface::SurfaceResult;
-use crate::system::{DAESystem, OccurrenceRef};
+use crate::system::DAESystem;
 use crate::tokenizer::token_count;
 
 /// Category of recalled content.
@@ -53,7 +51,7 @@ pub struct ContextResult {
     pub metrics: ContextMetrics,
     /// Neighborhood IDs included in this result (for session recall tracking).
     pub included_ids: Vec<Uuid>,
-    /// Neighborhood IDs categorized by recall type (for am_feedback).
+    /// Neighborhood IDs categorized by recall type (for `am_feedback`).
     pub recalled_ids: CategorizedIds,
     /// Estimated LLM token cost of the recalled content.
     pub token_estimate: TokenEstimate,
@@ -106,136 +104,6 @@ pub struct BudgetedContextResult {
     pub token_estimate: TokenEstimate,
 }
 
-// -- Shared internals --
-
-struct RankedCandidate {
-    neighborhood_id: Uuid,
-    episode_idx: usize,
-    category: RecallCategory,
-    score: f64,
-    text: String,
-    tokens: usize,
-    neighborhood_type: NeighborhoodType,
-}
-
-/// Score and categorize all activated neighborhoods into ranked candidates.
-/// Conscious neighborhoods scored by IDF-weighted activation.
-/// Subconscious neighborhoods scored by IDF-weighted activation.
-/// Novel candidates: subconscious with activated_count <= 2, no words in common
-/// with conscious, scored by max_word_weight * max_plasticity / activated_count.
-fn rank_candidates(
-    system: &mut DAESystem,
-    query_result: &QueryResult,
-    interference: &[InterferenceResult],
-    surface: &SurfaceResult,
-) -> Vec<RankedCandidate> {
-    let conscious_words: HashSet<String> = query_result
-        .activation
-        .conscious
-        .iter()
-        .map(|r| system.get_occurrence(*r).word.to_lowercase())
-        .collect();
-
-    let qtc = query_result.query_token_count;
-    let mut con_scored = score_neighborhoods(system, &query_result.activation.conscious, true, qtc);
-    let mut sub_scored =
-        score_neighborhoods(system, &query_result.activation.subconscious, false, qtc);
-
-    // Suppress older neighborhoods that overlap with newer ones (contradiction handling)
-    overlap_suppress(&mut con_scored, &mut sub_scored, system);
-
-    // Apply phasor interference to scores
-    let net_interference = aggregate_interference(system, interference);
-
-    // Conscious: strong anti-phase suppression
-    for sn in con_scored.values_mut() {
-        if let Some(&net) = net_interference.get(&sn.neighborhood_id)
-            && net < -0.5
-        {
-            sn.score *= 0.5;
-        }
-    }
-
-    // Subconscious: continuous interference modulation
-    for sn in sub_scored.values_mut() {
-        if let Some(&net) = net_interference.get(&sn.neighborhood_id) {
-            sn.score *= 1.0 + net * INTERFERENCE_WEIGHT;
-        }
-    }
-
-    // Boost vivid neighborhoods (>50% surfaced occurrences)
-    for sn in con_scored.values_mut() {
-        if surface.vivid_neighborhood_ids.contains(&sn.neighborhood_id) {
-            sn.score *= VIVIDNESS_BOOST;
-        }
-    }
-    for sn in sub_scored.values_mut() {
-        if surface.vivid_neighborhood_ids.contains(&sn.neighborhood_id) {
-            sn.score *= VIVIDNESS_BOOST;
-        }
-    }
-
-    let mut candidates = Vec::new();
-    let mut selected_for_novel: HashSet<Uuid> = HashSet::new();
-
-    // Conscious candidates
-    for sn in con_scored.values() {
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
-        let tokens = token_count(&text);
-        candidates.push(RankedCandidate {
-            neighborhood_id: sn.neighborhood_id,
-            episode_idx: sn.episode_idx,
-            category: RecallCategory::Conscious,
-            score: sn.score,
-            text,
-            tokens,
-            neighborhood_type: sn.neighborhood_type,
-        });
-    }
-
-    // Subconscious candidates
-    for sn in sub_scored.values() {
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
-        let tokens = token_count(&text);
-        candidates.push(RankedCandidate {
-            neighborhood_id: sn.neighborhood_id,
-            episode_idx: sn.episode_idx,
-            category: RecallCategory::Subconscious,
-            score: sn.score,
-            text,
-            tokens,
-            neighborhood_type: sn.neighborhood_type,
-        });
-
-        // Check if this is also a novel candidate
-        if sn.activated_count <= 2 && !sn.words.iter().any(|w| conscious_words.contains(w)) {
-            selected_for_novel.insert(sn.neighborhood_id);
-        }
-    }
-
-    // Add novel candidates (these are subconscious neighborhoods that qualify)
-    for sn in sub_scored.values() {
-        if !selected_for_novel.contains(&sn.neighborhood_id) {
-            continue;
-        }
-        let novelty_score =
-            sn.max_word_weight * sn.max_plasticity / sn.activated_count.max(1) as f64;
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
-        let tokens = token_count(&text);
-        candidates.push(RankedCandidate {
-            neighborhood_id: sn.neighborhood_id,
-            episode_idx: sn.episode_idx,
-            category: RecallCategory::Novel,
-            score: novelty_score,
-            text,
-            tokens,
-            neighborhood_type: sn.neighborhood_type,
-        });
-    }
-
-    candidates
-}
-
 /// Format a single entry for the composed context string.
 fn format_entry(
     category: RecallCategory,
@@ -251,23 +119,23 @@ fn format_entry(
             lines.push("[Source: Previously marked salient]".to_string());
         }
         RecallCategory::Subconscious => {
-            lines.push(format!("SUBCONSCIOUS RECALL {}:", index));
-            lines.push(format!("[Source: {}]", ep_name));
+            lines.push(format!("SUBCONSCIOUS RECALL {index}:"));
+            lines.push(format!("[Source: {ep_name}]"));
         }
         RecallCategory::Novel => {
             lines.push("NOVEL CONNECTION:".to_string());
-            lines.push(format!("[Source: {}]", ep_name));
+            lines.push(format!("[Source: {ep_name}]"));
         }
     }
     // Decisions get [DECIDED] prefix so the AI knows not to re-litigate
     let formatted_text = if nbhd_type == NeighborhoodType::Decision {
-        format!("[DECIDED] {}", text)
+        format!("[DECIDED] {text}")
     } else if nbhd_type == NeighborhoodType::Preference {
-        format!("[PREFERENCE] {}", text)
+        format!("[PREFERENCE] {text}")
     } else {
         text.to_string()
     };
-    lines.push(format!("\"{}\"", formatted_text));
+    lines.push(format!("\"{formatted_text}\""));
     lines
 }
 
@@ -287,7 +155,7 @@ fn apply_diminishing_returns(
                     NeighborhoodType::Decision | NeighborhoodType::Preference => 0.5,
                     _ => 1.0,
                 };
-                c.score *= 1.0 / (1.0 + count as f64 * decay_rate);
+                c.score *= 1.0 / (1.0 + f64::from(count) * decay_rate);
             }
             c
         })
@@ -301,6 +169,32 @@ fn apply_diminishing_returns(
 /// Decision/Preference types use softer decay (0.5x rate).
 ///
 /// Interference gates neighborhood scores; vivid neighborhoods get boosted.
+///
+/// # Examples
+///
+/// Full ingest, query, compose pipeline:
+///
+/// ```
+/// use am_core::{DAESystem, QueryEngine, compose_context, compute_surface, ingest_text};
+/// use rand::SeedableRng;
+/// use rand::rngs::SmallRng;
+///
+/// let mut system = DAESystem::new("demo");
+/// let mut rng = SmallRng::seed_from_u64(42);
+///
+/// // Ingest some content
+/// let ep = ingest_text("Geometric memory uses quaternions on S3", None, &mut rng);
+/// system.add_episode(ep);
+///
+/// // Query and compose
+/// let qr = QueryEngine::process_query(&mut system, "quaternions");
+/// let surface = compute_surface(&system, &qr);
+/// let ctx = compose_context(&mut system, &surface, &qr, &qr.interference, None);
+///
+/// // included_ids tracks which neighborhoods contributed to the result
+/// assert_eq!(ctx.included_ids.len(), ctx.recalled_ids.conscious.len()
+///     + ctx.recalled_ids.subconscious.len() + ctx.recalled_ids.novel.len());
+/// ```
 pub fn compose_context(
     system: &mut DAESystem,
     surface: &SurfaceResult,
@@ -334,7 +228,7 @@ pub fn compose_context(
         .iter()
         .filter(|c| c.category == RecallCategory::Conscious)
         .collect();
-    con.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    con.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     if let Some(best) = con.first() {
         selected_ids.insert(best.neighborhood_id);
@@ -358,7 +252,7 @@ pub fn compose_context(
             c.category == RecallCategory::Subconscious && !selected_ids.contains(&c.neighborhood_id)
         })
         .collect();
-    sub.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    sub.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     for (i, entry) in sub.iter().take(2).enumerate() {
         selected_ids.insert(entry.neighborhood_id);
@@ -386,7 +280,7 @@ pub fn compose_context(
             c.category == RecallCategory::Novel && !selected_ids.contains(&c.neighborhood_id)
         })
         .collect();
-    novel.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    novel.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     if let Some(best) = novel.first() {
         selected_ids.insert(best.neighborhood_id);
@@ -454,19 +348,19 @@ pub fn compose_context_budgeted(
         .iter()
         .filter(|c| c.category == RecallCategory::Conscious)
         .collect();
-    conscious.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    conscious.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     let mut subconscious: Vec<&RankedCandidate> = candidates
         .iter()
         .filter(|c| c.category == RecallCategory::Subconscious)
         .collect();
-    subconscious.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    subconscious.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     let mut novel: Vec<&RankedCandidate> = candidates
         .iter()
         .filter(|c| c.category == RecallCategory::Novel)
         .collect();
-    novel.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    novel.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     // Deduplicate: a neighborhood can appear as both Subconscious and Novel.
     // Track which neighborhood_ids are included to avoid duplicates.
@@ -566,7 +460,7 @@ pub fn compose_context_budgeted(
         .iter()
         .filter(|c| !selected_ids.contains(&c.neighborhood_id) && c.score >= MIN_SCORE_THRESHOLD)
         .collect();
-    remaining.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    remaining.sort_by(|a, b| b.score.total_cmp(&a.score));
 
     for c in &remaining {
         if tokens_used >= budget.max_tokens {
@@ -712,7 +606,7 @@ pub struct IndexStats {
 }
 
 /// Compose a compact index of the best-matching neighborhoods without full content.
-/// Same scoring pipeline as compose_context_budgeted but returns only metadata.
+/// Same scoring pipeline as `compose_context_budgeted` but returns only metadata.
 pub fn compose_index(
     system: &mut DAESystem,
     surface: &SurfaceResult,
@@ -746,13 +640,13 @@ pub fn compose_index(
                     NeighborhoodType::Decision | NeighborhoodType::Preference => 0.5,
                     _ => 1.0,
                 };
-                score *= 1.0 / (1.0 + count as f64 * decay_rate);
+                score *= 1.0 / (1.0 + f64::from(count) * decay_rate);
             }
             (c, score)
         })
         .collect();
 
-    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.sort_by(|a, b| b.1.total_cmp(&a.1));
 
     let mut total_tokens_if_fetched = 0;
     let entries: Vec<IndexEntry> = scored
@@ -799,481 +693,55 @@ pub fn compose_index(
 /// Retrieve full content for specific neighborhood IDs.
 /// Phase 2 of two-phase retrieval: after reviewing the index, fetch
 /// only the neighborhoods you actually need.
-pub fn retrieve_by_ids(system: &DAESystem, ids: &[Uuid]) -> Vec<IncludedFragment> {
+pub fn retrieve_by_ids(system: &mut DAESystem, ids: &[Uuid]) -> Vec<IncludedFragment> {
     let mut fragments = Vec::new();
 
-    'outer: for &id in ids {
-        // Search conscious episode first
-        for nbhd in &system.conscious_episode.neighborhoods {
-            if nbhd.id == id {
-                let text = if !nbhd.source_text.is_empty() {
-                    nbhd.source_text.clone()
-                } else {
-                    nbhd.occurrences
-                        .iter()
-                        .map(|o| o.word.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-                fragments.push(IncludedFragment {
-                    neighborhood_id: id,
-                    episode_name: "Previously marked salient".to_string(),
-                    category: RecallCategory::Conscious,
-                    score: 0.0, // Not scored in direct retrieval
-                    tokens: token_count(&text),
-                    text,
-                    neighborhood_type: nbhd.neighborhood_type,
-                });
-                continue 'outer;
-            }
-        }
+    for &id in ids {
+        let Some(n_ref) = system.get_neighborhood_ref(id) else {
+            continue;
+        };
 
-        // Search subconscious episodes
-        for episode in &system.episodes {
-            for nbhd in &episode.neighborhoods {
-                if nbhd.id == id {
-                    let text = if !nbhd.source_text.is_empty() {
-                        nbhd.source_text.clone()
-                    } else {
-                        nbhd.occurrences
-                            .iter()
-                            .map(|o| o.word.as_str())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    };
-                    fragments.push(IncludedFragment {
-                        neighborhood_id: id,
-                        episode_name: episode.name.clone(),
-                        category: RecallCategory::Subconscious,
-                        score: 0.0,
-                        tokens: token_count(&text),
-                        text,
-                        neighborhood_type: nbhd.neighborhood_type,
-                    });
-                    continue 'outer;
-                }
-            }
-        }
+        let (nbhd, episode_name, category) = if n_ref.is_conscious() {
+            let nbhd = &system.conscious_episode.neighborhoods[n_ref.neighborhood_idx];
+            (
+                nbhd,
+                "Previously marked salient".to_string(),
+                RecallCategory::Conscious,
+            )
+        } else {
+            let episode = &system.episodes[n_ref.episode_idx];
+            let nbhd = &episode.neighborhoods[n_ref.neighborhood_idx];
+            (nbhd, episode.name.clone(), RecallCategory::Subconscious)
+        };
+
+        let text = if nbhd.source_text.is_empty() {
+            nbhd.occurrences
+                .iter()
+                .map(|o| o.word.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            nbhd.source_text.clone()
+        };
+
+        fragments.push(IncludedFragment {
+            neighborhood_id: id,
+            episode_name,
+            category,
+            score: 0.0, // Not scored in direct retrieval
+            tokens: token_count(&text),
+            text,
+            neighborhood_type: nbhd.neighborhood_type,
+        });
     }
 
     fragments
 }
 
-// -- Scoring internals --
-
-/// Multiplier for Decision/Preference neighborhoods.
-/// Decisions that genuinely match the query score this many times higher.
-const DECISION_MULTIPLIER: f64 = 3.0;
-
-/// Minimum overlap threshold for conscious recall.
-/// At least this fraction of query tokens must match for a conscious neighborhood
-/// to surface. Prevents stop-word-only matches from dominating results.
-const CONSCIOUS_MIN_OVERLAP: f64 = 0.2;
-
-/// Weight for phasor interference contribution to scoring.
-/// Positive interference (in-phase) boosts, negative (anti-phase) suppresses.
-const INTERFERENCE_WEIGHT: f64 = 0.3;
-
-/// Boost multiplier for vivid neighborhoods (>50% surfaced occurrences).
-const VIVIDNESS_BOOST: f64 = 1.5;
-
-/// Aggregate per-neighborhood mean interference from pairwise results.
-/// Returns map of neighborhood_id -> mean cos(phase_diff).
-/// Aggregates both sides of each pair so conscious and subconscious
-/// neighborhoods both receive interference values.
-fn aggregate_interference(
-    system: &DAESystem,
-    interference: &[InterferenceResult],
-) -> HashMap<Uuid, f64> {
-    let mut sums: HashMap<Uuid, (f64, usize)> = HashMap::new();
-    for ir in interference {
-        // Subconscious side
-        let sub_nbhd = system.get_neighborhood_for_occurrence(ir.sub_ref);
-        let entry = sums.entry(sub_nbhd.id).or_insert((0.0, 0));
-        entry.0 += ir.interference;
-        entry.1 += 1;
-        // Conscious side
-        let con_nbhd = system.get_neighborhood_for_occurrence(ir.con_ref);
-        let entry = sums.entry(con_nbhd.id).or_insert((0.0, 0));
-        entry.0 += ir.interference;
-        entry.1 += 1;
-    }
-    sums.into_iter()
-        .map(|(id, (sum, count))| (id, sum / count as f64))
-        .collect()
-}
-
-/// Recency decay coefficient for non-decision memories.
-/// score *= 1.0 / (1.0 + days_old * RECENCY_DECAY_RATE)
-const RECENCY_DECAY_RATE: f64 = 0.01;
-
-/// IDF-weighted word overlap threshold for contradiction detection.
-/// Pairs of neighborhoods above this threshold are considered overlapping.
-const OVERLAP_THRESHOLD: f64 = 0.3;
-
-/// Score multiplier applied to older neighborhoods in overlapping groups.
-const OVERLAP_SUPPRESSION: f64 = 0.1;
-
-/// Minimum score threshold for inclusion in recall results.
-/// Candidates scoring below this are excluded to avoid padding with weak matches.
-const MIN_SCORE_THRESHOLD: f64 = 1.0;
-
-struct ScoredNeighborhood {
-    neighborhood_id: Uuid,
-    episode_idx: usize, // usize::MAX for conscious
-    score: f64,
-    activated_count: usize,
-    words: HashSet<String>,
-    max_word_weight: f64,
-    max_plasticity: f64,
-    neighborhood_type: NeighborhoodType,
-    epoch: u64,
-}
-
-/// Compute days since an episode's timestamp (empty or unparseable → 0.0).
-fn days_since_episode(system: &DAESystem, episode_idx: usize) -> f64 {
-    let timestamp = if episode_idx == usize::MAX {
-        &system.conscious_episode.timestamp
-    } else {
-        &system.episodes[episode_idx].timestamp
-    };
-    if timestamp.is_empty() {
-        return 0.0;
-    }
-    // Parse ISO-8601 timestamps like "2026-02-19T12:00:00Z" or "2026-02-19"
-    // Fall back to 0.0 if unparseable (no external chrono dep - simple parse).
-    parse_days_ago(timestamp)
-}
-
-fn parse_days_ago(timestamp: &str) -> f64 {
-    // Extract YYYY-MM-DD from start of timestamp
-    if timestamp.len() < 10 {
-        return 0.0;
-    }
-    let parts: Vec<&str> = timestamp[..10].split('-').collect();
-    if parts.len() != 3 {
-        return 0.0;
-    }
-    let Ok(y) = parts[0].parse::<i64>() else {
-        return 0.0;
-    };
-    let Ok(m) = parts[1].parse::<i64>() else {
-        return 0.0;
-    };
-    let Ok(d) = parts[2].parse::<i64>() else {
-        return 0.0;
-    };
-
-    // Simple Julian day number for comparison (good enough for decay)
-    let jdn = |year: i64, month: i64, day: i64| -> i64 {
-        let a = (14 - month) / 12;
-        let y = year + 4800 - a;
-        let m = month + 12 * a - 3;
-        day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045
-    };
-
-    let now_days = (crate::time::now_unix_secs() / 86400) as i64;
-    // Unix epoch is JDN 2440588
-    let now_jdn = now_days + 2440588;
-    let ep_jdn = jdn(y, m, d);
-    let diff = now_jdn - ep_jdn;
-    diff.max(0) as f64
-}
-
-fn score_neighborhoods(
-    system: &mut DAESystem,
-    refs: &[OccurrenceRef],
-    is_conscious: bool,
-    query_token_count: usize,
-) -> HashMap<Uuid, ScoredNeighborhood> {
-    let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
-
-    // Pre-collect data to avoid borrow conflicts.
-    // Superseded neighborhoods are excluded - they've been explicitly replaced.
-    struct OccData {
-        nbhd_id: Uuid,
-        episode_idx: usize,
-        word: String,
-        activation_count: u32,
-        plasticity: f64,
-        nbhd_type: NeighborhoodType,
-        epoch: u64,
-    }
-
-    let data: Vec<OccData> = refs
-        .iter()
-        .filter_map(|r| {
-            let occ = system.get_occurrence(*r);
-            let nbhd = system.get_neighborhood_for_occurrence(*r);
-            if nbhd.superseded_by.is_some() {
-                return None;
-            }
-            Some(OccData {
-                nbhd_id: nbhd.id,
-                episode_idx: if r.is_conscious() {
-                    usize::MAX
-                } else {
-                    r.episode_idx
-                },
-                word: occ.word.to_lowercase(),
-                activation_count: occ.activation_count,
-                plasticity: occ.plasticity(),
-                nbhd_type: nbhd.neighborhood_type,
-                epoch: nbhd.epoch,
-            })
-        })
-        .collect();
-
-    // Pre-collect recency decay per episode_idx
-    let recency_cache: HashMap<usize, f64> = data
-        .iter()
-        .map(|d| d.episode_idx)
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .map(|ep_idx| {
-            let days = days_since_episode(system, ep_idx);
-            let decay = 1.0 / (1.0 + days * RECENCY_DECAY_RATE);
-            (ep_idx, decay)
-        })
-        .collect();
-
-    // For conscious neighborhoods, compute recency boost based on position.
-    // Later neighborhoods (higher index) were added more recently.
-    let conscious_count = if data.iter().any(|d| d.episode_idx == usize::MAX) {
-        system.conscious_episode.neighborhoods.len() as f64
-    } else {
-        1.0
-    };
-    let conscious_recency: HashMap<Uuid, f64> = if conscious_count > 1.0 {
-        system
-            .conscious_episode
-            .neighborhoods
-            .iter()
-            .enumerate()
-            .map(|(i, nbhd)| {
-                // Newest neighborhood (last) gets boost 2.0, oldest gets 1.0
-                let recency = 1.0 + (i as f64 / conscious_count);
-                (nbhd.id, recency)
-            })
-            .collect()
-    } else {
-        HashMap::new()
-    };
-
-    for d in &data {
-        let weight = system.get_word_weight(&d.word);
-
-        let entry = scored
-            .entry(d.nbhd_id)
-            .or_insert_with(|| ScoredNeighborhood {
-                neighborhood_id: d.nbhd_id,
-                episode_idx: d.episode_idx,
-                score: 0.0,
-                activated_count: 0,
-                words: HashSet::new(),
-                max_word_weight: 0.0,
-                max_plasticity: 0.0,
-                neighborhood_type: d.nbhd_type,
-                epoch: d.epoch,
-            });
-
-        entry.score += weight * d.activation_count as f64;
-        entry.words.insert(d.word.clone());
-        entry.activated_count += 1;
-        if weight > entry.max_word_weight {
-            entry.max_word_weight = weight;
-        }
-        if d.plasticity > entry.max_plasticity {
-            entry.max_plasticity = d.plasticity;
-        }
-    }
-
-    // Post-process: density bonus, recency decay, then decision/preference competitive scoring
-    for sn in scored.values_mut() {
-        // Co-occurrence density bonus: neighborhoods matching more query tokens score higher
-        if query_token_count > 0 {
-            let density_bonus = sn.activated_count as f64 / query_token_count as f64;
-            sn.score *= 1.0 + density_bonus;
-        }
-        // All neighborhoods get recency decay
-        let decay = recency_cache.get(&sn.episode_idx).copied().unwrap_or(1.0);
-        sn.score *= decay;
-        // For conscious neighborhoods, apply recency boost (newer = higher score)
-        if sn.episode_idx == usize::MAX {
-            let boost = conscious_recency
-                .get(&sn.neighborhood_id)
-                .copied()
-                .unwrap_or(1.0);
-            sn.score *= boost;
-        }
-        // Decision/Preference: competitive scoring with floor
-        // Decision/Preference types get a multiplier boost but no floor -
-        // they must earn their score through genuine query overlap
-        match sn.neighborhood_type {
-            NeighborhoodType::Decision | NeighborhoodType::Preference => {
-                sn.score *= DECISION_MULTIPLIER;
-            }
-            _ => {}
-        }
-    }
-
-    // Gate conscious recall: require minimum query token overlap
-    if is_conscious && query_token_count > 0 {
-        scored.retain(|_, sn| {
-            sn.activated_count as f64 / query_token_count as f64 >= CONSCIOUS_MIN_OVERLAP
-        });
-    }
-
-    scored
-}
-
-/// Compute IDF-weighted word overlap between two word sets.
-/// Returns Σ IDF(w) for intersection / Σ IDF(w) for union.
-fn idf_weighted_overlap(
-    words_a: &HashSet<String>,
-    words_b: &HashSet<String>,
-    system: &mut DAESystem,
-) -> f64 {
-    let intersection: f64 = words_a
-        .intersection(words_b)
-        .map(|w| system.get_word_weight(w))
-        .sum();
-    let union: f64 = words_a
-        .union(words_b)
-        .map(|w| system.get_word_weight(w))
-        .sum();
-    if union < f64::EPSILON {
-        return 0.0;
-    }
-    intersection / union
-}
-
-/// Detect overlapping neighborhoods across conscious and subconscious scores
-/// and suppress older ones. For each pair with IDF-weighted overlap above
-/// OVERLAP_THRESHOLD, the lower-epoch neighborhood gets its score multiplied
-/// by OVERLAP_SUPPRESSION (0.1x). This ensures that when contradicting memories
-/// exist, only the newest version ranks highly.
-fn overlap_suppress(
-    con_scored: &mut HashMap<Uuid, ScoredNeighborhood>,
-    sub_scored: &mut HashMap<Uuid, ScoredNeighborhood>,
-    system: &mut DAESystem,
-) {
-    // Collect references to word sets and epochs - no cloning needed since
-    // we only read words during pairwise comparison, then mutate scores after.
-    let mut info: Vec<(Uuid, &HashSet<String>, u64)> = Vec::new();
-    let mut seen: HashSet<Uuid> = HashSet::new();
-    for (id, sn) in con_scored.iter().chain(sub_scored.iter()) {
-        if seen.insert(*id) {
-            info.push((*id, &sn.words, sn.epoch));
-        }
-    }
-
-    if info.len() < 2 {
-        return;
-    }
-
-    // Pairwise comparison - O(k²) but k is bounded (top candidates only)
-    let mut suppress: HashSet<Uuid> = HashSet::new();
-    for i in 0..info.len() {
-        for j in (i + 1)..info.len() {
-            let overlap = idf_weighted_overlap(info[i].1, info[j].1, system);
-            if overlap > OVERLAP_THRESHOLD {
-                let epoch_i = info[i].2;
-                let epoch_j = info[j].2;
-                if epoch_i < epoch_j {
-                    suppress.insert(info[i].0);
-                } else if epoch_j < epoch_i {
-                    suppress.insert(info[j].0);
-                }
-                // Same epoch: leave both unsuppressed
-            }
-        }
-    }
-
-    // Apply suppression factor to affected neighborhoods
-    for id in &suppress {
-        if let Some(sn) = con_scored.get_mut(id) {
-            sn.score *= OVERLAP_SUPPRESSION;
-        }
-        if let Some(sn) = sub_scored.get_mut(id) {
-            sn.score *= OVERLAP_SUPPRESSION;
-        }
-    }
-}
-
-fn get_neighborhood_text(system: &DAESystem, neighborhood_id: Uuid, episode_idx: usize) -> String {
-    let episode = if episode_idx == usize::MAX {
-        &system.conscious_episode
-    } else {
-        &system.episodes[episode_idx]
-    };
-
-    for nbhd in &episode.neighborhoods {
-        if nbhd.id == neighborhood_id {
-            if !nbhd.source_text.is_empty() {
-                return nbhd.source_text.clone();
-            }
-            return nbhd
-                .occurrences
-                .iter()
-                .map(|o| o.word.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
-        }
-    }
-
-    String::new()
-}
-
-fn get_episode_name(system: &DAESystem, episode_idx: usize) -> String {
-    if episode_idx == usize::MAX {
-        "Previously marked salient".to_string()
-    } else {
-        let ep = &system.episodes[episode_idx];
-        if ep.name.is_empty() {
-            "Memory".to_string()
-        } else {
-            ep.name.clone()
-        }
-    }
-}
-
-static SALIENT_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?s)<salient>(.*?)</salient>").unwrap());
-
-/// Detect neighborhood type from text prefix (DECISION: / PREFERENCE:).
-/// Returns the detected type and the text with the prefix stripped.
-pub fn detect_neighborhood_type(text: &str) -> (NeighborhoodType, &str) {
-    let trimmed = text.trim();
-    if let Some(rest) = trimmed.strip_prefix("DECISION:") {
-        (NeighborhoodType::Decision, rest.trim())
-    } else if let Some(rest) = trimmed.strip_prefix("PREFERENCE:") {
-        (NeighborhoodType::Preference, rest.trim())
-    } else {
-        (NeighborhoodType::Insight, trimmed)
-    }
-}
-
-/// Extract salient-tagged content and add to conscious episode.
-/// Detects DECISION: and PREFERENCE: prefixes to set neighborhood type.
-pub fn extract_salient(system: &mut DAESystem, text: &str, rng: &mut impl Rng) -> u32 {
-    let mut count = 0u32;
-    for cap in SALIENT_RE.captures_iter(text) {
-        if let Some(content) = cap.get(1) {
-            let (nbhd_type, clean_text) = detect_neighborhood_type(content.as_str());
-            system.add_to_conscious_typed(clean_text, nbhd_type, rng);
-            count += 1;
-        }
-    }
-    count
-}
-
-/// Mark text as salient with automatic type detection from prefix.
-/// Used by `am_salient` when no `<salient>` tags are present.
-pub fn mark_salient_typed(system: &mut DAESystem, text: &str, rng: &mut impl Rng) -> Uuid {
-    let (nbhd_type, clean_text) = detect_neighborhood_type(text);
-    system.add_to_conscious_typed(clean_text, nbhd_type, rng)
-}
+// Scoring internals, salient extraction, and recency computation are in
+// their own modules: crate::scoring, crate::salient, crate::recency.
+//
+// Tests remain here since they exercise the full composition pipeline.
 
 #[cfg(test)]
 mod tests {
@@ -1281,6 +749,8 @@ mod tests {
     use crate::episode::Episode;
     use crate::neighborhood::Neighborhood;
     use crate::query::QueryEngine;
+    use crate::salient::{detect_neighborhood_type, extract_salient, mark_salient_typed};
+    use crate::scoring::idf_weighted_overlap;
     use crate::surface::compute_surface;
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
@@ -1290,7 +760,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_full_system() -> DAESystem {
@@ -1523,7 +993,7 @@ mod tests {
         let surface = compute_surface(&sys, &result);
 
         let budget = BudgetConfig {
-            max_tokens: 100000,
+            max_tokens: 100_000,
             min_conscious: 1,
             min_subconscious: 1,
             min_novel: 0,
@@ -1742,8 +1212,7 @@ mod tests {
         let decision_score = decision_entries[0].score;
         assert!(
             decision_score > 0.0,
-            "relevant decision should have positive score, got {}",
-            decision_score,
+            "relevant decision should have positive score, got {decision_score}",
         );
     }
 
@@ -1800,8 +1269,7 @@ mod tests {
             let decision_score = decision_entries[0].score;
             assert!(
                 decision_score <= 100.0,
-                "irrelevant decision should NOT score at old flat 100.0, got {}",
-                decision_score,
+                "irrelevant decision should NOT score at old flat 100.0, got {decision_score}",
             );
         }
         // Either way: the cooking result should outrank any irrelevant decision
@@ -1878,9 +1346,7 @@ mod tests {
         let s2 = f2.unwrap().score;
         assert!(
             s1 < s2,
-            "recalled neighborhood should score lower: recalled={}, fresh={}",
-            s1,
-            s2,
+            "recalled neighborhood should score lower: recalled={s1}, fresh={s2}",
         );
     }
 
@@ -1969,8 +1435,7 @@ mod tests {
             let ratio = d2.score / d1.score;
             assert!(
                 ratio > 0.5,
-                "softer decay ratio should be > 0.5 (standard), got {}",
-                ratio,
+                "softer decay ratio should be > 0.5 (standard), got {ratio}",
             );
         }
     }
@@ -2464,7 +1929,7 @@ mod tests {
         if ctx.included.len() > 1 {
             // If weak match is included, it should score lower than strong
             let scores: Vec<f64> = ctx.included.iter().map(|f| f.score).collect();
-            let max_score = scores.iter().cloned().fold(f64::MIN, f64::max);
+            let max_score = scores.iter().copied().fold(f64::MIN, f64::max);
             assert!(
                 strong.unwrap().score >= max_score * 0.5,
                 "strong match should be among the top scorers"
@@ -2535,22 +2000,29 @@ mod tests {
         sys.add_episode(ep);
 
         // Identical word sets should have overlap = 1.0
-        let words_a: HashSet<String> = ["alpha", "beta"].iter().map(|s| s.to_string()).collect();
-        let words_b: HashSet<String> = ["alpha", "beta"].iter().map(|s| s.to_string()).collect();
+        let words_a: HashSet<String> = ["alpha", "beta"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        let words_b: HashSet<String> = ["alpha", "beta"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let overlap = idf_weighted_overlap(&words_a, &words_b, &mut sys);
         assert!(
             (overlap - 1.0).abs() < 0.01,
-            "identical sets should have overlap ~1.0, got {}",
-            overlap,
+            "identical sets should have overlap ~1.0, got {overlap}",
         );
 
         // Disjoint word sets should have overlap = 0.0
-        let words_c: HashSet<String> = ["gamma", "delta"].iter().map(|s| s.to_string()).collect();
+        let words_c: HashSet<String> = ["gamma", "delta"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let overlap2 = idf_weighted_overlap(&words_a, &words_c, &mut sys);
         assert!(
             overlap2 < 0.01,
-            "disjoint sets should have overlap ~0.0, got {}",
-            overlap2,
+            "disjoint sets should have overlap ~0.0, got {overlap2}",
         );
 
         // Empty sets
@@ -2558,8 +2030,7 @@ mod tests {
         let overlap3 = idf_weighted_overlap(&empty, &words_a, &mut sys);
         assert!(
             overlap3 < 0.01,
-            "empty set overlap should be ~0.0, got {}",
-            overlap3,
+            "empty set overlap should be ~0.0, got {overlap3}",
         );
     }
 
@@ -2634,7 +2105,7 @@ mod tests {
 
     #[test]
     fn test_retrieve_by_ids_returns_matching_neighborhoods() {
-        let sys = make_full_system();
+        let mut sys = make_full_system();
 
         // Get a neighborhood ID from conscious memory
         let conscious_id = sys.conscious_episode.neighborhoods[0].id;
@@ -2642,7 +2113,7 @@ mod tests {
         // Get a neighborhood ID from subconscious
         let sub_id = sys.episodes[0].neighborhoods[0].id;
 
-        let fragments = retrieve_by_ids(&sys, &[conscious_id, sub_id]);
+        let fragments = retrieve_by_ids(&mut sys, &[conscious_id, sub_id]);
 
         assert_eq!(fragments.len(), 2, "should return 2 fragments");
 
@@ -2670,10 +2141,10 @@ mod tests {
 
     #[test]
     fn test_retrieve_by_ids_handles_missing_ids() {
-        let sys = make_full_system();
+        let mut sys = make_full_system();
         let missing_id = Uuid::new_v4();
 
-        let fragments = retrieve_by_ids(&sys, &[missing_id]);
+        let fragments = retrieve_by_ids(&mut sys, &[missing_id]);
 
         assert!(
             fragments.is_empty(),
@@ -2895,13 +2366,11 @@ mod tests {
         let standard_ratio = standard.score / 10.0;
         assert!(
             (decision_ratio - 2.0 / 3.0).abs() < 0.01,
-            "decision ratio should be ~0.667, got {}",
-            decision_ratio,
+            "decision ratio should be ~0.667, got {decision_ratio}",
         );
         assert!(
             (standard_ratio - 0.5).abs() < 0.01,
-            "standard ratio should be ~0.5, got {}",
-            standard_ratio,
+            "standard ratio should be ~0.5, got {standard_ratio}",
         );
     }
 
@@ -2955,5 +2424,56 @@ mod tests {
             "irrelevant query should produce NO conscious recall, got:\n{}",
             ctx.context,
         );
+    }
+
+    #[test]
+    fn test_sort_with_nan_scores_does_not_panic() {
+        // Verifies that total_cmp handles NaN without panicking.
+        // Previously partial_cmp().unwrap() would crash on NaN scores.
+        let mut candidates = [
+            RankedCandidate {
+                neighborhood_id: Uuid::new_v4(),
+                episode_idx: 0,
+                category: RecallCategory::Conscious,
+                score: 0.5,
+                text: "normal".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Ingested,
+            },
+            RankedCandidate {
+                neighborhood_id: Uuid::new_v4(),
+                episode_idx: 1,
+                category: RecallCategory::Conscious,
+                score: f64::NAN,
+                text: "degenerate".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Ingested,
+            },
+            RankedCandidate {
+                neighborhood_id: Uuid::new_v4(),
+                episode_idx: 2,
+                category: RecallCategory::Conscious,
+                score: 0.8,
+                text: "high".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Ingested,
+            },
+            RankedCandidate {
+                neighborhood_id: Uuid::new_v4(),
+                episode_idx: 3,
+                category: RecallCategory::Conscious,
+                score: f64::INFINITY,
+                text: "inf".to_string(),
+                tokens: 1,
+                neighborhood_type: NeighborhoodType::Ingested,
+            },
+        ];
+
+        // This would panic with partial_cmp().unwrap() if any score is NaN
+        candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
+
+        // NaN sorts to the end with total_cmp (NaN > everything)
+        assert_eq!(candidates.len(), 4);
+        // The sort completed without panicking - that's the key assertion
     }
 }

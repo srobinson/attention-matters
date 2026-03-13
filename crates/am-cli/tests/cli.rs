@@ -164,9 +164,48 @@ fn ingest_dir() {
     // Non-matching extension should be skipped
     std::fs::write(docs_dir.join("ignore.json"), "{}").unwrap();
 
-    // Use a dummy positional arg (first.md) since `files` is required,
-    // then --dir scans for additional .md/.txt files (second.md).
-    // first.md appears both as positional and from dir scan → 3 episodes.
+    // --dir alone works without positional args (required_unless_present = "dir").
+    // first.md + second.md from dir scan = 2 episodes. .json is skipped.
+    am_cmd(&dir)
+        .args(["ingest", "--dir"])
+        .arg(&docs_dir)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ingested"));
+
+    let output = am_cmd(&dir).args(["stats"]).output().unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let episodes: usize = extract_stat_value(&stdout, "episodes:")
+        .parse()
+        .unwrap_or(0);
+    // 2 episodes: first.md + second.md from dir scan.
+    // .json file is correctly skipped.
+    assert_eq!(
+        episodes, 2,
+        "expected 2 episodes (first.md + second.md), got {episodes}"
+    );
+}
+
+#[test]
+fn ingest_dir_deduplicates_overlapping_files() {
+    let dir = TempDir::new().unwrap();
+
+    let docs_dir = dir.path().join("docs");
+    std::fs::create_dir(&docs_dir).unwrap();
+
+    std::fs::write(
+        docs_dir.join("first.md"),
+        "First document about alpha and beta. Second sentence here. Third sentence final.",
+    )
+    .unwrap();
+    std::fs::write(
+        docs_dir.join("second.md"),
+        "Second document about gamma and delta. Another sentence follows. Done with this one.",
+    )
+    .unwrap();
+
+    // Provide first.md as both positional and via --dir. Dedup should prevent double ingestion.
     am_cmd(&dir)
         .args(["ingest", "--dir"])
         .arg(&docs_dir)
@@ -181,11 +220,9 @@ fn ingest_dir() {
     let episodes: usize = extract_stat_value(&stdout, "episodes:")
         .parse()
         .unwrap_or(0);
-    // 3 episodes: first.md (positional) + first.md (dir scan) + second.md (dir scan)
-    // .json file is correctly skipped
     assert_eq!(
-        episodes, 3,
-        "expected 3 episodes (first.md twice + second.md), got {episodes}"
+        episodes, 2,
+        "expected 2 episodes (first.md deduped + second.md), got {episodes}"
     );
 }
 
@@ -571,6 +608,51 @@ fn gc_evicts_cold_occurrences() {
         .stdout(predicate::str::contains("GC complete"));
 
     // Stats should show 0 episodes after evicting everything
+    am_cmd(&dir)
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   0"));
+}
+
+#[test]
+fn gc_target_mb_triggers_aggressive_eviction() {
+    let dir = TempDir::new().unwrap();
+
+    // Disable retention protections so GC works on small test data
+    std::fs::write(
+        dir.path().join(".am.config.toml"),
+        "[retention]\nmin_neighborhoods = 0\ngrace_epochs = 0\nretention_days = 0\n",
+    )
+    .unwrap();
+
+    let input = dir.path().join("gc-target.txt");
+    std::fs::write(
+        &input,
+        "Quantum entanglement connects particles across spacetime. \
+         Bell inequality violations confirm nonlocal correlations. \
+         Decoherence destroys quantum superposition in macroscopic systems.",
+    )
+    .unwrap();
+
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
+
+    // Verify data exists before GC
+    let before = am_cmd(&dir).args(["stats"]).output().unwrap();
+    let before_stdout = String::from_utf8_lossy(&before.stdout);
+    let episodes_before: usize = extract_stat_value(&before_stdout, "episodes:")
+        .parse()
+        .unwrap_or(0);
+    assert!(episodes_before > 0, "should have data before GC");
+
+    // target-mb=0 forces aggressive size-based eviction since any DB > 0 bytes exceeds target
+    am_cmd(&dir)
+        .args(["gc", "--target-mb", "0"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GC complete"));
+
+    // Stats should show 0 episodes after aggressive eviction
     am_cmd(&dir)
         .args(["stats"])
         .assert()

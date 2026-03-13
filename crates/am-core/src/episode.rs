@@ -17,6 +17,7 @@ pub struct Episode {
 }
 
 impl Episode {
+    #[must_use]
     pub fn new(name: &str) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -27,6 +28,7 @@ impl Episode {
         }
     }
 
+    #[must_use]
     pub fn new_conscious() -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -42,19 +44,28 @@ impl Episode {
     }
 
     /// Total occurrence count across all neighborhoods.
+    #[must_use]
     pub fn count(&self) -> usize {
-        self.neighborhoods.iter().map(|n| n.count()).sum()
-    }
-
-    /// Total activation across all neighborhoods.
-    pub fn total_activation(&self) -> u32 {
         self.neighborhoods
             .iter()
-            .map(|n| n.total_activation())
+            .map(super::neighborhood::Neighborhood::count)
             .sum()
     }
 
-    /// Episode mass: count/N * M
+    /// Total activation across all neighborhoods.
+    #[must_use]
+    pub fn total_activation(&self) -> u32 {
+        self.neighborhoods
+            .iter()
+            .map(super::neighborhood::Neighborhood::total_activation)
+            .sum()
+    }
+
+    /// Episode mass relative to total system occurrences.
+    ///
+    /// `n` is the total number of occurrences across all episodes in the system,
+    /// used as the normalization denominator. Returns `count / n * M`.
+    #[must_use]
     pub fn mass(&self, n: usize) -> f64 {
         if n == 0 {
             return 0.0;
@@ -63,6 +74,7 @@ impl Episode {
     }
 
     /// Display name for context composition output.
+    #[must_use]
     pub fn display_name(&self) -> &str {
         if self.name.is_empty() {
             "Memory"

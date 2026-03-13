@@ -299,9 +299,7 @@ fn repeated_queries_increase_activation() {
     for (before, after) in count_before.iter().zip(count_after.iter()) {
         assert!(
             after > before,
-            "activation count should increase: {} -> {}",
-            before,
-            after
+            "activation count should increase: {before} -> {after}"
         );
     }
 }

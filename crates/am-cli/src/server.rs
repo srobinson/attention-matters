@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+
+use rustc_hash::FxHasher;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -23,6 +24,19 @@ use uuid::Uuid;
 
 const BUFFER_THRESHOLD: usize = 3;
 const DEDUP_WINDOW_SECS: u64 = 60;
+/// Maximum input size for text-accepting MCP tools (1 MB).
+const MAX_TOOL_INPUT_BYTES: usize = 1_048_576;
+
+/// Reject input that exceeds the per-tool byte limit.
+fn check_input_size(value: &str, field: &str) -> Result<(), McpError> {
+    if value.len() > MAX_TOOL_INPUT_BYTES {
+        return Err(McpError::invalid_params(
+            format!("{field} exceeds {} byte limit", MAX_TOOL_INPUT_BYTES),
+            None,
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Clone)]
 pub struct AmServer {
@@ -30,6 +44,29 @@ pub struct AmServer {
     tool_router: ToolRouter<Self>,
 }
 
+/// All mutable server state behind a single `tokio::sync::Mutex`.
+///
+/// # Concurrency model
+///
+/// Every MCP tool handler acquires `state.lock().await` for its full duration.
+/// This serializes all tool calls: no two tools execute concurrently. This is
+/// correct and intentional for the current deployment model (single client via
+/// stdio transport, one Claude Code session per process).
+///
+/// # What changes for multi-client support
+///
+/// If the transport changes to SSE or WebSocket with concurrent clients, the
+/// single mutex becomes a throughput bottleneck. The recommended decomposition:
+///
+/// - `RwLock<DAESystem>` for the in-memory system (readers: am_query, am_stats,
+///   am_export; writers: am_ingest, am_salient, am_feedback, am_activate_response)
+/// - `Mutex<Store>` for SQLite writes (rusqlite::Connection is !Sync, requires
+///   exclusive access or a connection pool)
+/// - Separate `Mutex<SessionState>` for session_recalled and dedup_window
+///   (per-session state that does not interact with the core system)
+///
+/// The `SmallRng` would move to per-request construction (already cheap) or
+/// thread-local storage.
 struct ServerState {
     system: DAESystem,
     store: BrainStore,
@@ -41,6 +78,28 @@ struct ServerState {
     /// Content hashes with timestamps for dedup within a time window.
     /// Prevents duplicate episodes when am_buffer is called with identical content.
     dedup_window: HashMap<u64, Instant>,
+}
+
+/// Flush orphaned buffer entries from the store into the system as a conversation episode.
+///
+/// Called at the start of query paths to ensure buffered exchanges from previous
+/// sessions are ingested before recall. Persists the system state after ingestion.
+fn flush_orphaned_buffer(store: &BrainStore, system: &mut DAESystem, rng: &mut SmallRng) {
+    let orphaned = store.store().buffer_count().unwrap_or(0);
+    if orphaned > 0
+        && let Ok(exchanges) = store.store().drain_buffer()
+    {
+        let combined: String = exchanges
+            .iter()
+            .map(|(u, a)| format!("{u}\n{a}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let episode = ingest_text(&combined, Some("conversation"), rng);
+        system.add_episode(episode);
+        if let Err(e) = store.save_system(system) {
+            tracing::error!("failed to persist flushed buffer episode: {e}");
+        }
+    }
 }
 
 impl AmServer {
@@ -72,10 +131,12 @@ impl AmServer {
         tracing::info!("WAL checkpoint complete");
     }
 
-    /// Compute a content hash for dedup. Uses DefaultHasher (u64) which gives
-    /// 16 hex chars - sufficient for dedup within a 60-second window.
+    /// Compute a deterministic content hash for dedup.
+    ///
+    /// Uses `FxHasher` from `rustc-hash`, which produces stable output across
+    /// Rust releases and process restarts (unlike `DefaultHasher`).
     fn content_hash(user: &str, assistant: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = FxHasher::default();
         user.hash(&mut hasher);
         b"\n".hash(&mut hasher);
         assistant.hash(&mut hasher);
@@ -199,6 +260,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<QueryRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         // Snapshot session_recalled before destructuring (avoids borrow conflict)
         let session_recalled_snapshot = state.session_recalled.clone();
@@ -206,22 +268,7 @@ impl AmServer {
             system, store, rng, ..
         } = &mut *state;
 
-        // Flush any orphaned buffer from previous sessions into an episode
-        let orphaned = store.store().buffer_count().unwrap_or(0);
-        if orphaned > 0
-            && let Ok(exchanges) = store.store().drain_buffer()
-        {
-            let combined: String = exchanges
-                .iter()
-                .map(|(u, a)| format!("{u}\n{a}"))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let episode = ingest_text(&combined, Some("conversation"), rng);
-            system.add_episode(episode);
-            if let Err(e) = store.save_system(system) {
-                tracing::error!("failed to persist flushed buffer episode: {e}");
-            }
-        }
+        flush_orphaned_buffer(store, system, rng);
 
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
@@ -363,28 +410,14 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<QueryIndexRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         let session_recalled_snapshot = state.session_recalled.clone();
         let ServerState {
             system, store, rng, ..
         } = &mut *state;
 
-        // Flush any orphaned buffer
-        let orphaned = store.store().buffer_count().unwrap_or(0);
-        if orphaned > 0
-            && let Ok(exchanges) = store.store().drain_buffer()
-        {
-            let combined: String = exchanges
-                .iter()
-                .map(|(u, a)| format!("{u}\n{a}"))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let episode = ingest_text(&combined, Some("conversation"), rng);
-            system.add_episode(episode);
-            if let Err(e) = store.save_system(system) {
-                tracing::error!("failed to persist flushed buffer episode: {e}");
-            }
-        }
+        flush_orphaned_buffer(store, system, rng);
 
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
@@ -483,6 +516,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<ActivateResponseRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         let ServerState { system, store, .. } = &mut *state;
 
@@ -522,6 +556,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<SalientRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         let ServerState {
             system, store, rng, ..
@@ -590,6 +625,13 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<BufferRequest>,
     ) -> Result<CallToolResult, McpError> {
+        let total_len = req.user.len() + req.assistant.len();
+        if total_len > MAX_TOOL_INPUT_BYTES {
+            return Err(McpError::invalid_params(
+                format!("combined input exceeds {} byte limit", MAX_TOOL_INPUT_BYTES),
+                None,
+            ));
+        }
         let mut state = self.state.lock().await;
         let ServerState {
             system,
@@ -661,6 +703,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<IngestRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.text, "text")?;
         let mut state = self.state.lock().await;
         let ServerState {
             system, store, rng, ..
@@ -761,6 +804,7 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<FeedbackRequest>,
     ) -> Result<CallToolResult, McpError> {
+        check_input_size(&req.query, "query")?;
         let mut state = self.state.lock().await;
         let ServerState { system, store, .. } = &mut *state;
 
@@ -815,23 +859,22 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<McpBatchQueryRequest>,
     ) -> Result<CallToolResult, McpError> {
-        let mut state = self.state.lock().await;
-        let ServerState { system, store, .. } = &mut *state;
-
-        // Flush orphaned buffer (same as am_query)
-        let orphaned = store.store().buffer_count().unwrap_or(0);
-        if orphaned > 0
-            && let Ok(exchanges) = store.store().drain_buffer()
-        {
-            let combined: String = exchanges
-                .iter()
-                .map(|(u, a)| format!("{u}\n{a}"))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let rng = &mut SmallRng::from_os_rng();
-            let episode = ingest_text(&combined, Some("conversation"), rng);
-            system.add_episode(episode);
+        let total_len: usize = req.queries.iter().map(|q| q.query.len()).sum();
+        if total_len > MAX_TOOL_INPUT_BYTES {
+            return Err(McpError::invalid_params(
+                format!(
+                    "aggregate query text ({total_len} bytes) exceeds {} byte limit",
+                    MAX_TOOL_INPUT_BYTES
+                ),
+                None,
+            ));
         }
+        let mut state = self.state.lock().await;
+        let ServerState {
+            system, store, rng, ..
+        } = &mut *state;
+
+        flush_orphaned_buffer(store, system, rng);
 
         let requests: Vec<am_core::batch::BatchQueryRequest> = req
             .queries
@@ -1671,5 +1714,334 @@ mod tests {
 
         assert!(info.instructions.is_some());
         assert!(info.capabilities.tools.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_am_ingest_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_ingest(Parameters(IngestRequest {
+                text: oversized,
+                name: None,
+            }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_buffer_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_buffer(Parameters(BufferRequest {
+                user: oversized,
+                assistant: String::new(),
+            }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_salient_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_salient(Parameters(SalientRequest {
+                text: oversized,
+                supersedes: vec![],
+            }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    /// Helper: ingest content and return neighborhood IDs from a query.
+    async fn ingest_and_get_neighborhood_ids(server: &AmServer) -> Vec<String> {
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Quantum mechanics describes particle behavior at subatomic scales. Wave functions collapse upon measurement. Entanglement connects distant particles.".to_string(),
+                name: Some("quantum".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .am_query(Parameters(QueryRequest {
+                text: "quantum particles entanglement".to_string(),
+                max_tokens: None,
+            }))
+            .await
+            .unwrap();
+        let json = parse_result(&result);
+        let recalled = &json["recalled_ids"];
+        let mut ids = Vec::new();
+        for cat in &["conscious", "subconscious", "novel"] {
+            if let Some(arr) = recalled[cat].as_array() {
+                for id in arr {
+                    if let Some(s) = id.as_str() {
+                        ids.push(s.to_string());
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_boost() {
+        let server = make_server();
+        let ids = ingest_and_get_neighborhood_ids(&server).await;
+        assert!(
+            !ids.is_empty(),
+            "query should recall at least one neighborhood"
+        );
+
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: "quantum particles".to_string(),
+                neighborhood_ids: ids,
+                signal: "boost".to_string(),
+            }))
+            .await
+            .unwrap();
+        let json = parse_result(&result);
+        assert!(
+            json["boosted"].as_u64().unwrap() > 0,
+            "boost should affect at least one neighborhood"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_demote() {
+        let server = make_server();
+        let ids = ingest_and_get_neighborhood_ids(&server).await;
+        assert!(
+            !ids.is_empty(),
+            "query should recall at least one neighborhood"
+        );
+
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: "quantum particles".to_string(),
+                neighborhood_ids: ids,
+                signal: "demote".to_string(),
+            }))
+            .await
+            .unwrap();
+        let json = parse_result(&result);
+        assert!(
+            json["demoted"].as_u64().unwrap() > 0,
+            "demote should affect at least one neighborhood"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_unknown_signal() {
+        let server = make_server();
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: "test".to_string(),
+                neighborhood_ids: vec!["00000000-0000-0000-0000-000000000001".to_string()],
+                signal: "invalid_signal".to_string(),
+            }))
+            .await;
+        assert!(result.is_err(), "unknown signal should return error");
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_empty_ids() {
+        let server = make_server();
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: "test".to_string(),
+                neighborhood_ids: vec![],
+                signal: "boost".to_string(),
+            }))
+            .await;
+        assert!(
+            result.is_err(),
+            "empty neighborhood_ids should return error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_batch_query_basic() {
+        let server = make_server();
+
+        // Ingest content
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Rust is a systems programming language focused on safety and performance. Memory safety without garbage collection.".to_string(),
+                name: Some("rust-lang".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .am_batch_query(Parameters(McpBatchQueryRequest {
+                queries: vec![
+                    BatchQueryItem {
+                        query: "rust safety".to_string(),
+                        max_tokens: None,
+                    },
+                    BatchQueryItem {
+                        query: "memory management".to_string(),
+                        max_tokens: None,
+                    },
+                    BatchQueryItem {
+                        query: "performance optimization".to_string(),
+                        max_tokens: None,
+                    },
+                ],
+            }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+        let results = json["results"].as_array().expect("results should be array");
+        assert_eq!(results.len(), 3, "should have 3 results for 3 queries");
+
+        for (i, r) in results.iter().enumerate() {
+            assert!(r.get("query").is_some(), "result {i} should have query");
+            assert!(r.get("context").is_some(), "result {i} should have context");
+            assert!(r.get("metrics").is_some(), "result {i} should have metrics");
+            assert!(
+                r.get("recalled_ids").is_some(),
+                "result {i} should have recalled_ids"
+            );
+            assert!(
+                r.get("token_estimate").is_some(),
+                "result {i} should have token_estimate"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_am_batch_query_empty_requests() {
+        let server = make_server();
+
+        let result = server
+            .am_batch_query(Parameters(McpBatchQueryRequest { queries: vec![] }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+        let results = json["results"].as_array().expect("results should be array");
+        assert!(
+            results.is_empty(),
+            "empty queries should produce empty results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_batch_query_per_budget() {
+        let server = make_server();
+
+        // Ingest enough content to test budget limits
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Quantum mechanics describes the behavior of particles at the smallest scales. Superposition allows particles to exist in multiple states simultaneously. Entanglement connects particles across vast distances instantaneously.".to_string(),
+                name: Some("quantum".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .am_batch_query(Parameters(McpBatchQueryRequest {
+                queries: vec![
+                    BatchQueryItem {
+                        query: "quantum entanglement".to_string(),
+                        max_tokens: Some(50),
+                    },
+                    BatchQueryItem {
+                        query: "quantum superposition".to_string(),
+                        max_tokens: Some(5000),
+                    },
+                ],
+            }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+        let results = json["results"].as_array().expect("results should be array");
+        assert_eq!(results.len(), 2);
+
+        // Both should have budget fields reflecting their token limits
+        let budget_small = &results[0]["budget"];
+        let budget_large = &results[1]["budget"];
+        assert_eq!(budget_small["tokens_budget"], 50);
+        assert_eq!(budget_large["tokens_budget"], 5000);
+    }
+
+    #[tokio::test]
+    async fn test_am_query_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_query(Parameters(QueryRequest {
+                text: oversized,
+                max_tokens: None,
+            }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_activate_response_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_activate_response(Parameters(ActivateResponseRequest { text: oversized }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_rejects_oversized_query() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: oversized,
+                neighborhood_ids: vec![],
+                signal: "boost".to_string(),
+            }))
+            .await;
+        assert!(result.is_err(), "should reject query exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_batch_query_rejects_oversized_aggregate() {
+        let server = make_server();
+        // Each query is half the limit; together they exceed it
+        let half_plus = "x".repeat(MAX_TOOL_INPUT_BYTES / 2 + 1);
+        let result = server
+            .am_batch_query(Parameters(McpBatchQueryRequest {
+                queries: vec![
+                    BatchQueryItem {
+                        query: half_plus.clone(),
+                        max_tokens: None,
+                    },
+                    BatchQueryItem {
+                        query: half_plus,
+                        max_tokens: None,
+                    },
+                ],
+            }))
+            .await;
+        assert!(
+            result.is_err(),
+            "should reject aggregate payload exceeding size limit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_query_index_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_query_index(Parameters(QueryIndexRequest { text: oversized }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
     }
 }

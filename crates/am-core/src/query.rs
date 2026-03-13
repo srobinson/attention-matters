@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::constants::{EPSILON, THRESHOLD};
+use crate::constants::{PAIRWISE_DRIFT_MAX_MOBILE, THRESHOLD};
 use crate::phasor::DaemonPhasor;
 use crate::quaternion::Quaternion;
 use crate::system::{ActivationResult, DAESystem, OccurrenceRef};
@@ -20,7 +20,7 @@ pub struct WordGroup {
     pub con_refs: Vec<OccurrenceRef>,
 }
 
-/// Full result from process_query.
+/// Full result from `process_query`.
 pub struct QueryResult {
     pub activation: ActivationResult,
     pub interference: Vec<InterferenceResult>,
@@ -29,7 +29,7 @@ pub struct QueryResult {
     pub query_token_count: usize,
 }
 
-/// Stateless query processor operating on a DAESystem.
+/// Stateless query processor operating on a `DAESystem`.
 pub struct QueryEngine;
 
 impl QueryEngine {
@@ -56,7 +56,24 @@ impl QueryEngine {
         result
     }
 
-    /// Full query pipeline: activate → drift → interference → Kuramoto → return.
+    /// Full query pipeline: activate, drift, interference, Kuramoto, return.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use am_core::{DAESystem, QueryEngine, ingest_text};
+    /// use rand::SeedableRng;
+    /// use rand::rngs::SmallRng;
+    ///
+    /// let mut system = DAESystem::new("test");
+    /// let mut rng = SmallRng::seed_from_u64(42);
+    /// let episode = ingest_text("Rust ownership and borrowing rules", None, &mut rng);
+    /// system.add_episode(episode);
+    ///
+    /// let result = QueryEngine::process_query(&mut system, "ownership");
+    /// // Activation should find at least one occurrence of "ownership"
+    /// assert!(!result.activation.subconscious.is_empty());
+    /// ```
     pub fn process_query(system: &mut DAESystem, query: &str) -> QueryResult {
         let activation = Self::activate(system, query);
 
@@ -147,7 +164,7 @@ impl QueryEngine {
             return;
         }
 
-        if mobile.len() >= 200 {
+        if mobile.len() >= PAIRWISE_DRIFT_MAX_MOBILE {
             Self::centroid_drift(system, &mobile, &container_activations);
         } else {
             Self::pairwise_drift(system, &mobile, &container_activations);
@@ -235,6 +252,10 @@ impl QueryEngine {
 
     /// Centroid drift: O(n). IDF-weighted leave-one-out centroid in R⁴,
     /// project to S³. No phasor drift.
+    ///
+    /// Uses `Quaternion::weighted_sum` for R⁴ accumulation and
+    /// `WeightedSum::leave_one_out` for per-element centroid exclusion,
+    /// sharing the same primitives as `Quaternion::weighted_centroid`.
     fn centroid_drift(
         system: &mut DAESystem,
         mobile: &[OccurrenceRef],
@@ -246,54 +267,31 @@ impl QueryEngine {
             .map(|r| system.get_occurrence(*r).word.clone())
             .collect();
         let idf_weights: Vec<f64> = words.iter().map(|w| system.get_word_weight(w)).collect();
-        let states: Vec<(Quaternion, f64, f64)> = mobile
+        let positions: Vec<Quaternion> = mobile
             .iter()
-            .enumerate()
-            .map(|(i, r)| {
+            .map(|r| system.get_occurrence(*r).position)
+            .collect();
+        let drift_rates: Vec<f64> = mobile
+            .iter()
+            .map(|r| {
                 let occ = system.get_occurrence(*r);
                 let ca = container_activations[r];
-                (occ.position, occ.drift_rate(ca), idf_weights[i])
+                occ.drift_rate(ca)
             })
             .collect();
 
-        // Compute weighted centroid in R⁴
-        let mut sum_w = 0.0f64;
-        let mut sum_x = 0.0f64;
-        let mut sum_y = 0.0f64;
-        let mut sum_z = 0.0f64;
-        let mut total_weight = 0.0f64;
-
-        for (pos, _, w) in &states {
-            sum_w += pos.w * w;
-            sum_x += pos.x * w;
-            sum_y += pos.y * w;
-            sum_z += pos.z * w;
-            total_weight += w;
-        }
+        // Compute weighted sum in R⁴ using the shared utility
+        let Some(sum) = Quaternion::weighted_sum(&positions, &idf_weights) else {
+            return;
+        };
 
         // Apply leave-one-out centroid drift
         for (idx, r) in mobile.iter().enumerate() {
-            let (pos, dr, w) = &states[idx];
-            let rem_weight = total_weight - w;
-
-            if rem_weight < EPSILON {
+            let Some(target) = sum.leave_one_out(positions[idx], idf_weights[idx]) else {
                 continue;
-            }
+            };
 
-            // Leave-one-out centroid
-            let tw = (sum_w - pos.w * w) / rem_weight;
-            let tx = (sum_x - pos.x * w) / rem_weight;
-            let ty = (sum_y - pos.y * w) / rem_weight;
-            let tz = (sum_z - pos.z * w) / rem_weight;
-
-            let norm = (tw * tw + tx * tx + ty * ty + tz * tz).sqrt();
-            if norm < EPSILON {
-                continue;
-            }
-
-            let target = Quaternion::new(tw / norm, tx / norm, ty / norm, tz / norm);
-            let factor = dr * w * 0.5;
-
+            let factor = drift_rates[idx] * idf_weights[idx] * 0.5;
             if factor > 0.0 {
                 let occ = system.get_occurrence_mut(*r);
                 occ.position = occ.position.slerp(target, factor);
@@ -303,6 +301,7 @@ impl QueryEngine {
 
     /// Compute interference between subconscious and conscious occurrences.
     /// Returns interference results and word groups for Kuramoto.
+    #[must_use]
     pub fn compute_interference(
         system: &DAESystem,
         subconscious: &[OccurrenceRef],
@@ -325,9 +324,8 @@ impl QueryEngine {
         let mut word_groups = Vec::new();
 
         for (word, sub_refs) in &sub_by_word {
-            let con_refs = match con_by_word.get(word) {
-                Some(refs) => refs,
-                None => continue,
+            let Some(con_refs) = con_by_word.get(word) else {
+                continue;
             };
 
             // Circular mean phase of conscious occurrences
@@ -451,7 +449,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_test_system() -> DAESystem {
@@ -623,8 +621,8 @@ mod tests {
         let activation = QueryEngine::activate(&mut sys, "quantum");
 
         // Get initial phase diff
-        let sub_refs = activation.subconscious.to_vec();
-        let con_refs = activation.conscious.to_vec();
+        let sub_refs = activation.subconscious.clone();
+        let con_refs = activation.conscious.clone();
 
         if sub_refs.is_empty() || con_refs.is_empty() {
             return; // Skip if no overlap
