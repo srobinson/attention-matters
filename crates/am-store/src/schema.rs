@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 pub fn initialize(conn: &Connection) -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode = WAL;")?;
@@ -45,7 +45,8 @@ pub fn initialize(conn: &Connection) -> Result<()> {
             seed_y             REAL NOT NULL,
             seed_z             REAL NOT NULL,
             source_text        TEXT NOT NULL DEFAULT '',
-            neighborhood_type  TEXT NOT NULL DEFAULT 'memory',
+            neighborhood_type  TEXT NOT NULL DEFAULT 'memory'
+                CHECK(neighborhood_type IN ('memory', 'decision', 'preference', 'insight', 'ingested')),
             epoch              INTEGER NOT NULL DEFAULT 0,
             superseded_by      TEXT
         );
@@ -134,6 +135,28 @@ pub fn initialize(conn: &Connection) -> Result<()> {
             DROP INDEX IF EXISTS idx_occ_activation;
             CREATE INDEX IF NOT EXISTS idx_occ_nbhd_activation
                 ON occurrences(neighborhood_id, activation_count);
+            ",
+        )?;
+    }
+
+    // v8: Enforce neighborhood_type values via triggers (existing databases
+    // cannot add CHECK constraints through ALTER TABLE in SQLite).
+    if stored_version < 8 {
+        conn.execute_batch(
+            "
+            CREATE TRIGGER IF NOT EXISTS trg_nbhd_type_insert
+            BEFORE INSERT ON neighborhoods
+            WHEN NEW.neighborhood_type NOT IN ('memory', 'decision', 'preference', 'insight', 'ingested')
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid neighborhood_type');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_nbhd_type_update
+            BEFORE UPDATE OF neighborhood_type ON neighborhoods
+            WHEN NEW.neighborhood_type NOT IN ('memory', 'decision', 'preference', 'insight', 'ingested')
+            BEGIN
+                SELECT RAISE(ABORT, 'invalid neighborhood_type');
+            END;
             ",
         )?;
     }
@@ -363,5 +386,37 @@ mod tests {
 
         let version2 = get_schema_version(&conn).unwrap();
         assert_eq!(version2, Some(SCHEMA_VERSION));
+    }
+
+    #[test]
+    fn test_neighborhood_type_check_rejects_invalid() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize(&conn).unwrap();
+
+        // Insert a valid episode first
+        conn.execute(
+            "INSERT INTO episodes (id, name, is_conscious, timestamp) VALUES ('ep1', 'test', 0, '2026-01-01')",
+            [],
+        )
+        .unwrap();
+
+        // Valid type should succeed
+        conn.execute(
+            "INSERT INTO neighborhoods (id, episode_id, seed_w, seed_x, seed_y, seed_z, neighborhood_type)
+             VALUES ('n1', 'ep1', 1.0, 0.0, 0.0, 0.0, 'decision')",
+            [],
+        )
+        .unwrap();
+
+        // Invalid type should fail (caught by CHECK or trigger)
+        let result = conn.execute(
+            "INSERT INTO neighborhoods (id, episode_id, seed_w, seed_x, seed_y, seed_z, neighborhood_type)
+             VALUES ('n2', 'ep1', 1.0, 0.0, 0.0, 0.0, 'bogus')",
+            [],
+        );
+        assert!(
+            result.is_err(),
+            "invalid neighborhood_type should be rejected"
+        );
     }
 }
