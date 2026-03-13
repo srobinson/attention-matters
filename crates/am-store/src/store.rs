@@ -412,14 +412,32 @@ impl Store {
     }
 
     pub fn drain_buffer(&self) -> Result<Vec<(String, String)>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT user_text, assistant_text FROM conversation_buffer ORDER BY id")?;
-        let rows: Vec<(String, String)> = stmt
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+        let tx = self.conn.unchecked_transaction()?;
+
+        let mut stmt = tx
+            .prepare("SELECT id, user_text, assistant_text FROM conversation_buffer ORDER BY id")?;
+        let entries: Vec<(i64, String, String)> = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
             .collect::<std::result::Result<_, _>>()?;
-        self.conn.execute_batch("DELETE FROM conversation_buffer")?;
-        Ok(rows)
+        drop(stmt);
+
+        if !entries.is_empty() {
+            let ids: Vec<i64> = entries.iter().map(|(id, _, _)| *id).collect();
+            let placeholders: Vec<String> = ids.iter().map(|_| "?".to_string()).collect();
+            let sql = format!(
+                "DELETE FROM conversation_buffer WHERE id IN ({})",
+                placeholders.join(",")
+            );
+            let params: Vec<&dyn rusqlite::types::ToSql> = ids
+                .iter()
+                .map(|id| id as &dyn rusqlite::types::ToSql)
+                .collect();
+            tx.execute(&sql, params.as_slice())?;
+        }
+
+        tx.commit()?;
+
+        Ok(entries.into_iter().map(|(_, u, a)| (u, a)).collect())
     }
 
     pub fn buffer_count(&self) -> Result<usize> {
@@ -1592,5 +1610,21 @@ mod tests {
 
         let (removed, _, _) = store.forget_term("nonexistent").unwrap();
         assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn test_drain_buffer_idempotent() {
+        let store = Store::open_in_memory().unwrap();
+        store.append_buffer("hello", "world").unwrap();
+        store.append_buffer("foo", "bar").unwrap();
+
+        let first = store.drain_buffer().unwrap();
+        assert_eq!(first.len(), 2);
+        assert_eq!(first[0], ("hello".to_string(), "world".to_string()));
+        assert_eq!(first[1], ("foo".to_string(), "bar".to_string()));
+
+        // Second drain returns empty: rows were deleted atomically
+        let second = store.drain_buffer().unwrap();
+        assert!(second.is_empty(), "second drain should return empty");
     }
 }
