@@ -799,61 +799,46 @@ pub fn compose_index(
 /// Retrieve full content for specific neighborhood IDs.
 /// Phase 2 of two-phase retrieval: after reviewing the index, fetch
 /// only the neighborhoods you actually need.
-pub fn retrieve_by_ids(system: &DAESystem, ids: &[Uuid]) -> Vec<IncludedFragment> {
+pub fn retrieve_by_ids(system: &mut DAESystem, ids: &[Uuid]) -> Vec<IncludedFragment> {
     let mut fragments = Vec::new();
 
-    'outer: for &id in ids {
-        // Search conscious episode first
-        for nbhd in &system.conscious_episode.neighborhoods {
-            if nbhd.id == id {
-                let text = if !nbhd.source_text.is_empty() {
-                    nbhd.source_text.clone()
-                } else {
-                    nbhd.occurrences
-                        .iter()
-                        .map(|o| o.word.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-                fragments.push(IncludedFragment {
-                    neighborhood_id: id,
-                    episode_name: "Previously marked salient".to_string(),
-                    category: RecallCategory::Conscious,
-                    score: 0.0, // Not scored in direct retrieval
-                    tokens: token_count(&text),
-                    text,
-                    neighborhood_type: nbhd.neighborhood_type,
-                });
-                continue 'outer;
-            }
-        }
+    for &id in ids {
+        let Some(n_ref) = system.get_neighborhood_ref(id) else {
+            continue;
+        };
 
-        // Search subconscious episodes
-        for episode in &system.episodes {
-            for nbhd in &episode.neighborhoods {
-                if nbhd.id == id {
-                    let text = if !nbhd.source_text.is_empty() {
-                        nbhd.source_text.clone()
-                    } else {
-                        nbhd.occurrences
-                            .iter()
-                            .map(|o| o.word.as_str())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    };
-                    fragments.push(IncludedFragment {
-                        neighborhood_id: id,
-                        episode_name: episode.name.clone(),
-                        category: RecallCategory::Subconscious,
-                        score: 0.0,
-                        tokens: token_count(&text),
-                        text,
-                        neighborhood_type: nbhd.neighborhood_type,
-                    });
-                    continue 'outer;
-                }
-            }
-        }
+        let (nbhd, episode_name, category) = if n_ref.is_conscious() {
+            let nbhd = &system.conscious_episode.neighborhoods[n_ref.neighborhood_idx];
+            (
+                nbhd,
+                "Previously marked salient".to_string(),
+                RecallCategory::Conscious,
+            )
+        } else {
+            let episode = &system.episodes[n_ref.episode_idx];
+            let nbhd = &episode.neighborhoods[n_ref.neighborhood_idx];
+            (nbhd, episode.name.clone(), RecallCategory::Subconscious)
+        };
+
+        let text = if !nbhd.source_text.is_empty() {
+            nbhd.source_text.clone()
+        } else {
+            nbhd.occurrences
+                .iter()
+                .map(|o| o.word.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        fragments.push(IncludedFragment {
+            neighborhood_id: id,
+            episode_name,
+            category,
+            score: 0.0, // Not scored in direct retrieval
+            tokens: token_count(&text),
+            text,
+            neighborhood_type: nbhd.neighborhood_type,
+        });
     }
 
     fragments
@@ -2634,7 +2619,7 @@ mod tests {
 
     #[test]
     fn test_retrieve_by_ids_returns_matching_neighborhoods() {
-        let sys = make_full_system();
+        let mut sys = make_full_system();
 
         // Get a neighborhood ID from conscious memory
         let conscious_id = sys.conscious_episode.neighborhoods[0].id;
@@ -2642,7 +2627,7 @@ mod tests {
         // Get a neighborhood ID from subconscious
         let sub_id = sys.episodes[0].neighborhoods[0].id;
 
-        let fragments = retrieve_by_ids(&sys, &[conscious_id, sub_id]);
+        let fragments = retrieve_by_ids(&mut sys, &[conscious_id, sub_id]);
 
         assert_eq!(fragments.len(), 2, "should return 2 fragments");
 
@@ -2670,10 +2655,10 @@ mod tests {
 
     #[test]
     fn test_retrieve_by_ids_handles_missing_ids() {
-        let sys = make_full_system();
+        let mut sys = make_full_system();
         let missing_id = Uuid::new_v4();
 
-        let fragments = retrieve_by_ids(&sys, &[missing_id]);
+        let fragments = retrieve_by_ids(&mut sys, &[missing_id]);
 
         assert!(
             fragments.is_empty(),
@@ -2961,7 +2946,8 @@ mod tests {
     fn test_sort_with_nan_scores_does_not_panic() {
         // Verifies that total_cmp handles NaN without panicking.
         // Previously partial_cmp().unwrap() would crash on NaN scores.
-        let mut candidates = [RankedCandidate {
+        let mut candidates = [
+            RankedCandidate {
                 neighborhood_id: Uuid::new_v4(),
                 episode_idx: 0,
                 category: RecallCategory::Conscious,
@@ -2996,7 +2982,8 @@ mod tests {
                 text: "inf".to_string(),
                 tokens: 1,
                 neighborhood_type: NeighborhoodType::Ingested,
-            }];
+            },
+        ];
 
         // This would panic with partial_cmp().unwrap() if any score is NaN
         candidates.sort_by(|a, b| b.score.total_cmp(&a.score));
