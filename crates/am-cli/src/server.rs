@@ -1,6 +1,7 @@
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+
+use rustc_hash::FxHasher;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -72,10 +73,12 @@ impl AmServer {
         tracing::info!("WAL checkpoint complete");
     }
 
-    /// Compute a content hash for dedup. Uses DefaultHasher (u64) which gives
-    /// 16 hex chars - sufficient for dedup within a 60-second window.
+    /// Compute a deterministic content hash for dedup.
+    ///
+    /// Uses `FxHasher` from `rustc-hash`, which produces stable output across
+    /// Rust releases and process restarts (unlike `DefaultHasher`).
     fn content_hash(user: &str, assistant: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
+        let mut hasher = FxHasher::default();
         user.hash(&mut hasher);
         b"\n".hash(&mut hasher);
         assistant.hash(&mut hasher);

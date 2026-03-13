@@ -24,6 +24,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 pulldown-cmark = { version = "0.13.1", default-features = false }
+rustc-hash = "2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
