@@ -133,6 +133,13 @@ impl Quaternion {
     /// because they represent the same rotation. This differs from raw S³ manifold
     /// distance, where q and -q are π apart.
     ///
+    /// # Antipodal semantics
+    ///
+    /// The `abs(dot)` collapses antipodal pairs: `q.angular_distance(-q) == 0`.
+    /// For DAE neighborhood radius checks (where distances are well below π),
+    /// this collapse has no practical effect. It matters only at distances near
+    /// π, which never arise in normal operation.
+    ///
     /// The SLERP implementation handles antipodal pairs differently: it flips the
     /// sign to take the shorter arc rather than collapsing to zero.
     #[must_use]
