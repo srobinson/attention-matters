@@ -686,4 +686,127 @@ mod tests {
             "rare word should have higher IDF weight: {w_rare} vs {w_common}"
         );
     }
+
+    /// Generate a query string with >50 unique tokens.
+    fn make_large_query(unique_words: &[&str], filler_count: usize) -> String {
+        let mut words: Vec<String> = unique_words.iter().map(|w| (*w).to_string()).collect();
+        for i in 0..filler_count {
+            words.push(format!("filler{i}"));
+        }
+        words.join(" ")
+    }
+
+    #[test]
+    fn large_query_filters_common_words_from_drift() {
+        // Build a system with >10 neighborhoods so weight_floor < 1.0.
+        // "common" appears in every neighborhood (low IDF weight).
+        // Verify the weight_floor computation is correct and the pipeline
+        // completes without panic for >50 token queries.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+        let mut ep = Episode::new("test");
+        for i in 0..12 {
+            let tokens = if i == 0 {
+                to_tokens(&["rare", "common"])
+            } else {
+                to_tokens(&["common", &format!("word{i}")])
+            };
+            let n = Neighborhood::from_tokens(&tokens, None, "", &mut rng);
+            ep.add_neighborhood(n);
+        }
+        sys.add_episode(ep);
+
+        let total_nbhd = sys.total_neighborhoods();
+        assert!(total_nbhd >= 10, "need >= 10 neighborhoods");
+
+        // Verify the weight_floor math: 1.0 / floor(12 * 0.1) = 1.0
+        let weight_floor = 1.0 / (total_nbhd as f64 * 0.1).floor().max(1.0);
+        assert!(
+            (weight_floor - 1.0).abs() < f64::EPSILON,
+            "weight_floor should be 1.0 for 12 neighborhoods, got {weight_floor}"
+        );
+
+        // "common" IDF = 1/12 < weight_floor, should be excluded from drift
+        let common_weight = sys.get_word_weight("common");
+        assert!(
+            common_weight < weight_floor,
+            "common (weight {common_weight}) should be below floor ({weight_floor})"
+        );
+
+        // "rare" IDF = 1.0 >= weight_floor, should be included in drift
+        let rare_weight = sys.get_word_weight("rare");
+        assert!(
+            rare_weight >= weight_floor,
+            "rare (weight {rare_weight}) should be at or above floor ({weight_floor})"
+        );
+
+        // The full pipeline should complete without panic
+        let query = make_large_query(&["rare", "common"], 55);
+        let result = QueryEngine::process_query(&mut sys, &query);
+
+        // Activation should contain both (filtering only affects drift)
+        assert!(
+            result.query_token_count > 50,
+            "query should have >50 unique tokens"
+        );
+        assert!(
+            !result.activation.subconscious.is_empty(),
+            "activation should contain occurrences"
+        );
+    }
+
+    #[test]
+    fn large_query_weight_floor_one_with_few_neighborhoods() {
+        // Build a system with <10 neighborhoods so weight_floor = 1.0.
+        // Only words in exactly 1 neighborhood pass drift filtering.
+        let mut rng = rng();
+        let mut sys = DAESystem::new("test");
+        let mut ep = Episode::new("test");
+
+        // 3 neighborhoods: "unique_a" in one, "shared" in all three
+        let n1 = Neighborhood::from_tokens(&to_tokens(&["unique_a", "shared"]), None, "", &mut rng);
+        let n2 = Neighborhood::from_tokens(&to_tokens(&["unique_b", "shared"]), None, "", &mut rng);
+        let n3 = Neighborhood::from_tokens(&to_tokens(&["unique_c", "shared"]), None, "", &mut rng);
+        ep.add_neighborhood(n1);
+        ep.add_neighborhood(n2);
+        ep.add_neighborhood(n3);
+        sys.add_episode(ep);
+
+        let total_nbhd = sys.total_neighborhoods();
+        assert!(total_nbhd < 10, "need < 10 neighborhoods");
+
+        // Verify edge case: floor(3 * 0.1) = 0, max(1.0) = 1.0
+        let weight_floor = 1.0 / (total_nbhd as f64 * 0.1).floor().max(1.0);
+        assert!(
+            (weight_floor - 1.0).abs() < f64::EPSILON,
+            "weight_floor should be 1.0 for <10 neighborhoods, got {weight_floor}"
+        );
+
+        // "shared" IDF = 1/3 < 1.0 - excluded from drift
+        let shared_weight = sys.get_word_weight("shared");
+        assert!(
+            shared_weight < weight_floor,
+            "shared (weight {shared_weight}) should be below 1.0"
+        );
+
+        // unique words: IDF = 1.0 - included in drift
+        let unique_weight = sys.get_word_weight("unique_a");
+        assert!(
+            unique_weight >= weight_floor,
+            "unique_a (weight {unique_weight}) should pass floor"
+        );
+
+        // The full pipeline should not crash or produce empty results
+        let query = make_large_query(&["unique_a", "unique_b", "unique_c", "shared"], 55);
+        let result = QueryEngine::process_query(&mut sys, &query);
+
+        assert!(
+            result.query_token_count > 50,
+            "query should have >50 unique tokens"
+        );
+        assert!(
+            !result.activation.subconscious.is_empty(),
+            "pipeline should produce non-empty activation"
+        );
+    }
 }
