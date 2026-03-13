@@ -345,6 +345,10 @@ fn init_tracing(verbose: bool) {
         .init();
 }
 
+// Tokio multi-thread runtime is used for I/O concurrency (async stdin/stdout
+// for the MCP stdio transport), not for parallel tool execution. All tool
+// handlers serialize through ServerState's single Mutex. See server.rs for
+// the concurrency model documentation.
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();

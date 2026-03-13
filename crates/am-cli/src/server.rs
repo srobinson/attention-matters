@@ -33,6 +33,29 @@ pub struct AmServer {
     tool_router: ToolRouter<Self>,
 }
 
+/// All mutable server state behind a single `tokio::sync::Mutex`.
+///
+/// # Concurrency model
+///
+/// Every MCP tool handler acquires `state.lock().await` for its full duration.
+/// This serializes all tool calls: no two tools execute concurrently. This is
+/// correct and intentional for the current deployment model (single client via
+/// stdio transport, one Claude Code session per process).
+///
+/// # What changes for multi-client support
+///
+/// If the transport changes to SSE or WebSocket with concurrent clients, the
+/// single mutex becomes a throughput bottleneck. The recommended decomposition:
+///
+/// - `RwLock<DAESystem>` for the in-memory system (readers: am_query, am_stats,
+///   am_export; writers: am_ingest, am_salient, am_feedback, am_activate_response)
+/// - `Mutex<Store>` for SQLite writes (rusqlite::Connection is !Sync, requires
+///   exclusive access or a connection pool)
+/// - Separate `Mutex<SessionState>` for session_recalled and dedup_window
+///   (per-session state that does not interact with the core system)
+///
+/// The `SmallRng` would move to per-request construction (already cheap) or
+/// thread-local storage.
 struct ServerState {
     system: DAESystem,
     store: BrainStore,
