@@ -12,7 +12,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::compose::{BudgetConfig, BudgetedContextResult, compose_context_budgeted};
-use crate::query::{QueryEngine, QueryResult};
+use crate::query::{QueryEngine, QueryManifest, QueryResult};
 use crate::surface::compute_surface;
 use crate::system::{DAESystem, OccurrenceRef};
 use crate::tokenizer::tokenize;
@@ -151,12 +151,12 @@ impl BatchQueryEngine {
             .chain(all_conscious.iter())
             .copied()
             .collect();
-        QueryEngine::drift_and_consolidate(system, &all_refs);
+        let _ = QueryEngine::drift_and_consolidate(system, &all_refs);
 
         // Step 4: Compute interference once for the full set
         let (_, word_groups) =
             QueryEngine::compute_interference(system, &all_subconscious, &all_conscious);
-        QueryEngine::apply_kuramoto_coupling(system, &word_groups);
+        let _ = QueryEngine::apply_kuramoto_coupling(system, &word_groups);
 
         // Step 5: Per-query partitioning and context composition
         let mut results = Vec::with_capacity(requests.len());
@@ -188,6 +188,7 @@ impl BatchQueryEngine {
                 interference,
                 word_groups,
                 query_token_count: query_tokens.len(),
+                manifest: QueryManifest::default(),
             };
 
             let surface = compute_surface(system, &query_result);
@@ -455,9 +456,9 @@ mod tests {
     fn test_batch_activation_matches_sequential_for_shared_tokens() {
         // Sequential: 3 separate queries each containing "quantum"
         let mut sys_seq = make_batch_system();
-        QueryEngine::activate(&mut sys_seq, "quantum alpha");
-        QueryEngine::activate(&mut sys_seq, "quantum beta");
-        QueryEngine::activate(&mut sys_seq, "quantum gamma");
+        let _ = QueryEngine::activate(&mut sys_seq, "quantum alpha");
+        let _ = QueryEngine::activate(&mut sys_seq, "quantum beta");
+        let _ = QueryEngine::activate(&mut sys_seq, "quantum gamma");
 
         let seq_counts: Vec<u32> = sys_seq
             .get_word_occurrences("quantum")

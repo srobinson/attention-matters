@@ -1,10 +1,25 @@
 use std::collections::HashMap;
 
+use uuid::Uuid;
+
 use crate::constants::{PAIRWISE_DRIFT_MAX_MOBILE, THRESHOLD};
 use crate::phasor::DaemonPhasor;
 use crate::quaternion::Quaternion;
 use crate::system::{ActivationResult, DAESystem, OccurrenceRef};
 use crate::tokenizer::tokenize;
+
+/// Manifest of mutations applied to the `DAESystem` during a query.
+///
+/// Captures which occurrences had their positions/phasors drifted and which
+/// had their activation counts incremented. Required by incremental persistence
+/// (Phase 2) to issue targeted `SQLite` writes instead of full `save_system`.
+#[derive(Debug, Default)]
+pub struct QueryManifest {
+    /// Occurrence IDs whose position or phasor was modified by drift or Kuramoto coupling.
+    pub drifted: Vec<Uuid>,
+    /// Occurrence IDs whose `activation_count` was incremented.
+    pub activated: Vec<Uuid>,
+}
 
 /// Single interference result between a subconscious and conscious occurrence.
 pub struct InterferenceResult {
@@ -27,6 +42,8 @@ pub struct QueryResult {
     pub word_groups: Vec<WordGroup>,
     /// Number of unique tokens in the original query (for density scoring).
     pub query_token_count: usize,
+    /// Manifest of all mutations applied to the system during this query.
+    pub manifest: QueryManifest,
 }
 
 /// Stateless query processor operating on a `DAESystem`.
@@ -34,7 +51,9 @@ pub struct QueryEngine;
 
 impl QueryEngine {
     /// Activate a query: tokenize, deduplicate, activate all matching occurrences.
-    pub fn activate(system: &mut DAESystem, query: &str) -> ActivationResult {
+    ///
+    /// Returns the activation result and a list of activated occurrence UUIDs.
+    pub fn activate(system: &mut DAESystem, query: &str) -> (ActivationResult, Vec<Uuid>) {
         let tokens = tokenize(query);
         let mut seen = std::collections::HashSet::new();
         let unique: Vec<String> = tokens
@@ -53,7 +72,14 @@ impl QueryEngine {
             result.conscious.extend(activation.conscious);
         }
 
-        result
+        let activated_ids: Vec<Uuid> = result
+            .subconscious
+            .iter()
+            .chain(result.conscious.iter())
+            .map(|r| system.get_occurrence(*r).id)
+            .collect();
+
+        (result, activated_ids)
     }
 
     /// Full query pipeline: activate, drift, interference, Kuramoto, return.
@@ -75,7 +101,7 @@ impl QueryEngine {
     /// assert!(!result.activation.subconscious.is_empty());
     /// ```
     pub fn process_query(system: &mut DAESystem, query: &str) -> QueryResult {
-        let activation = Self::activate(system, query);
+        let (activation, activated_ids) = Self::activate(system, query);
 
         // Unique token count (matches activate's dedup and batch_query's HashSet)
         let query_token_count = {
@@ -117,27 +143,34 @@ impl QueryEngine {
             )
         };
 
-        Self::drift_and_consolidate(system, &drift_sub);
-        Self::drift_and_consolidate(system, &drift_con);
+        let mut drifted = Self::drift_and_consolidate(system, &drift_sub);
+        drifted.extend(Self::drift_and_consolidate(system, &drift_con));
 
         let (interference, word_groups) =
             Self::compute_interference(system, &activation.subconscious, &activation.conscious);
 
-        Self::apply_kuramoto_coupling(system, &word_groups);
+        let coupled = Self::apply_kuramoto_coupling(system, &word_groups);
+        drifted.extend(coupled);
 
         QueryResult {
             activation,
             interference,
             word_groups,
             query_token_count,
+            manifest: QueryManifest {
+                drifted,
+                activated: activated_ids,
+            },
         }
     }
 
     /// Drift activated occurrences toward each other.
-    /// Pairwise O(n²) for <200 mobile, centroid O(n) for >=200.
-    pub fn drift_and_consolidate(system: &mut DAESystem, activated: &[OccurrenceRef]) {
+    /// Pairwise O(n^2) for <200 mobile, centroid O(n) for >=200.
+    ///
+    /// Returns the UUIDs of occurrences whose position or phasor changed.
+    pub fn drift_and_consolidate(system: &mut DAESystem, activated: &[OccurrenceRef]) -> Vec<Uuid> {
         if activated.len() < 2 {
-            return;
+            return Vec::new();
         }
 
         // Cache container activations
@@ -161,23 +194,25 @@ impl QueryEngine {
             .collect();
 
         if mobile.len() < 2 {
-            return;
+            return Vec::new();
         }
 
         if mobile.len() >= PAIRWISE_DRIFT_MAX_MOBILE {
-            Self::centroid_drift(system, &mobile, &container_activations);
+            Self::centroid_drift(system, &mobile, &container_activations)
         } else {
-            Self::pairwise_drift(system, &mobile, &container_activations);
+            Self::pairwise_drift(system, &mobile, &container_activations)
         }
     }
 
-    /// Pairwise drift: O(n²). Each pair of mobile occurrences drifts toward
+    /// Pairwise drift: O(n^2). Each pair of mobile occurrences drifts toward
     /// a weighted meeting point. Both position and phasor drift.
+    ///
+    /// Returns UUIDs of all mobile occurrences (all receive position/phasor updates).
     fn pairwise_drift(
         system: &mut DAESystem,
         mobile: &[OccurrenceRef],
         container_activations: &HashMap<OccurrenceRef, u32>,
-    ) {
+    ) -> Vec<Uuid> {
         // Snapshot current state to avoid read-after-write issues
         let states: Vec<(Quaternion, DaemonPhasor, f64, String)> = mobile
             .iter()
@@ -248,19 +283,27 @@ impl QueryEngine {
             occ.position = pos;
             occ.phasor = phasor;
         }
+
+        // All mobile occurrences received position/phasor updates
+        mobile
+            .iter()
+            .map(|r| system.get_occurrence(*r).id)
+            .collect()
     }
 
-    /// Centroid drift: O(n). IDF-weighted leave-one-out centroid in R⁴,
-    /// project to S³. No phasor drift.
+    /// Centroid drift: O(n). IDF-weighted leave-one-out centroid in R^4,
+    /// project to S^3. No phasor drift.
     ///
-    /// Uses `Quaternion::weighted_sum` for R⁴ accumulation and
+    /// Uses `Quaternion::weighted_sum` for R^4 accumulation and
     /// `WeightedSum::leave_one_out` for per-element centroid exclusion,
     /// sharing the same primitives as `Quaternion::weighted_centroid`.
+    ///
+    /// Returns UUIDs of occurrences that actually moved (factor > 0).
     fn centroid_drift(
         system: &mut DAESystem,
         mobile: &[OccurrenceRef],
         container_activations: &HashMap<OccurrenceRef, u32>,
-    ) {
+    ) -> Vec<Uuid> {
         // Snapshot in separate passes to avoid borrow conflicts
         let words: Vec<String> = mobile
             .iter()
@@ -280,10 +323,12 @@ impl QueryEngine {
             })
             .collect();
 
-        // Compute weighted sum in R⁴ using the shared utility
+        // Compute weighted sum in R^4 using the shared utility
         let Some(sum) = Quaternion::weighted_sum(&positions, &idf_weights) else {
-            return;
+            return Vec::new();
         };
+
+        let mut drifted_ids = Vec::new();
 
         // Apply leave-one-out centroid drift
         for (idx, r) in mobile.iter().enumerate() {
@@ -295,8 +340,11 @@ impl QueryEngine {
             if factor > 0.0 {
                 let occ = system.get_occurrence_mut(*r);
                 occ.position = occ.position.slerp(target, factor);
+                drifted_ids.push(occ.id);
             }
         }
+
+        drifted_ids
     }
 
     /// Compute interference between subconscious and conscious occurrences.
@@ -366,9 +414,11 @@ impl QueryEngine {
     }
 
     /// Apply Kuramoto phase coupling across manifolds.
-    pub fn apply_kuramoto_coupling(system: &mut DAESystem, word_groups: &[WordGroup]) {
+    ///
+    /// Returns UUIDs of occurrences whose phasor was modified.
+    pub fn apply_kuramoto_coupling(system: &mut DAESystem, word_groups: &[WordGroup]) -> Vec<Uuid> {
         if word_groups.is_empty() {
-            return;
+            return Vec::new();
         }
 
         let n_con = system.conscious_episode.count().max(1);
@@ -377,6 +427,8 @@ impl QueryEngine {
 
         let k_con = n_sub as f64 / n_total as f64;
         let k_sub = n_con as f64 / n_total as f64;
+
+        let mut coupled_ids = Vec::new();
 
         for group in word_groups {
             let w = system.get_word_weight(&group.word);
@@ -408,7 +460,7 @@ impl QueryEngine {
                 )
             };
 
-            // Phase difference wrapped to [-π, π]
+            // Phase difference wrapped to [-pi, pi]
             let phase_diff = ((mean_phase_con - mean_phase_sub) + std::f64::consts::PI)
                 .rem_euclid(std::f64::consts::TAU)
                 - std::f64::consts::PI;
@@ -422,13 +474,17 @@ impl QueryEngine {
                 let occ = system.get_occurrence_mut(*r);
                 let plasticity = occ.plasticity();
                 occ.phasor = DaemonPhasor::new(occ.phasor.theta + base_delta_sub * plasticity);
+                coupled_ids.push(occ.id);
             }
             for r in &group.con_refs {
                 let occ = system.get_occurrence_mut(*r);
                 let plasticity = occ.plasticity();
                 occ.phasor = DaemonPhasor::new(occ.phasor.theta + base_delta_con * plasticity);
+                coupled_ids.push(occ.id);
             }
         }
+
+        coupled_ids
     }
 }
 
@@ -509,7 +565,8 @@ mod tests {
 
         // Activate multiple words so container activation is high enough
         // that individual ratio < THRESHOLD
-        let activation = QueryEngine::activate(&mut sys, "alpha beta gamma delta epsilon zeta");
+        let (activation, _) =
+            QueryEngine::activate(&mut sys, "alpha beta gamma delta epsilon zeta");
 
         // Get refs for "alpha" which is in both neighborhoods
         let alpha_refs: Vec<_> = activation
@@ -561,7 +618,7 @@ mod tests {
         let pos_before = sys.get_occurrence(refs[0]).position;
 
         // Activate and drift
-        let activation = QueryEngine::activate(&mut sys, "word1 word2");
+        let (activation, _) = QueryEngine::activate(&mut sys, "word1 word2");
         QueryEngine::drift_and_consolidate(&mut sys, &activation.subconscious);
 
         let pos_after = sys.get_occurrence(refs[0]).position;
@@ -571,7 +628,7 @@ mod tests {
     #[test]
     fn test_interference_computation() {
         let mut sys = make_test_system();
-        let activation = QueryEngine::activate(&mut sys, "quantum");
+        let (activation, _) = QueryEngine::activate(&mut sys, "quantum");
 
         let (interference, word_groups) = QueryEngine::compute_interference(
             &sys,
@@ -614,7 +671,7 @@ mod tests {
     #[test]
     fn test_kuramoto_pulls_phases() {
         let mut sys = make_test_system();
-        let activation = QueryEngine::activate(&mut sys, "quantum");
+        let (activation, _) = QueryEngine::activate(&mut sys, "quantum");
 
         // Get initial phase diff
         let sub_refs = activation.subconscious.clone();
@@ -658,6 +715,68 @@ mod tests {
         assert!(!result.activation.subconscious.is_empty());
         assert!(!result.activation.conscious.is_empty());
         assert!(!result.interference.is_empty());
+    }
+
+    #[test]
+    fn test_manifest_contains_activated_ids() {
+        let mut sys = make_test_system();
+        let result = QueryEngine::process_query(&mut sys, "quantum physics");
+
+        // Every activated occurrence should appear in manifest.activated
+        let total_activated =
+            result.activation.subconscious.len() + result.activation.conscious.len();
+        assert_eq!(
+            result.manifest.activated.len(),
+            total_activated,
+            "manifest should contain one UUID per activated occurrence"
+        );
+
+        // Verify the UUIDs match the actual occurrence IDs
+        for r in result
+            .activation
+            .subconscious
+            .iter()
+            .chain(&result.activation.conscious)
+        {
+            let occ_id = sys.get_occurrence(*r).id;
+            assert!(
+                result.manifest.activated.contains(&occ_id),
+                "activated occurrence {occ_id} missing from manifest"
+            );
+        }
+    }
+
+    #[test]
+    fn test_manifest_contains_drifted_ids() {
+        let mut sys = make_test_system();
+        let result = QueryEngine::process_query(&mut sys, "quantum physics");
+
+        // Drifted list should be non-empty when occurrences have non-zero drift rate
+        // and Kuramoto coupling occurs (quantum is in both manifolds)
+        assert!(
+            !result.manifest.drifted.is_empty(),
+            "manifest should contain drifted occurrence IDs after drift and Kuramoto"
+        );
+
+        // All drifted IDs should be valid UUIDs that exist in the system
+        for uuid in &result.manifest.drifted {
+            assert_ne!(*uuid, Uuid::nil(), "drifted UUID should not be nil");
+        }
+    }
+
+    #[test]
+    fn test_manifest_empty_when_no_matches() {
+        let mut sys = make_test_system();
+        let result = QueryEngine::process_query(&mut sys, "xyznonexistent");
+
+        assert!(
+            result.manifest.activated.is_empty(),
+            "no matches means no activated IDs"
+        );
+        assert!(
+            result.manifest.drifted.is_empty(),
+            "no matches means no drifted IDs"
+        );
     }
 
     #[test]

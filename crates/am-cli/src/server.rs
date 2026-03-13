@@ -536,20 +536,20 @@ impl AmServer {
         let mut state = self.state.lock().await;
         let ServerState { system, store, .. } = &mut *state;
 
-        let activation = QueryEngine::activate(system, &req.text);
+        let (activation, _activated_ids) = QueryEngine::activate(system, &req.text);
         let all_refs: Vec<_> = activation
             .subconscious
             .iter()
             .chain(activation.conscious.iter())
             .copied()
             .collect();
-        QueryEngine::drift_and_consolidate(system, &all_refs);
+        let _ = QueryEngine::drift_and_consolidate(system, &all_refs);
         let (_, word_groups) = QueryEngine::compute_interference(
             system,
             &activation.subconscious,
             &activation.conscious,
         );
-        QueryEngine::apply_kuramoto_coupling(system, &word_groups);
+        let _ = QueryEngine::apply_kuramoto_coupling(system, &word_groups);
 
         if let Err(e) = store.save_system(system) {
             tracing::error!("failed to persist after activate_response: {e}");
