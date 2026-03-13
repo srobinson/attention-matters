@@ -18,51 +18,51 @@ use rmcp::{ServiceExt, transport::stdio};
     name = "am",
     about = "Geometric memory for AI agents - persistent recall across sessions",
     long_about = "\
-\x1b[1mam\x1b[0m - Geometric memory for AI agents
+am - Geometric memory for AI agents
 
 Models memory as points on a 3-sphere (S³ manifold) using quaternion positions,
 golden-angle phasors, IDF-weighted drift, and Kuramoto phase coupling. Memories
 aren't stored in flat text - they're positioned in geometric space where related
 concepts naturally cluster through physics-inspired dynamics.
 
-\x1b[1mHow it works:\x1b[0m
-  • Words are placed on S³ as quaternion positions within neighborhoods
-  • Querying activates matching words and drifts them closer via SLERP
-  • Phase coupling synchronizes related concepts across sessions
-  • Conscious memories (marked salient) persist globally across projects
+How it works:
+  - Words are placed on S³ as quaternion positions within neighborhoods
+  - Querying activates matching words and drifts them closer via SLERP
+  - Phase coupling synchronizes related concepts across sessions
+  - Conscious memories (marked salient) persist globally across projects
 
-\x1b[1mAs an MCP server\x1b[0m (primary mode):
+As an MCP server (primary mode):
   Claude Code runs `am serve` automatically. The AI calls these tools:
-    \x1b[36mam_query\x1b[0m              Recall context at session start
-    \x1b[36mam_activate_response\x1b[0m  Strengthen connections after responses
-    \x1b[36mam_salient\x1b[0m            Mark insights as conscious memory
-    \x1b[36mam_buffer\x1b[0m             Buffer exchanges → auto-create episodes
-    \x1b[36mam_ingest\x1b[0m             Ingest documents as memory episodes
-    \x1b[36mam_stats\x1b[0m              Memory system diagnostics
-    \x1b[36mam_export\x1b[0m / \x1b[36mam_import\x1b[0m  Portable state backup and restore
+    am_query              Recall context at session start
+    am_activate_response  Strengthen connections after responses
+    am_salient            Mark insights as conscious memory
+    am_buffer             Buffer exchanges, auto-create episodes
+    am_ingest             Ingest documents as memory episodes
+    am_stats              Memory system diagnostics
+    am_export / am_import Portable state backup and restore
 
-\x1b[1mAs a CLI\x1b[0m (for humans):
+As a CLI (for humans):
   Query, ingest, inspect, and manage memories directly.",
-    after_help = "\x1b[1mSetup with Claude Code:\x1b[0m
+    after_help = "Setup with Claude Code:
   claude mcp add am -- npx -y attention-matters serve
 
-\x1b[1mQuick start:\x1b[0m
+Quick start:
   am ingest README.md              # Feed a document into memory
   am query \"authentication flow\"   # Recall relevant context
   am inspect                       # See what's in memory
   am inspect conscious             # Browse conscious memories
   am stats                         # System diagnostics
 
-\x1b[1mData location:\x1b[0m  ~/.attention-matters/brain.db
+Data location:  ~/.attention-matters/brain.db
   Single unified brain - one product, one memory.
 
-\x1b[1mConfiguration:\x1b[0m  ~/.attention-matters/.am.config.toml
+Configuration:  ~/.attention-matters/.am.config.toml
   Environment variables override file values:
     AM_DATA_DIR     Base directory for brain.db and config
     AM_GC_ENABLED   Enable automatic GC on startup (default: false)
     AM_DB_SIZE_MB   DB size limit in MB for GC threshold (default: 50)
 
-\x1b[2mhttps://github.com/srobinson/attention-matters\x1b[0m",
+https://github.com/srobinson/attention-matters",
     version
 )]
 struct Cli {
@@ -82,9 +82,9 @@ enum Commands {
             This is the primary mode - Claude Code launches this automatically\n\
             when configured as an MCP server. The server exposes 8 tools that\n\
             the AI agent calls to build and query geometric memory.",
-        after_help = "\x1b[1mSetup:\x1b[0m\n  \
+        after_help = "Setup:\n  \
             claude mcp add am -- npx -y attention-matters serve\n\n\
-            \x1b[1mThe server exposes:\x1b[0m\n  \
+            The server exposes:\n  \
             am_query, am_activate_response, am_salient, am_buffer,\n  \
             am_ingest, am_stats, am_export, am_import"
     )]
@@ -99,7 +99,7 @@ enum Commands {
             • Conscious recall (previously marked salient)\n\
             • Subconscious recall (from ingested documents/conversations)\n\
             • Novel connections (lateral associations via interference)",
-        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+        after_help = "Examples:\n  \
             am query \"authentication middleware\"\n  \
             am query \"database schema migration\" --verbose"
     )]
@@ -114,7 +114,7 @@ enum Commands {
             Text is split into 3-sentence chunks, each becoming a\n\
             neighborhood of word occurrences placed on the S³ manifold\n\
             with golden-angle phasor spacing. Supports .txt, .md, .html.",
-        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+        after_help = "Examples:\n  \
             am ingest README.md ARCHITECTURE.md\n  \
             am ingest --dir ./docs\n  \
             am ingest --dir ./docs notes.txt"
@@ -134,7 +134,7 @@ enum Commands {
         long_about = "Display memory statistics.\n\n\
             Shows total occurrences (N), episode count, conscious memory\n\
             count, database size, and activation distribution.",
-        after_help = "\x1b[1mExample:\x1b[0m\n  \
+        after_help = "Example:\n  \
             am stats"
     )]
     Stats,
@@ -145,7 +145,7 @@ enum Commands {
             The exported file contains all episodes, neighborhoods,\n\
             occurrences, and conscious memories. Can be imported on\n\
             another machine or into a different project.",
-        after_help = "\x1b[1mExample:\x1b[0m\n  \
+        after_help = "Example:\n  \
             am export backup.json"
     )]
     Export {
@@ -158,7 +158,7 @@ enum Commands {
         long_about = "Import a previously exported memory state.\n\n\
             Replaces the current memory with the imported state.\n\
             All memories are stored in the unified brain database.",
-        after_help = "\x1b[1mExample:\x1b[0m\n  \
+        after_help = "Example:\n  \
             am import backup.json"
     )]
     Import {
@@ -177,7 +177,7 @@ enum Commands {
             • --query - run a query and show the full recall breakdown\n\n\
             Trust requires transparency. This command shows you\n\
             what the AI remembers and why.",
-        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+        after_help = "Examples:\n  \
             am inspect                        # Overview\n  \
             am inspect conscious              # List conscious memories\n  \
             am inspect episodes --limit 50    # More episodes\n  \
@@ -213,7 +213,7 @@ enum Commands {
                all session transcripts. For manual bulk re-sync.\n\n\
             Replace semantics: if an episode with the same name already exists,\n\
             it is replaced (not duplicated).",
-        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+        after_help = "Examples:\n  \
             echo '{...}' | am sync     # Ingest single session from hook stdin\n  \
             am sync --all              # Discover and re-ingest all transcripts\n  \
             am sync --all --dry-run    # Show what would be ingested\n  \
@@ -240,7 +240,7 @@ enum Commands {
             cleans up empty neighborhoods and episodes, then VACUUMs the\n\
             SQLite database to reclaim disk space.\n\n\
             Conscious memories are never auto-evicted.",
-        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+        after_help = "Examples:\n  \
             am gc                     # Default: floor=1 (remove zero-activation)\n  \
             am gc --floor 2           # Remove occurrences activated ≤2 times\n  \
             am gc --dry-run           # Preview what would be removed\n  \
@@ -268,7 +268,7 @@ enum Commands {
             • By episode: removes an entire subconscious episode by UUID\n\
             • By conscious ID: removes a specific conscious memory by UUID\n\n\
             Use `am inspect` to find IDs before forgetting.",
-        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+        after_help = "Examples:\n  \
             am forget password            # Remove all occurrences of \"password\"\n  \
             am forget --episode abc123    # Remove episode by ID\n  \
             am forget --conscious def456  # Remove conscious memory by ID"
@@ -292,7 +292,7 @@ enum Commands {
             and their compiled defaults. Writes to the current directory\n\
             by default, or to ~/.attention-matters/ with --global.\n\
             If a config file already exists, prompts before overwriting.",
-        after_help = "\x1b[1mExamples:\x1b[0m\n  \
+        after_help = "Examples:\n  \
             am init                 # Write config to current directory\n  \
             am init --global        # Write config to ~/.attention-matters/\n  \
             am init --force         # Overwrite without prompting"
