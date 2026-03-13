@@ -67,7 +67,7 @@ echo "$COMPARISON"
 
 regression_found=false
 while IFS= read -r line; do
-    if pct=$(echo "$line" | grep -oE '[+-][0-9]+\.[0-9]+%' | head -1); then
+    if pct=$(echo "$line" | grep -oE '[+-][0-9]+(\.[0-9]+)?%' | head -1); then
         if [[ -n "$pct" ]]; then
             num=$(echo "$pct" | sed 's/[%+]//g')
             sign=$(echo "$pct" | cut -c1)

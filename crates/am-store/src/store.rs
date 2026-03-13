@@ -798,8 +798,8 @@ impl Store {
         let before_occs = self.occurrence_count()?;
         let before_size = self.db_size();
 
-        // Build retention filter clauses with parameterized values.
-        // Parameters: ?1 = max_epoch_f, ?2 = recency_weight, then dynamic retention params.
+        // Parameters: ?1 = max_epoch_f, ?2 = recency_weight,
+        // ?3 = epoch_floor (-1 sentinel disables), ?4 = retention_secs (-1 sentinel disables).
         let max_epoch: u64 = self
             .conn
             .query_row(
