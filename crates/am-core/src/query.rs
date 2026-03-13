@@ -19,6 +19,9 @@ pub struct QueryManifest {
     pub drifted: Vec<Uuid>,
     /// Occurrence IDs whose `activation_count` was incremented.
     pub activated: Vec<Uuid>,
+    /// Occurrence IDs with absolute activation counts after demotion.
+    /// Used by feedback demote where activation is decremented, not incremented.
+    pub demoted_activations: Vec<(Uuid, u32)>,
 }
 
 /// Single interference result between a subconscious and conscious occurrence.
@@ -160,6 +163,7 @@ impl QueryEngine {
             manifest: QueryManifest {
                 drifted,
                 activated: activated_ids,
+                demoted_activations: Vec::new(),
             },
         }
     }

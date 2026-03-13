@@ -421,6 +421,27 @@ impl Store {
         Ok(())
     }
 
+    /// Set activation counts to absolute values for a batch of occurrences.
+    ///
+    /// Used by feedback demote where activation is decremented rather than
+    /// incremented. Silently skips unknown IDs (common for unpersisted
+    /// conscious occurrences).
+    pub fn batch_set_activation_counts(&self, batch: &[(Uuid, u32)]) -> Result<()> {
+        if batch.is_empty() {
+            return Ok(());
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt =
+                tx.prepare("UPDATE occurrences SET activation_count = ?1 WHERE id = ?2")?;
+            for (id, count) in batch {
+                stmt.execute(rusqlite::params![count, id.to_string()])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Mark a neighborhood as superseded by another (targeted update, no full save).
     pub fn mark_superseded(&self, old_id: Uuid, new_id: Uuid) -> Result<()> {
         let rows = self.conn.execute(
@@ -1287,6 +1308,34 @@ mod tests {
         let loaded = store.load_system().unwrap();
         let c0 = loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count;
         assert_eq!(c0, 1, "known occurrence should be incremented");
+    }
+
+    #[test]
+    fn test_batch_set_activation_counts() {
+        let store = Store::open_in_memory().unwrap();
+        let system = make_system();
+        store.save_system(&system).unwrap();
+
+        let occ0 = system.episodes[0].neighborhoods[0].occurrences[0].id;
+        let occ1 = system.episodes[0].neighborhoods[0].occurrences[1].id;
+
+        // Set absolute activation counts
+        store
+            .batch_set_activation_counts(&[(occ0, 42), (occ1, 7)])
+            .unwrap();
+
+        let loaded = store.load_system().unwrap();
+        let c0 = loaded.episodes[0].neighborhoods[0].occurrences[0].activation_count;
+        let c1 = loaded.episodes[0].neighborhoods[0].occurrences[1].activation_count;
+        assert_eq!(c0, 42, "first occurrence should have activation_count 42");
+        assert_eq!(c1, 7, "second occurrence should have activation_count 7");
+    }
+
+    #[test]
+    fn test_batch_set_activation_counts_empty() {
+        let store = Store::open_in_memory().unwrap();
+        // Empty batch should be a no-op
+        store.batch_set_activation_counts(&[]).unwrap();
     }
 
     #[test]

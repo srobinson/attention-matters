@@ -51,7 +51,7 @@ mod system;
 mod time;
 mod tokenizer;
 
-pub use batch::{BatchQueryEngine, BatchQueryRequest, BatchQueryResult};
+pub use batch::{BatchQueryEngine, BatchQueryOutput, BatchQueryRequest, BatchQueryResult};
 pub use compose::{
     BudgetConfig, BudgetedContextResult, CategorizedIds, ContextMetrics, ContextResult,
     IncludedFragment, IndexEntry, IndexResult, RecallCategory, TokenEstimate, compose_context,

@@ -626,6 +626,8 @@ fn cmd_ingest(cli: &Cli, files: &[PathBuf], dir: Option<&std::path::Path>) -> Re
         );
     }
 
+    // Intentional save_system: CLI batch ingest processes multiple files
+    // into a fresh system. A full write is acceptable for this offline path.
     store
         .save_system(&system)
         .context("failed to save system")?;

@@ -150,6 +150,11 @@ fn persist_manifest(
     {
         tracing::error!("failed to persist activations after {context}: {e}");
     }
+    if !manifest.demoted_activations.is_empty()
+        && let Err(e) = store.batch_set_activation_counts(&manifest.demoted_activations)
+    {
+        tracing::error!("failed to persist demoted activations after {context}: {e}");
+    }
 }
 
 /// Flush orphaned buffer entries from the store into the system as a conversation episode.
@@ -608,6 +613,7 @@ impl AmServer {
         let manifest = QueryManifest {
             drifted,
             activated: activated_ids,
+            demoted_activations: Vec::new(),
         };
         persist_manifest(store, system, &manifest, "activate_response");
 
@@ -853,6 +859,8 @@ impl AmServer {
 
         state.system = imported;
 
+        // Intentional save_system: import replaces the entire DAE state,
+        // so a full rewrite is the only correct persistence strategy.
         if let Err(e) = state.store.save_system(&state.system) {
             tracing::error!("failed to persist after import: {e}");
         }
@@ -904,9 +912,7 @@ impl AmServer {
 
         let feedback = apply_feedback(system, &req.query, &neighborhood_ids, signal);
 
-        if let Err(e) = store.save_system(system) {
-            tracing::error!("failed to persist after feedback: {e}");
-        }
+        persist_manifest(store, system, &feedback.manifest, "feedback");
 
         let result = serde_json::json!({
             "boosted": feedback.boosted,
@@ -955,13 +961,12 @@ impl AmServer {
             })
             .collect();
 
-        let results = BatchQueryEngine::batch_query(system, &requests);
+        let batch_output = BatchQueryEngine::batch_query(system, &requests);
 
-        if let Err(e) = store.save_system(system) {
-            tracing::error!("failed to persist after batch query: {e}");
-        }
+        persist_manifest(store, system, &batch_output.manifest, "batch_query");
 
-        let results_json: Vec<serde_json::Value> = results
+        let results_json: Vec<serde_json::Value> = batch_output
+            .results
             .iter()
             .map(|r| {
                 let mut con_ids = Vec::new();

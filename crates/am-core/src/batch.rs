@@ -36,6 +36,15 @@ pub struct BatchQueryResult {
     pub activated_count: usize,
 }
 
+/// Combined result of a batch query: per-query results plus a manifest of
+/// all mutations applied to the system during the batch operation.
+pub struct BatchQueryOutput {
+    /// Per-query results.
+    pub results: Vec<BatchQueryResult>,
+    /// Aggregate manifest of all occurrence mutations across the batch.
+    pub manifest: QueryManifest,
+}
+
 /// Batch query engine that amortizes activation and IDF across multiple queries.
 ///
 /// # Examples
@@ -55,8 +64,8 @@ pub struct BatchQueryResult {
 ///     BatchQueryRequest { query: "graphics".into(), max_tokens: Some(500) },
 /// ];
 ///
-/// let results = BatchQueryEngine::batch_query(&mut system, &requests);
-/// assert_eq!(results.len(), 2);
+/// let output = BatchQueryEngine::batch_query(&mut system, &requests);
+/// assert_eq!(output.results.len(), 2);
 /// ```
 pub struct BatchQueryEngine;
 
@@ -79,12 +88,12 @@ impl BatchQueryEngine {
     /// activation doesn't modify the neighborhood index - it only bumps
     /// occurrence counters. So `get_word_weight()` returns the same value
     /// for all queries in the batch.
-    pub fn batch_query(
-        system: &mut DAESystem,
-        requests: &[BatchQueryRequest],
-    ) -> Vec<BatchQueryResult> {
+    pub fn batch_query(system: &mut DAESystem, requests: &[BatchQueryRequest]) -> BatchQueryOutput {
         if requests.is_empty() {
-            return Vec::new();
+            return BatchQueryOutput {
+                results: Vec::new(),
+                manifest: QueryManifest::default(),
+            };
         }
 
         // Step 1: Union of all query tokens and per-query token sets
@@ -114,6 +123,7 @@ impl BatchQueryEngine {
         // for tokens shared across N queries.
         let mut all_subconscious: Vec<OccurrenceRef> = Vec::new();
         let mut all_conscious: Vec<OccurrenceRef> = Vec::new();
+        let mut activated_ids: Vec<uuid::Uuid> = Vec::new();
 
         // Build word->refs map for per-query partitioning
         let mut word_to_sub_refs: HashMap<String, Vec<OccurrenceRef>> = HashMap::new();
@@ -123,6 +133,11 @@ impl BatchQueryEngine {
             // First call: activates once (activation_count += 1) and
             // returns the occurrence refs we need for partitioning.
             let activation = system.activate_word(token);
+
+            // Collect activated UUIDs for the manifest
+            for r in activation.subconscious.iter().chain(&activation.conscious) {
+                activated_ids.push(system.get_occurrence(*r).id);
+            }
 
             // Additional activations for queries beyond the first.
             let extra = token_query_count.get(token).copied().unwrap_or(1) - 1;
@@ -151,12 +166,20 @@ impl BatchQueryEngine {
             .chain(all_conscious.iter())
             .copied()
             .collect();
-        let _ = QueryEngine::drift_and_consolidate(system, &all_refs);
+        let mut drifted = QueryEngine::drift_and_consolidate(system, &all_refs);
 
         // Step 4: Compute interference once for the full set
         let (_, word_groups) =
             QueryEngine::compute_interference(system, &all_subconscious, &all_conscious);
-        let _ = QueryEngine::apply_kuramoto_coupling(system, &word_groups);
+        let kuramoto_drifted = QueryEngine::apply_kuramoto_coupling(system, &word_groups);
+        drifted.extend(kuramoto_drifted);
+
+        // Build aggregate manifest
+        let manifest = QueryManifest {
+            drifted,
+            activated: activated_ids,
+            demoted_activations: Vec::new(),
+        };
 
         // Step 5: Per-query partitioning and context composition
         let mut results = Vec::with_capacity(requests.len());
@@ -216,7 +239,7 @@ impl BatchQueryEngine {
             });
         }
 
-        results
+        BatchQueryOutput { results, manifest }
     }
 }
 
@@ -299,11 +322,15 @@ mod tests {
             },
         ];
 
-        let results = BatchQueryEngine::batch_query(&mut sys, &requests);
+        let output = BatchQueryEngine::batch_query(&mut sys, &requests);
 
-        assert_eq!(results.len(), 2, "should return one result per query");
-        assert_eq!(results[0].query, "quantum physics");
-        assert_eq!(results[1].query, "rust compiler");
+        assert_eq!(
+            output.results.len(),
+            2,
+            "should return one result per query"
+        );
+        assert_eq!(output.results[0].query, "quantum physics");
+        assert_eq!(output.results[1].query, "rust compiler");
     }
 
     #[test]
@@ -321,15 +348,15 @@ mod tests {
             },
         ];
 
-        let results = BatchQueryEngine::batch_query(&mut sys, &requests);
+        let output = BatchQueryEngine::batch_query(&mut sys, &requests);
 
         // Both queries should have activated occurrences
         assert!(
-            results[0].activated_count > 0,
+            output.results[0].activated_count > 0,
             "quantum physics should activate occurrences"
         );
         assert!(
-            results[1].activated_count > 0,
+            output.results[1].activated_count > 0,
             "neural network should activate occurrences"
         );
     }
@@ -349,16 +376,16 @@ mod tests {
             },
         ];
 
-        let results = BatchQueryEngine::batch_query(&mut sys, &requests);
+        let output = BatchQueryEngine::batch_query(&mut sys, &requests);
 
         assert!(
-            results[0].context.tokens_used <= 50,
+            output.results[0].context.tokens_used <= 50,
             "tight budget should be respected: {}",
-            results[0].context.tokens_used
+            output.results[0].context.tokens_used
         );
         // Huge budget should include more or equal content
         assert!(
-            results[1].context.included.len() >= results[0].context.included.len(),
+            output.results[1].context.included.len() >= output.results[0].context.included.len(),
             "larger budget should include >= fragments"
         );
     }
@@ -366,8 +393,8 @@ mod tests {
     #[test]
     fn test_batch_empty_requests() {
         let mut sys = make_batch_system();
-        let results = BatchQueryEngine::batch_query(&mut sys, &[]);
-        assert!(results.is_empty());
+        let output = BatchQueryEngine::batch_query(&mut sys, &[]);
+        assert!(output.results.is_empty());
     }
 
     #[test]
@@ -377,7 +404,7 @@ mod tests {
         let mut sys2 = make_batch_system();
 
         // Batch query
-        let batch_results = BatchQueryEngine::batch_query(
+        let batch_output = BatchQueryEngine::batch_query(
             &mut sys1,
             &[BatchQueryRequest {
                 query: "quantum physics".to_string(),
@@ -406,7 +433,7 @@ mod tests {
         // Same number of included fragments (the drift/interference may differ
         // slightly because batch activates union, but structure should match)
         assert_eq!(
-            batch_results[0].context.included.len(),
+            batch_output.results[0].context.included.len(),
             direct.included.len(),
             "batch of 1 should match direct query fragment count"
         );
@@ -428,20 +455,20 @@ mod tests {
             },
         ];
 
-        let results = BatchQueryEngine::batch_query(&mut sys, &requests);
+        let output = BatchQueryEngine::batch_query(&mut sys, &requests);
 
         // Both should have results
-        assert!(results[0].activated_count > 0);
-        assert!(results[1].activated_count > 0);
+        assert!(output.results[0].activated_count > 0);
+        assert!(output.results[1].activated_count > 0);
 
         // "quantum" occurrences should appear in both result sets
         // (they share the word from the union activation)
         assert!(
-            !results[0].context.context.is_empty(),
+            !output.results[0].context.context.is_empty(),
             "first query should have context"
         );
         assert!(
-            !results[1].context.context.is_empty(),
+            !output.results[1].context.context.is_empty(),
             "second query should have context"
         );
     }
