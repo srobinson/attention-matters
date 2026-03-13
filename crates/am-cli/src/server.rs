@@ -114,7 +114,7 @@ fn flush_orphaned_buffer(store: &BrainStore, system: &mut DAESystem, rng: &mut S
             .join("\n\n");
         let episode = ingest_text(&combined, Some("conversation"), rng);
         system.add_episode(episode);
-        if let Err(e) = store.save_system(system) {
+        if let Err(e) = store.save_episode(system.episodes.last().unwrap()) {
             tracing::error!("failed to persist flushed buffer episode: {e}");
         }
     }
@@ -692,7 +692,7 @@ impl AmServer {
             let name = episode.name.clone();
             system.add_episode(episode);
 
-            if let Err(e) = store.save_system(system) {
+            if let Err(e) = store.save_episode(system.episodes.last().unwrap()) {
                 tracing::error!("failed to persist after buffer episode: {e}");
             }
 
@@ -733,7 +733,7 @@ impl AmServer {
 
         system.add_episode(episode);
 
-        if let Err(e) = store.save_system(system) {
+        if let Err(e) = store.save_episode(system.episodes.last().unwrap()) {
             tracing::error!("failed to persist after ingest: {e}");
         }
 

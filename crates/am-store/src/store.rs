@@ -157,6 +157,16 @@ impl Store {
         Ok(())
     }
 
+    /// Persist a single episode (and its neighborhoods/occurrences) without
+    /// rewriting the entire system. Use after `DAESystem::add_episode` to
+    /// avoid the full DELETE/rewrite cycle of `save_system`.
+    pub fn save_episode(&self, episode: &Episode) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        self.save_episode_on(&tx, episode)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     fn save_episode_on(&self, conn: &Connection, episode: &Episode) -> Result<()> {
         conn.execute(
             "INSERT INTO episodes (id, name, is_conscious, timestamp) VALUES (?1, ?2, ?3, ?4)",

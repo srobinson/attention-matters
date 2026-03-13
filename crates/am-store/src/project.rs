@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use am_core::DAESystem;
+use am_core::{DAESystem, Episode};
 
 use crate::config::Config;
 use crate::error::Result;
@@ -248,6 +248,11 @@ impl BrainStore {
     /// Save a full DAESystem to brain.db.
     pub fn save_system(&self, system: &DAESystem) -> Result<()> {
         self.store.save_system(system)
+    }
+
+    /// Persist a single episode without rewriting the entire system.
+    pub fn save_episode(&self, episode: &Episode) -> Result<()> {
+        self.store.save_episode(episode)
     }
 
     /// Mark text as salient (conscious). Returns the neighborhood ID.
