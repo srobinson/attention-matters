@@ -131,6 +131,25 @@ mod tests {
     }
 
     #[test]
+    fn seven_days_ago() {
+        let days = parse_days_ago("2026-03-06T10:00:00Z", NOW_2026_03_13);
+        assert!((days - 7.0).abs() < f64::EPSILON, "expected 7, got {days}");
+    }
+
+    #[test]
+    fn fractional_day_now_midday() {
+        // now_secs at 2026-03-13T12:00:00Z (noon) = midnight + 43200
+        let now_midday = NOW_2026_03_13 + 43_200;
+        // Episode from yesterday: still 1 full day because parse_days_ago
+        // uses integer division (now_secs / 86400) for the current day.
+        let days = parse_days_ago("2026-03-12T18:00:00Z", now_midday);
+        assert!((days - 1.0).abs() < f64::EPSILON, "expected 1, got {days}");
+        // Same day: 0 even though now is at noon
+        let days = parse_days_ago("2026-03-13T00:00:00Z", now_midday);
+        assert!((days - 0.0).abs() < f64::EPSILON, "expected 0, got {days}");
+    }
+
+    #[test]
     fn leap_year_feb29() {
         // 2024 was a leap year; 2024-02-29 is valid
         // 2024-03-01T00:00:00Z = 1709251200

@@ -67,4 +67,36 @@ mod tests {
         let ts = now_iso8601();
         assert!(ts.starts_with("202"), "timestamp should be in 2020s: {ts}");
     }
+
+    #[test]
+    fn test_leap_day() {
+        // 2024-02-29T00:00:00Z = 1709164800
+        assert_eq!(unix_to_iso8601(1_709_164_800), "2024-02-29T00:00:00Z");
+    }
+
+    #[test]
+    fn test_year_boundary_new_years_eve() {
+        // 2025-12-31T23:59:59Z = 1767225599
+        assert_eq!(unix_to_iso8601(1_767_225_599), "2025-12-31T23:59:59Z");
+    }
+
+    #[test]
+    fn test_year_boundary_new_years_day() {
+        // 2026-01-01T00:00:00Z = 1767225600
+        assert_eq!(unix_to_iso8601(1_767_225_600), "2026-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_end_of_day() {
+        // 2026-03-13T23:59:59Z = 1773446399
+        assert_eq!(unix_to_iso8601(1_773_446_399), "2026-03-13T23:59:59Z");
+    }
+
+    #[test]
+    fn test_civil_from_days_roundtrip() {
+        // Verify a few known dates convert correctly through civil_from_days
+        assert_eq!(civil_from_days(0), (1970, 1, 1)); // Unix epoch
+        assert_eq!(civil_from_days(19782), (2024, 2, 29)); // Leap day
+        assert_eq!(civil_from_days(20525), (2026, 3, 13)); // Recent date
+    }
 }
