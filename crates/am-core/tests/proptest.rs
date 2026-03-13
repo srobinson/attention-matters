@@ -7,7 +7,7 @@ use proptest::prelude::*;
 
 const EPSILON: f64 = 1e-10;
 
-/// Strategy producing unit quaternions via the random() constructor.
+/// Strategy producing unit quaternions via the `random()` constructor.
 fn arb_unit_quaternion() -> impl Strategy<Value = Quaternion> {
     // Use 4 arbitrary f64s in [-1, 1] and normalize
     (
