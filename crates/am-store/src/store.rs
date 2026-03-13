@@ -167,6 +167,28 @@ impl Store {
         Ok(())
     }
 
+    /// Persist a single neighborhood under an episode without rewriting the
+    /// entire system. Creates the episode row if it does not already exist
+    /// (using INSERT OR IGNORE), then inserts the neighborhood and its
+    /// occurrences. Use after adding a neighborhood to the conscious episode
+    /// via `add_to_conscious` or `extract_salient`.
+    pub fn save_neighborhood(&self, episode: &Episode, neighborhood: &Neighborhood) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        // Ensure the parent episode row exists (no-op if already present)
+        tx.execute(
+            "INSERT OR IGNORE INTO episodes (id, name, is_conscious, timestamp) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                episode.id.to_string(),
+                episode.name,
+                episode.is_conscious as i32,
+                episode.timestamp,
+            ],
+        )?;
+        self.save_neighborhood_on(&tx, neighborhood, episode.id)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     fn save_episode_on(&self, conn: &Connection, episode: &Episode) -> Result<()> {
         conn.execute(
             "INSERT INTO episodes (id, name, is_conscious, timestamp) VALUES (?1, ?2, ?3, ?4)",

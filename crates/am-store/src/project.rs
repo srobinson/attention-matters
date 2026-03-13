@@ -255,6 +255,16 @@ impl BrainStore {
         self.store.save_episode(episode)
     }
 
+    /// Persist a single neighborhood under an episode, creating the episode
+    /// row if needed.
+    pub fn save_neighborhood(
+        &self,
+        episode: &am_core::Episode,
+        neighborhood: &am_core::Neighborhood,
+    ) -> Result<()> {
+        self.store.save_neighborhood(episode, neighborhood)
+    }
+
     /// Increment activation counts for a batch of occurrences.
     pub fn batch_increment_activation(&self, ids: &[uuid::Uuid]) -> Result<()> {
         self.store.batch_increment_activation(ids)

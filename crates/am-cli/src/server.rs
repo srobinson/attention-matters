@@ -634,21 +634,25 @@ impl AmServer {
             system, store, rng, ..
         } = &mut *state;
 
+        // Track how many neighborhoods exist before adding new ones
+        let nbhd_before = system.conscious_episode.neighborhoods.len();
+
         let stored = extract_salient(system, &req.text, rng);
         let new_id = if stored == 0 {
             // No <salient> tags found - mark the whole text as salient
             // with automatic type detection from DECISION:/PREFERENCE: prefix
             let id = mark_salient_typed(system, &req.text, rng);
-            if let Err(e) = store.save_system(system) {
-                tracing::error!("failed to persist after salient: {e}");
-            }
             Some(id)
         } else {
-            if let Err(e) = store.save_system(system) {
-                tracing::error!("failed to persist after salient: {e}");
-            }
             None
         };
+
+        // Persist only the newly added neighborhoods
+        for nbhd in &system.conscious_episode.neighborhoods[nbhd_before..] {
+            if let Err(e) = store.save_neighborhood(&system.conscious_episode, nbhd) {
+                tracing::error!("failed to persist conscious neighborhood: {e}");
+            }
+        }
         let stored = if stored == 0 { 1u32 } else { stored };
 
         // Process supersedes: mark old neighborhoods as superseded by the new one
