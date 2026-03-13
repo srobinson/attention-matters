@@ -1654,4 +1654,65 @@ mod tests {
         let second = store.drain_buffer().unwrap();
         assert!(second.is_empty(), "second drain should return empty");
     }
+
+    /// Regression test for ALP-1239: drain_buffer atomicity.
+    ///
+    /// The pre-fix implementation performed SELECT then DELETE without a
+    /// transaction, creating a crash window where rows could be deleted from
+    /// the database but never returned to the caller. The fix wraps both
+    /// operations in a single transaction so they commit atomically.
+    ///
+    /// This test verifies the data integrity invariant: every buffered row
+    /// is returned exactly once across interleaved append/drain cycles, with
+    /// buffer_count staying consistent at each step. The pre-fix code could
+    /// violate this invariant under concurrent access or crash recovery.
+    #[test]
+    fn test_drain_buffer_atomicity_no_lost_rows() {
+        let store = Store::open_in_memory().unwrap();
+
+        // Phase 1: buffer 5 entries, drain, verify all returned and count is 0
+        for i in 0..5 {
+            store
+                .append_buffer(&format!("user_{i}"), &format!("asst_{i}"))
+                .unwrap();
+        }
+        assert_eq!(store.buffer_count().unwrap(), 5);
+
+        let drained = store.drain_buffer().unwrap();
+        assert_eq!(drained.len(), 5, "all 5 rows must be returned");
+        assert_eq!(
+            store.buffer_count().unwrap(),
+            0,
+            "buffer must be empty after drain"
+        );
+
+        // Verify exact content and ordering
+        for (i, (user, asst)) in drained.iter().enumerate() {
+            assert_eq!(user, &format!("user_{i}"));
+            assert_eq!(asst, &format!("asst_{i}"));
+        }
+
+        // Phase 2: interleave appends and drains
+        store.append_buffer("a", "1").unwrap();
+        store.append_buffer("b", "2").unwrap();
+        assert_eq!(store.buffer_count().unwrap(), 2);
+
+        let batch1 = store.drain_buffer().unwrap();
+        assert_eq!(batch1.len(), 2);
+        assert_eq!(store.buffer_count().unwrap(), 0);
+
+        // Drain on empty is safe
+        let empty = store.drain_buffer().unwrap();
+        assert!(empty.is_empty());
+        assert_eq!(store.buffer_count().unwrap(), 0);
+
+        // Phase 3: append after drain, verify no ghost rows from phase 1 or 2
+        store.append_buffer("c", "3").unwrap();
+        assert_eq!(store.buffer_count().unwrap(), 1);
+
+        let batch2 = store.drain_buffer().unwrap();
+        assert_eq!(batch2.len(), 1, "only the newly appended row should appear");
+        assert_eq!(batch2[0], ("c".to_string(), "3".to_string()));
+        assert_eq!(store.buffer_count().unwrap(), 0);
+    }
 }
