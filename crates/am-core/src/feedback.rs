@@ -133,7 +133,7 @@ fn apply_boost(
         .map(|r| system.get_occurrence(*r).position)
         .collect();
 
-    let centroid = compute_weighted_centroid(&positions, &weights);
+    let centroid = Quaternion::weighted_centroid(&positions, &weights);
 
     let centroid = match centroid {
         Some(c) => c,
@@ -200,42 +200,7 @@ fn apply_demote(system: &mut DAESystem, target_refs: &[OccurrenceRef]) -> Feedba
     }
 }
 
-/// Compute IDF-weighted centroid in R⁴, project to S³.
-fn compute_weighted_centroid(positions: &[Quaternion], weights: &[f64]) -> Option<Quaternion> {
-    if positions.is_empty() || positions.len() != weights.len() {
-        return None;
-    }
-
-    let mut sum_w = 0.0f64;
-    let mut sum_x = 0.0f64;
-    let mut sum_y = 0.0f64;
-    let mut sum_z = 0.0f64;
-    let mut total_weight = 0.0f64;
-
-    for (pos, w) in positions.iter().zip(weights.iter()) {
-        sum_w += pos.w * w;
-        sum_x += pos.x * w;
-        sum_y += pos.y * w;
-        sum_z += pos.z * w;
-        total_weight += w;
-    }
-
-    if total_weight < EPSILON {
-        return None;
-    }
-
-    let cw = sum_w / total_weight;
-    let cx = sum_x / total_weight;
-    let cy = sum_y / total_weight;
-    let cz = sum_z / total_weight;
-
-    let norm = (cw * cw + cx * cx + cy * cy + cz * cz).sqrt();
-    if norm < EPSILON {
-        return None;
-    }
-
-    Some(Quaternion::new(cw / norm, cx / norm, cy / norm, cz / norm))
-}
+// Centroid computation now uses Quaternion::weighted_centroid from quaternion.rs.
 
 #[cfg(test)]
 mod tests {
@@ -439,7 +404,7 @@ mod tests {
         let p2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
 
         // Equal weights - centroid should be between them
-        let centroid = compute_weighted_centroid(&[p1, p2], &[1.0, 1.0]).unwrap();
+        let centroid = Quaternion::weighted_centroid(&[p1, p2], &[1.0, 1.0]).unwrap();
         let d1 = p1.angular_distance(centroid);
         let d2 = p2.angular_distance(centroid);
         assert!(
@@ -454,7 +419,7 @@ mod tests {
         let p2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
 
         // Heavy weight on p1 - centroid should be closer to p1
-        let centroid = compute_weighted_centroid(&[p1, p2], &[10.0, 1.0]).unwrap();
+        let centroid = Quaternion::weighted_centroid(&[p1, p2], &[10.0, 1.0]).unwrap();
         let d1 = p1.angular_distance(centroid);
         let d2 = p2.angular_distance(centroid);
         assert!(

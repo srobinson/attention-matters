@@ -183,6 +183,48 @@ impl Quaternion {
     pub fn from_array(arr: [f64; 4]) -> Self {
         Self::new(arr[0], arr[1], arr[2], arr[3])
     }
+
+    /// Compute the weighted centroid of quaternion positions in R^4,
+    /// projected back to S^3 via normalization.
+    ///
+    /// Returns `None` if the input is empty, lengths mismatch, total weight
+    /// is below EPSILON, or the resulting centroid has near-zero norm
+    /// (antipodal cancellation).
+    pub fn weighted_centroid(positions: &[Quaternion], weights: &[f64]) -> Option<Quaternion> {
+        if positions.is_empty() || positions.len() != weights.len() {
+            return None;
+        }
+
+        let mut sum_w = 0.0_f64;
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut total_weight = 0.0_f64;
+
+        for (pos, w) in positions.iter().zip(weights.iter()) {
+            sum_w += pos.w * w;
+            sum_x += pos.x * w;
+            sum_y += pos.y * w;
+            sum_z += pos.z * w;
+            total_weight += w;
+        }
+
+        if total_weight < EPSILON {
+            return None;
+        }
+
+        let cw = sum_w / total_weight;
+        let cx = sum_x / total_weight;
+        let cy = sum_y / total_weight;
+        let cz = sum_z / total_weight;
+
+        let norm = (cw * cw + cx * cx + cy * cy + cz * cz).sqrt();
+        if norm < EPSILON {
+            return None;
+        }
+
+        Some(Quaternion::new(cw / norm, cx / norm, cy / norm, cz / norm))
+    }
 }
 
 impl std::ops::Neg for Quaternion {
@@ -424,5 +466,64 @@ mod tests {
         let b = Quaternion::new(-0.9, -0.1, 0.0, 0.0);
         let mid = a.slerp(b, 0.5);
         assert_unit(mid);
+    }
+
+    #[test]
+    fn test_weighted_centroid_empty_input() {
+        assert!(Quaternion::weighted_centroid(&[], &[]).is_none());
+    }
+
+    #[test]
+    fn test_weighted_centroid_length_mismatch() {
+        let p = Quaternion::identity();
+        assert!(Quaternion::weighted_centroid(&[p], &[1.0, 2.0]).is_none());
+    }
+
+    #[test]
+    fn test_weighted_centroid_single_point() {
+        let p = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let centroid = Quaternion::weighted_centroid(&[p], &[1.0]).unwrap();
+        assert_approx_eq(centroid, p, 1e-10);
+    }
+
+    #[test]
+    fn test_weighted_centroid_equal_weights() {
+        let p1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let p2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
+        let centroid = Quaternion::weighted_centroid(&[p1, p2], &[1.0, 1.0]).unwrap();
+        assert_unit(centroid);
+        // Equidistant from both inputs
+        let d1 = p1.angular_distance(centroid);
+        let d2 = p2.angular_distance(centroid);
+        assert!(
+            (d1 - d2).abs() < 0.01,
+            "equal-weight centroid should be equidistant: {d1} vs {d2}"
+        );
+    }
+
+    #[test]
+    fn test_weighted_centroid_skewed_weights() {
+        let p1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
+        let p2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
+        let centroid = Quaternion::weighted_centroid(&[p1, p2], &[10.0, 1.0]).unwrap();
+        assert_unit(centroid);
+        let d1 = p1.angular_distance(centroid);
+        let d2 = p2.angular_distance(centroid);
+        assert!(
+            d1 < d2,
+            "centroid should be closer to heavily-weighted point: {d1} vs {d2}"
+        );
+    }
+
+    #[test]
+    fn test_weighted_centroid_result_is_unit() {
+        let mut rng = rng();
+        for _ in 0..20 {
+            let positions: Vec<Quaternion> = (0..5).map(|_| Quaternion::random(&mut rng)).collect();
+            let weights: Vec<f64> = (0..5).map(|i| (i + 1) as f64).collect();
+            if let Some(c) = Quaternion::weighted_centroid(&positions, &weights) {
+                assert_unit(c);
+            }
+        }
     }
 }
