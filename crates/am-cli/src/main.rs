@@ -1373,15 +1373,7 @@ fn cmd_gc(cli: &Cli, floor: u32, target_mb: Option<u64>, dry_run: bool) -> Resul
     if dry_run {
         // Show what would happen
         let eligible: u64 = db
-            .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM occurrences o
-                 JOIN neighborhoods n ON o.neighborhood_id = n.id
-                 JOIN episodes e ON n.episode_id = e.id
-                 WHERE e.is_conscious = 0 AND o.activation_count <= ?1",
-                [floor],
-                |row| row.get(0),
-            )
+            .gc_eligible_count(floor)
             .context("failed to query eligible occurrences")?;
 
         println!("{bold}GC dry run{reset}\n");

@@ -75,10 +75,6 @@ impl Store {
         Ok(Self { conn })
     }
 
-    pub fn conn(&self) -> &Connection {
-        &self.conn
-    }
-
     /// Verify the connection is still usable.
     pub fn health_check(&self) -> Result<()> {
         self.conn
@@ -681,6 +677,20 @@ impl Store {
 
     /// Run a GC pass: evict cold occurrences, clean empty structures, VACUUM.
     /// Returns (evicted_occurrences, removed_episodes).
+    /// Count occurrences eligible for GC eviction at the given activation floor.
+    /// Excludes conscious episodes.
+    pub fn gc_eligible_count(&self, activation_floor: u32) -> Result<u64> {
+        let count: u64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM occurrences o
+             JOIN neighborhoods n ON o.neighborhood_id = n.id
+             JOIN episodes e ON n.episode_id = e.id
+             WHERE e.is_conscious = 0 AND o.activation_count <= ?1",
+            [activation_floor],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
     /// Conscious episodes (is_conscious = 1) are never touched.
     /// Respects retention policy: grace epoch window and retention days.
     pub fn gc_pass(
