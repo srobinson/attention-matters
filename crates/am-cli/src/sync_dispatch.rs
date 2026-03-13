@@ -203,10 +203,6 @@ fn cmd_sync_discover(
     dry_run: bool,
     dir_override: Option<&std::path::Path>,
 ) -> Result<()> {
-    let store = open_store(cli)?;
-    let mut system = store.load_system().context("failed to load system")?;
-    let mut rng = SmallRng::from_os_rng();
-
     let claude_dir = sync::resolve_claude_dir(dir_override);
     let project_dir = match sync::find_project_dir(&claude_dir) {
         Some(dir) => dir,
@@ -235,6 +231,10 @@ fn cmd_sync_discover(
     }
 
     println!("{bold}Found {}{reset} session(s) to sync\n", sessions.len());
+
+    // Defer store/system loading until we know we need to write. In dry-run
+    // mode this avoids creating brain.db as a side effect.
+    let mut store_state: Option<(am_store::BrainStore, am_core::DAESystem, SmallRng)> = None;
 
     let mut total_episodes = 0u32;
     let mut total_text_len = 0usize;
@@ -269,10 +269,20 @@ fn cmd_sync_discover(
                 text.len()
             );
         } else {
+            let (_, system, rng) = match &mut store_state {
+                Some(s) => s,
+                None => {
+                    let store = open_store(cli)?;
+                    let system = store.load_system().context("failed to load system")?;
+                    let rng = SmallRng::from_os_rng();
+                    store_state.insert((store, system, rng))
+                }
+            };
+
             // Replace semantics: remove existing episode with same name
             system.episodes.retain(|e| e.name != episode_name);
 
-            let episode = ingest_text(&text, Some(&episode_name), &mut rng);
+            let episode = ingest_text(&text, Some(&episode_name), rng);
             let nbhd_count = episode.neighborhoods.len();
             system.add_episode(episode);
             total_episodes += 1;
@@ -291,11 +301,9 @@ fn cmd_sync_discover(
             total_text_len,
             sessions.len()
         );
-    } else {
+    } else if let Some((store, system, _)) = &store_state {
         if total_episodes > 0 {
-            store
-                .save_system(&system)
-                .context("failed to save system")?;
+            store.save_system(system).context("failed to save system")?;
         }
 
         println!(
