@@ -1844,4 +1844,113 @@ mod tests {
             "empty neighborhood_ids should return error"
         );
     }
+
+    #[tokio::test]
+    async fn test_am_batch_query_basic() {
+        let server = make_server();
+
+        // Ingest content
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Rust is a systems programming language focused on safety and performance. Memory safety without garbage collection.".to_string(),
+                name: Some("rust-lang".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .am_batch_query(Parameters(McpBatchQueryRequest {
+                queries: vec![
+                    BatchQueryItem {
+                        query: "rust safety".to_string(),
+                        max_tokens: None,
+                    },
+                    BatchQueryItem {
+                        query: "memory management".to_string(),
+                        max_tokens: None,
+                    },
+                    BatchQueryItem {
+                        query: "performance optimization".to_string(),
+                        max_tokens: None,
+                    },
+                ],
+            }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+        let results = json["results"].as_array().expect("results should be array");
+        assert_eq!(results.len(), 3, "should have 3 results for 3 queries");
+
+        for (i, r) in results.iter().enumerate() {
+            assert!(r.get("query").is_some(), "result {i} should have query");
+            assert!(r.get("context").is_some(), "result {i} should have context");
+            assert!(r.get("metrics").is_some(), "result {i} should have metrics");
+            assert!(
+                r.get("recalled_ids").is_some(),
+                "result {i} should have recalled_ids"
+            );
+            assert!(
+                r.get("token_estimate").is_some(),
+                "result {i} should have token_estimate"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_am_batch_query_empty_requests() {
+        let server = make_server();
+
+        let result = server
+            .am_batch_query(Parameters(McpBatchQueryRequest { queries: vec![] }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+        let results = json["results"].as_array().expect("results should be array");
+        assert!(
+            results.is_empty(),
+            "empty queries should produce empty results"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_batch_query_per_budget() {
+        let server = make_server();
+
+        // Ingest enough content to test budget limits
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Quantum mechanics describes the behavior of particles at the smallest scales. Superposition allows particles to exist in multiple states simultaneously. Entanglement connects particles across vast distances instantaneously.".to_string(),
+                name: Some("quantum".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .am_batch_query(Parameters(McpBatchQueryRequest {
+                queries: vec![
+                    BatchQueryItem {
+                        query: "quantum entanglement".to_string(),
+                        max_tokens: Some(50),
+                    },
+                    BatchQueryItem {
+                        query: "quantum superposition".to_string(),
+                        max_tokens: Some(5000),
+                    },
+                ],
+            }))
+            .await
+            .unwrap();
+
+        let json = parse_result(&result);
+        let results = json["results"].as_array().expect("results should be array");
+        assert_eq!(results.len(), 2);
+
+        // Both should have budget fields reflecting their token limits
+        let budget_small = &results[0]["budget"];
+        let budget_large = &results[1]["budget"];
+        assert_eq!(budget_small["tokens_budget"], 50);
+        assert_eq!(budget_large["tokens_budget"], 5000);
+    }
 }
