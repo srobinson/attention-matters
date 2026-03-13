@@ -191,8 +191,9 @@ fn apply_diminishing_returns(
 /// let surface = compute_surface(&system, &qr);
 /// let ctx = compose_context(&mut system, &surface, &qr, &qr.interference, None);
 ///
-/// // Context contains the recalled text (may be empty if no neighborhoods scored)
-/// assert!(ctx.metrics.conscious + ctx.metrics.subconscious + ctx.metrics.novel >= 0);
+/// // included_ids tracks which neighborhoods contributed to the result
+/// assert_eq!(ctx.included_ids.len(), ctx.recalled_ids.conscious.len()
+///     + ctx.recalled_ids.subconscious.len() + ctx.recalled_ids.novel.len());
 /// ```
 pub fn compose_context(
     system: &mut DAESystem,

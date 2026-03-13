@@ -71,12 +71,12 @@ const DEMOTE_DECAY: u32 = 2;
 ///
 /// // Boost: pull recalled neighborhoods toward the query region
 /// let result = apply_feedback(&mut system, "memory safety", &[nbhd_id], FeedbackSignal::Boost);
-/// // boosted count depends on token overlap with the neighborhood
-/// assert!(result.boosted >= 0);
+/// // "memory" and "safety" overlap with the neighborhood, so boosted > 0
+/// assert!(result.boosted > 0);
 ///
 /// // Demote: decay activation of unhelpful neighborhoods
 /// let result = apply_feedback(&mut system, "memory safety", &[nbhd_id], FeedbackSignal::Demote);
-/// assert!(result.demoted >= 0);
+/// assert!(result.demoted > 0);
 /// ```
 pub fn apply_feedback(
     system: &mut DAESystem,
