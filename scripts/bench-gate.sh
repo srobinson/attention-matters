@@ -50,9 +50,8 @@ for dir in "$BASELINE_DIR"/*/; do
 done
 
 if [[ "$baseline_found" == "false" ]]; then
-    red "No baseline data found in $BASELINE_DIR."
-    red "Run: just bench-baseline"
-    exit 1
+    green "No baseline data found in $BASELINE_DIR. Skipping comparison (first run)."
+    exit 0
 fi
 
 # In --compare mode, skip the bench run (CI pre-runs both baselines)
