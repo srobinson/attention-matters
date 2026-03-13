@@ -140,12 +140,16 @@ impl BatchQueryEngine {
             }
 
             // Additional activations for queries beyond the first.
+            // Each extra call must also be tracked in activated_ids so that
+            // persist_manifest issues the matching number of SQL increments.
             let extra = token_query_count.get(token).copied().unwrap_or(1) - 1;
             if extra > 0 {
                 for r in activation.subconscious.iter().chain(&activation.conscious) {
                     let occ = system.get_occurrence_mut(*r);
+                    let id = occ.id;
                     for _ in 0..extra {
                         occ.activate();
+                        activated_ids.push(id);
                     }
                 }
             }
