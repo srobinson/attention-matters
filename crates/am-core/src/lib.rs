@@ -21,6 +21,9 @@ pub mod occurrence;
 pub mod phasor;
 pub mod quaternion;
 pub mod query;
+pub mod recency;
+pub mod salient;
+pub(crate) mod scoring;
 pub mod serde_compat;
 pub mod surface;
 pub mod system;
@@ -31,8 +34,7 @@ pub use batch::{BatchQueryEngine, BatchQueryRequest, BatchQueryResult};
 pub use compose::{
     BudgetConfig, BudgetedContextResult, CategorizedIds, ContextMetrics, ContextResult,
     IncludedFragment, IndexEntry, IndexResult, RecallCategory, TokenEstimate, compose_context,
-    compose_context_budgeted, compose_index, detect_neighborhood_type, extract_salient,
-    mark_salient_typed, retrieve_by_ids,
+    compose_context_budgeted, compose_index, retrieve_by_ids,
 };
 pub use constants::{
     ACTIVATION_FLOOR, DB_GC_TARGET_RATIO, DB_SOFT_LIMIT_BYTES, DEFAULT_GRACE_EPOCHS,
@@ -46,6 +48,7 @@ pub use occurrence::Occurrence;
 pub use phasor::DaemonPhasor;
 pub use quaternion::Quaternion;
 pub use query::{QueryEngine, QueryResult};
+pub use salient::{detect_neighborhood_type, extract_salient, mark_salient_typed};
 pub use serde_compat::{CURRENT_VERSION, export_json, import_json};
 pub use surface::{SurfaceResult, compute_surface};
 pub use system::{DAESystem, NeighborhoodRef, OccurrenceRef};
