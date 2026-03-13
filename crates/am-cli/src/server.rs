@@ -24,6 +24,8 @@ use uuid::Uuid;
 
 const BUFFER_THRESHOLD: usize = 3;
 const DEDUP_WINDOW_SECS: u64 = 60;
+/// Maximum input size for text-accepting MCP tools (1 MB).
+const MAX_TOOL_INPUT_BYTES: usize = 1_048_576;
 
 #[derive(Clone)]
 pub struct AmServer {
@@ -525,6 +527,12 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<SalientRequest>,
     ) -> Result<CallToolResult, McpError> {
+        if req.text.len() > MAX_TOOL_INPUT_BYTES {
+            return Err(McpError::invalid_params(
+                format!("text exceeds {} byte limit", MAX_TOOL_INPUT_BYTES),
+                None,
+            ));
+        }
         let mut state = self.state.lock().await;
         let ServerState {
             system, store, rng, ..
@@ -593,6 +601,13 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<BufferRequest>,
     ) -> Result<CallToolResult, McpError> {
+        let total_len = req.user.len() + req.assistant.len();
+        if total_len > MAX_TOOL_INPUT_BYTES {
+            return Err(McpError::invalid_params(
+                format!("combined input exceeds {} byte limit", MAX_TOOL_INPUT_BYTES),
+                None,
+            ));
+        }
         let mut state = self.state.lock().await;
         let ServerState {
             system,
@@ -664,6 +679,12 @@ impl AmServer {
         &self,
         Parameters(req): Parameters<IngestRequest>,
     ) -> Result<CallToolResult, McpError> {
+        if req.text.len() > MAX_TOOL_INPUT_BYTES {
+            return Err(McpError::invalid_params(
+                format!("text exceeds {} byte limit", MAX_TOOL_INPUT_BYTES),
+                None,
+            ));
+        }
         let mut state = self.state.lock().await;
         let ServerState {
             system, store, rng, ..
@@ -1674,5 +1695,44 @@ mod tests {
 
         assert!(info.instructions.is_some());
         assert!(info.capabilities.tools.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_am_ingest_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_ingest(Parameters(IngestRequest {
+                text: oversized,
+                name: None,
+            }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_buffer_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_buffer(Parameters(BufferRequest {
+                user: oversized,
+                assistant: String::new(),
+            }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
+    }
+
+    #[tokio::test]
+    async fn test_am_salient_rejects_oversized_input() {
+        let server = make_server();
+        let oversized = "x".repeat(MAX_TOOL_INPUT_BYTES + 1);
+        let result = server
+            .am_salient(Parameters(SalientRequest {
+                text: oversized,
+                supersedes: vec![],
+            }))
+            .await;
+        assert!(result.is_err(), "should reject input exceeding size limit");
     }
 }
