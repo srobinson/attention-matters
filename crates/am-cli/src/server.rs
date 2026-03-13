@@ -11,7 +11,7 @@ use am_core::{
     compute_surface, export_json, extract_salient, import_json, ingest_text, mark_salient_typed,
     retrieve_by_ids,
 };
-use am_store::BrainStore;
+use am_store::{BrainStore, StoreError};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 use rmcp::handler::server::router::tool::ToolRouter;
@@ -37,6 +37,23 @@ fn check_input_size(value: &str, field: &str) -> Result<(), McpError> {
         ));
     }
     Ok(())
+}
+
+/// Convert a `StoreError` to an `McpError`, preserving the variant name as a
+/// machine-readable prefix so callers can distinguish error classes without
+/// parsing free-form text.
+fn store_err_to_mcp(e: StoreError) -> McpError {
+    let (category, detail) = match &e {
+        StoreError::Sqlite(inner) => ("sqlite", inner.to_string()),
+        StoreError::Io(inner) => ("io", inner.to_string()),
+        StoreError::InvalidData(msg) => ("invalid_data", msg.clone()),
+    };
+    McpError::internal_error(format!("[{category}] {detail}"), None)
+}
+
+/// Convert a serialization error to an `McpError` with a `[serde]` prefix.
+fn serde_err_to_mcp(e: impl std::fmt::Display) -> McpError {
+    McpError::internal_error(format!("[serde] {e}"), None)
 }
 
 #[derive(Clone)]
@@ -660,15 +677,12 @@ impl AmServer {
         let buffer_size = store
             .store()
             .append_buffer(&req.user, &req.assistant)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            .map_err(store_err_to_mcp)?;
 
         let mut episode_created: Option<String> = None;
 
         if buffer_size >= BUFFER_THRESHOLD {
-            let exchanges = store
-                .store()
-                .drain_buffer()
-                .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+            let exchanges = store.store().drain_buffer().map_err(store_err_to_mcp)?;
 
             let combined: String = exchanges
                 .iter()
@@ -762,8 +776,7 @@ impl AmServer {
     #[tool(description = "Export the full DAE system state as v0.7.2 compatible JSON.")]
     async fn am_export(&self) -> Result<CallToolResult, McpError> {
         let state = self.state.lock().await;
-        let json = export_json(&state.system)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let json = export_json(&state.system).map_err(serde_err_to_mcp)?;
 
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
@@ -776,11 +789,9 @@ impl AmServer {
         Parameters(req): Parameters<ImportRequest>,
     ) -> Result<CallToolResult, McpError> {
         let mut state = self.state.lock().await;
-        let json_str = serde_json::to_string(&req.state)
-            .map_err(|e| McpError::internal_error(e.to_string(), None))?;
+        let json_str = serde_json::to_string(&req.state).map_err(serde_err_to_mcp)?;
 
-        let imported = import_json(&json_str)
-            .map_err(|e| McpError::internal_error(format!("invalid state JSON: {e}"), None))?;
+        let imported = import_json(&json_str).map_err(serde_err_to_mcp)?;
 
         state.system = imported;
 
