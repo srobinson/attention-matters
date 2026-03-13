@@ -409,13 +409,9 @@ impl QueryEngine {
             };
 
             // Phase difference wrapped to [-π, π]
-            let mut phase_diff = mean_phase_con - mean_phase_sub;
-            while phase_diff > std::f64::consts::PI {
-                phase_diff -= std::f64::consts::TAU;
-            }
-            while phase_diff < -std::f64::consts::PI {
-                phase_diff += std::f64::consts::TAU;
-            }
+            let phase_diff = ((mean_phase_con - mean_phase_sub) + std::f64::consts::PI)
+                .rem_euclid(std::f64::consts::TAU)
+                - std::f64::consts::PI;
 
             let sin_diff = phase_diff.sin();
             let base_delta_sub = k_con * coupling * sin_diff;
