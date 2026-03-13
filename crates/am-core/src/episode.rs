@@ -54,7 +54,10 @@ impl Episode {
             .sum()
     }
 
-    /// Episode mass: count/N * M
+    /// Episode mass relative to total system occurrences.
+    ///
+    /// `n` is the total number of occurrences across all episodes in the system,
+    /// used as the normalization denominator. Returns `count / n * M`.
     pub fn mass(&self, n: usize) -> f64 {
         if n == 0 {
             return 0.0;

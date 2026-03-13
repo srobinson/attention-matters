@@ -69,7 +69,10 @@ impl Occurrence {
         (self.activation_count as f64 / container_activation as f64) > THRESHOLD
     }
 
-    /// Mass contribution: activation_count / N * M
+    /// Mass contribution of this occurrence relative to total system occurrences.
+    ///
+    /// `n` is the total number of occurrences across all episodes in the system,
+    /// used as the normalization denominator. Returns `activation_count / n * M`.
     pub fn mass(&self, n: usize) -> f64 {
         if n == 0 {
             return 0.0;

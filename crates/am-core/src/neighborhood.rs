@@ -108,6 +108,10 @@ impl Neighborhood {
         self.occurrences.iter().map(|o| o.activation_count).sum()
     }
 
+    /// Neighborhood mass relative to total system occurrences.
+    ///
+    /// `n` is the total number of occurrences across all episodes in the system,
+    /// used as the normalization denominator. Returns `count / n * M`.
     pub fn mass(&self, n: usize) -> f64 {
         if n == 0 {
             return 0.0;
@@ -115,12 +119,19 @@ impl Neighborhood {
         (self.count() as f64 / n as f64) * M
     }
 
-    /// Vivid if more than THRESHOLD of occurrences are activated relative to episode count.
-    pub fn is_vivid(&self, episode_count: usize) -> bool {
-        if episode_count == 0 {
+    /// Returns `true` if this neighborhood is vivid within its episode.
+    ///
+    /// A neighborhood is vivid when its occurrence count exceeds
+    /// `episode_occurrence_count * THRESHOLD`, meaning it represents a
+    /// disproportionately large share of the episode's total occurrences.
+    ///
+    /// `episode_occurrence_count` is the total number of occurrences in the
+    /// containing episode (not the number of episodes in the system).
+    pub fn is_vivid(&self, episode_occurrence_count: usize) -> bool {
+        if episode_occurrence_count == 0 {
             return false;
         }
-        self.count() as f64 > episode_count as f64 * THRESHOLD
+        self.count() as f64 > episode_occurrence_count as f64 * THRESHOLD
     }
 
     /// Activate all occurrences matching `word` (case-insensitive). Returns count activated.
