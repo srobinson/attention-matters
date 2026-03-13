@@ -144,7 +144,7 @@ pub fn apply_feedback(
         .collect();
 
     match signal {
-        FeedbackSignal::Boost => apply_boost(system, &query_refs, &target_refs, &unique),
+        FeedbackSignal::Boost => apply_boost(system, &query_refs, &target_refs),
         FeedbackSignal::Demote => apply_demote(system, &target_refs),
     }
 }
@@ -154,7 +154,6 @@ fn apply_boost(
     system: &mut DAESystem,
     all_query_refs: &[OccurrenceRef],
     target_refs: &[OccurrenceRef],
-    _query_words: &[String],
 ) -> FeedbackResult {
     if target_refs.is_empty() {
         return FeedbackResult {
