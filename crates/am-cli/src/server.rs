@@ -1735,4 +1735,113 @@ mod tests {
             .await;
         assert!(result.is_err(), "should reject input exceeding size limit");
     }
+
+    /// Helper: ingest content and return neighborhood IDs from a query.
+    async fn ingest_and_get_neighborhood_ids(server: &AmServer) -> Vec<String> {
+        server
+            .am_ingest(Parameters(IngestRequest {
+                text: "Quantum mechanics describes particle behavior at subatomic scales. Wave functions collapse upon measurement. Entanglement connects distant particles.".to_string(),
+                name: Some("quantum".to_string()),
+            }))
+            .await
+            .unwrap();
+
+        let result = server
+            .am_query(Parameters(QueryRequest {
+                text: "quantum particles entanglement".to_string(),
+                max_tokens: None,
+            }))
+            .await
+            .unwrap();
+        let json = parse_result(&result);
+        let recalled = &json["recalled_ids"];
+        let mut ids = Vec::new();
+        for cat in &["conscious", "subconscious", "novel"] {
+            if let Some(arr) = recalled[cat].as_array() {
+                for id in arr {
+                    if let Some(s) = id.as_str() {
+                        ids.push(s.to_string());
+                    }
+                }
+            }
+        }
+        ids
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_boost() {
+        let server = make_server();
+        let ids = ingest_and_get_neighborhood_ids(&server).await;
+        assert!(
+            !ids.is_empty(),
+            "query should recall at least one neighborhood"
+        );
+
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: "quantum particles".to_string(),
+                neighborhood_ids: ids,
+                signal: "boost".to_string(),
+            }))
+            .await
+            .unwrap();
+        let json = parse_result(&result);
+        assert!(
+            json["boosted"].as_u64().unwrap() > 0,
+            "boost should affect at least one neighborhood"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_demote() {
+        let server = make_server();
+        let ids = ingest_and_get_neighborhood_ids(&server).await;
+        assert!(
+            !ids.is_empty(),
+            "query should recall at least one neighborhood"
+        );
+
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: "quantum particles".to_string(),
+                neighborhood_ids: ids,
+                signal: "demote".to_string(),
+            }))
+            .await
+            .unwrap();
+        let json = parse_result(&result);
+        assert!(
+            json["demoted"].as_u64().unwrap() > 0,
+            "demote should affect at least one neighborhood"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_unknown_signal() {
+        let server = make_server();
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: "test".to_string(),
+                neighborhood_ids: vec!["00000000-0000-0000-0000-000000000001".to_string()],
+                signal: "invalid_signal".to_string(),
+            }))
+            .await;
+        assert!(result.is_err(), "unknown signal should return error");
+    }
+
+    #[tokio::test]
+    async fn test_am_feedback_empty_ids() {
+        let server = make_server();
+        let result = server
+            .am_feedback(Parameters(FeedbackRequest {
+                query: "test".to_string(),
+                neighborhood_ids: vec![],
+                signal: "boost".to_string(),
+            }))
+            .await;
+        assert!(
+            result.is_err(),
+            "empty neighborhood_ids should return error"
+        );
+    }
 }
