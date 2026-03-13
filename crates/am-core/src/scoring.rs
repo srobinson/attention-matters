@@ -46,6 +46,7 @@ pub(crate) const MIN_SCORE_THRESHOLD: f64 = 1.0;
 pub(crate) struct ScoredNeighborhood {
     pub neighborhood_id: Uuid,
     pub episode_idx: usize, // usize::MAX for conscious
+    pub neighborhood_idx: usize,
     pub score: f64,
     pub activated_count: usize,
     pub words: HashSet<String>,
@@ -127,7 +128,12 @@ pub(crate) fn rank_candidates(
 
     // Conscious candidates
     for sn in con_scored.values() {
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
+        let text = get_neighborhood_text(
+            system,
+            sn.neighborhood_id,
+            sn.episode_idx,
+            sn.neighborhood_idx,
+        );
         let tokens = token_count(&text);
         candidates.push(RankedCandidate {
             neighborhood_id: sn.neighborhood_id,
@@ -142,7 +148,12 @@ pub(crate) fn rank_candidates(
 
     // Subconscious candidates
     for sn in sub_scored.values() {
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
+        let text = get_neighborhood_text(
+            system,
+            sn.neighborhood_id,
+            sn.episode_idx,
+            sn.neighborhood_idx,
+        );
         let tokens = token_count(&text);
         candidates.push(RankedCandidate {
             neighborhood_id: sn.neighborhood_id,
@@ -167,7 +178,12 @@ pub(crate) fn rank_candidates(
         }
         let novelty_score =
             sn.max_word_weight * sn.max_plasticity / sn.activated_count.max(1) as f64;
-        let text = get_neighborhood_text(system, sn.neighborhood_id, sn.episode_idx);
+        let text = get_neighborhood_text(
+            system,
+            sn.neighborhood_id,
+            sn.episode_idx,
+            sn.neighborhood_idx,
+        );
         let tokens = token_count(&text);
         candidates.push(RankedCandidate {
             neighborhood_id: sn.neighborhood_id,
@@ -220,6 +236,7 @@ fn score_neighborhoods(
     struct OccData {
         nbhd_id: Uuid,
         episode_idx: usize,
+        neighborhood_idx: usize,
         word: String,
         activation_count: u32,
         plasticity: f64,
@@ -242,6 +259,7 @@ fn score_neighborhoods(
                 } else {
                     r.episode_idx
                 },
+                neighborhood_idx: r.neighborhood_idx,
                 word: occ.word.to_lowercase(),
                 activation_count: occ.activation_count,
                 plasticity: occ.plasticity(),
@@ -296,6 +314,7 @@ fn score_neighborhoods(
             .or_insert_with(|| ScoredNeighborhood {
                 neighborhood_id: d.nbhd_id,
                 episode_idx: d.episode_idx,
+                neighborhood_idx: d.neighborhood_idx,
                 score: 0.0,
                 activated_count: 0,
                 words: HashSet::new(),
@@ -429,28 +448,46 @@ fn overlap_suppress(
     }
 }
 
+/// Extract the text for a neighborhood via direct O(1) indexing.
+///
+/// Falls back to a linear scan if `neighborhood_idx` is out of bounds or
+/// points to a different neighborhood (can happen if episodes were mutated
+/// after index construction).
 pub(crate) fn get_neighborhood_text(
     system: &DAESystem,
     neighborhood_id: Uuid,
     episode_idx: usize,
+    neighborhood_idx: usize,
 ) -> String {
+    fn extract_text(nbhd: &crate::neighborhood::Neighborhood) -> String {
+        if nbhd.source_text.is_empty() {
+            nbhd.occurrences
+                .iter()
+                .map(|o| o.word.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            nbhd.source_text.clone()
+        }
+    }
+
     let episode = if episode_idx == usize::MAX {
         &system.conscious_episode
     } else {
         &system.episodes[episode_idx]
     };
 
+    // Fast path: direct index
+    if let Some(nbhd) = episode.neighborhoods.get(neighborhood_idx)
+        && nbhd.id == neighborhood_id
+    {
+        return extract_text(nbhd);
+    }
+
+    // Fallback: linear scan (should rarely trigger)
     for nbhd in &episode.neighborhoods {
         if nbhd.id == neighborhood_id {
-            if !nbhd.source_text.is_empty() {
-                return nbhd.source_text.clone();
-            }
-            return nbhd
-                .occurrences
-                .iter()
-                .map(|o| o.word.as_str())
-                .collect::<Vec<_>>()
-                .join(" ");
+            return extract_text(nbhd);
         }
     }
 
