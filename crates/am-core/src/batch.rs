@@ -133,9 +133,9 @@ impl BatchQueryEngine {
         QueryEngine::drift_and_consolidate(system, &all_refs);
 
         // Step 4: Compute interference once for the full set
-        let (_, _word_groups) =
+        let (_, word_groups) =
             QueryEngine::compute_interference(system, &all_subconscious, &all_conscious);
-        QueryEngine::apply_kuramoto_coupling(system, &_word_groups);
+        QueryEngine::apply_kuramoto_coupling(system, &word_groups);
 
         // Step 5: Per-query partitioning and context composition
         let mut results = Vec::with_capacity(requests.len());
@@ -211,7 +211,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_batch_system() -> DAESystem {
@@ -323,7 +323,7 @@ mod tests {
             },
             BatchQueryRequest {
                 query: "quantum physics neural".to_string(),
-                max_tokens: Some(100000), // Huge budget
+                max_tokens: Some(100_000), // Huge budget
             },
         ];
 
@@ -427,8 +427,8 @@ mod tests {
     /// Batch activation counts must match sequential activation counts.
     ///
     /// If word W appears in N queries, running those N queries sequentially
-    /// calls activate_word(W) N times, producing activation_count = N.
-    /// Batch must produce the same count so that drift_rate, plasticity,
+    /// calls `activate_word(W)` N times, producing `activation_count` = N.
+    /// Batch must produce the same count so that `drift_rate`, plasticity,
     /// and anchoring thresholds behave identically.
     #[test]
     fn test_batch_activation_matches_sequential_for_shared_tokens() {
@@ -493,7 +493,7 @@ mod tests {
         }
     }
 
-    /// Tokens unique to a single query get activation_count = 1 in batch,
+    /// Tokens unique to a single query get `activation_count` = 1 in batch,
     /// matching sequential behavior.
     #[test]
     fn test_batch_activation_unique_tokens_count_once() {

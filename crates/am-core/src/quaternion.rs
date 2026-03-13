@@ -29,11 +29,13 @@ impl PartialEq for Quaternion {
 
 impl Quaternion {
     /// Create a new quaternion, automatically normalized.
+    #[must_use]
     pub fn new(w: f64, x: f64, y: f64, z: f64) -> Self {
         Self { w, x, y, z }.normalize()
     }
 
     /// Identity quaternion (1, 0, 0, 0).
+    #[must_use]
     pub fn identity() -> Self {
         Self {
             w: 1.0,
@@ -44,6 +46,7 @@ impl Quaternion {
     }
 
     /// Normalize to unit length. Returns identity if near-zero magnitude.
+    #[must_use]
     pub fn normalize(self) -> Self {
         let norm = (self.w * self.w + self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
         if norm < EPSILON {
@@ -58,6 +61,7 @@ impl Quaternion {
     }
 
     /// 4D dot product.
+    #[must_use]
     pub fn dot(self, other: Self) -> f64 {
         self.w * other.w + self.x * other.x + self.y * other.y + self.z * other.z
     }
@@ -70,12 +74,14 @@ impl Quaternion {
     ///
     /// The SLERP implementation handles antipodal pairs differently: it flips the
     /// sign to take the shorter arc rather than collapsing to zero.
+    #[must_use]
     pub fn angular_distance(self, other: Self) -> f64 {
         let d = self.dot(other).abs().clamp(0.0, 1.0);
         2.0 * d.acos()
     }
 
     /// Spherical linear interpolation with antipodal flip and NLERP fallback.
+    #[must_use]
     pub fn slerp(self, other: Self, t: f64) -> Self {
         if t <= 0.0 {
             return self;
@@ -181,11 +187,13 @@ impl Quaternion {
     }
 
     /// Convert to [w, x, y, z] array for serialization.
+    #[must_use]
     pub fn to_array(self) -> [f64; 4] {
         [self.w, self.x, self.y, self.z]
     }
 
     /// Create from [w, x, y, z] array.
+    #[must_use]
     pub fn from_array(arr: [f64; 4]) -> Self {
         Self::new(arr[0], arr[1], arr[2], arr[3])
     }
@@ -196,6 +204,7 @@ impl Quaternion {
     /// Returns `None` if the input is empty, lengths mismatch, total weight
     /// is below EPSILON, or the resulting centroid has near-zero norm
     /// (antipodal cancellation).
+    #[must_use]
     pub fn weighted_centroid(positions: &[Quaternion], weights: &[f64]) -> Option<Quaternion> {
         if positions.is_empty() || positions.len() != weights.len() {
             return None;
@@ -526,7 +535,7 @@ mod tests {
         let mut rng = rng();
         for _ in 0..20 {
             let positions: Vec<Quaternion> = (0..5).map(|_| Quaternion::random(&mut rng)).collect();
-            let weights: Vec<f64> = (0..5).map(|i| (i + 1) as f64).collect();
+            let weights: Vec<f64> = (0..5).map(|i| f64::from(i + 1)).collect();
             if let Some(c) = Quaternion::weighted_centroid(&positions, &weights) {
                 assert_unit(c);
             }

@@ -12,7 +12,7 @@ use crate::tokenizer::tokenize;
 /// hierarchy. Uses positional indexes for O(1) access.
 ///
 /// `episode_idx` of `usize::MAX` is a sentinel denoting the conscious episode.
-/// Any other value is an index into `DAESystem::episodes`. See the DAESystem
+/// Any other value is an index into `DAESystem::episodes`. See the `DAESystem`
 /// doc comment for discussion of this design trade-off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct OccurrenceRef {
@@ -22,6 +22,7 @@ pub struct OccurrenceRef {
 }
 
 impl OccurrenceRef {
+    #[must_use]
     pub fn is_conscious(&self) -> bool {
         self.episode_idx == usize::MAX
     }
@@ -36,6 +37,7 @@ pub struct NeighborhoodRef {
 }
 
 impl NeighborhoodRef {
+    #[must_use]
     pub fn is_conscious(&self) -> bool {
         self.episode_idx == usize::MAX
     }
@@ -135,6 +137,7 @@ pub struct DAESystem {
 }
 
 impl DAESystem {
+    #[must_use]
     pub fn new(agent_name: &str) -> Self {
         Self {
             episodes: Vec::new(),
@@ -150,8 +153,13 @@ impl DAESystem {
     }
 
     /// Total occurrence count across all episodes (both manifolds).
+    #[must_use]
     pub fn n(&self) -> usize {
-        let sub: usize = self.episodes.iter().map(|e| e.count()).sum();
+        let sub: usize = self
+            .episodes
+            .iter()
+            .map(super::episode::Episode::count)
+            .sum();
         sub + self.conscious_episode.count()
     }
 
@@ -363,6 +371,7 @@ impl DAESystem {
     }
 
     /// Get immutable occurrence by ref.
+    #[must_use]
     pub fn get_occurrence(&self, r: OccurrenceRef) -> &crate::occurrence::Occurrence {
         let episode = if r.is_conscious() {
             &self.conscious_episode
@@ -389,6 +398,7 @@ impl DAESystem {
     }
 
     /// Get neighborhood by ref.
+    #[must_use]
     pub fn get_neighborhood(&self, r: NeighborhoodRef) -> &Neighborhood {
         let episode = if r.is_conscious() {
             &self.conscious_episode
@@ -399,6 +409,7 @@ impl DAESystem {
     }
 
     /// Get neighborhood that contains an occurrence.
+    #[must_use]
     pub fn get_neighborhood_for_occurrence(&self, r: OccurrenceRef) -> &Neighborhood {
         let episode = if r.is_conscious() {
             &self.conscious_episode
@@ -409,6 +420,7 @@ impl DAESystem {
     }
 
     /// Get episode that contains an occurrence.
+    #[must_use]
     pub fn get_episode_for_occurrence(&self, r: OccurrenceRef) -> &Episode {
         if r.is_conscious() {
             &self.conscious_episode
@@ -426,6 +438,7 @@ impl DAESystem {
     }
 
     /// Get the total number of neighborhoods across all episodes.
+    #[must_use]
     pub fn total_neighborhoods(&self) -> usize {
         let sub: usize = self.episodes.iter().map(|e| e.neighborhoods.len()).sum();
         sub + self.conscious_episode.neighborhoods.len()
@@ -458,7 +471,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_system_with_data() -> DAESystem {

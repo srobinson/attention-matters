@@ -135,15 +135,12 @@ fn apply_boost(
 
     let centroid = Quaternion::weighted_centroid(&positions, &weights);
 
-    let centroid = match centroid {
-        Some(c) => c,
-        None => {
-            return FeedbackResult {
-                boosted: 0,
-                demoted: 0,
-                centroid: None,
-            };
-        }
+    let Some(centroid) = centroid else {
+        return FeedbackResult {
+            boosted: 0,
+            demoted: 0,
+            centroid: None,
+        };
     };
 
     // Cache IDF weights for target occurrences
@@ -216,7 +213,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_feedback_system() -> DAESystem {

@@ -21,6 +21,7 @@ pub struct SurfaceResult {
 }
 
 /// Compute which content surfaces from activation and interference.
+#[must_use]
 pub fn compute_surface(system: &DAESystem, query_result: &QueryResult) -> SurfaceResult {
     let n = system.n();
     let mut surfaced: HashSet<OccurrenceRef> = HashSet::new();
@@ -121,7 +122,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     #[test]

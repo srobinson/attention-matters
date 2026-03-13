@@ -19,13 +19,14 @@ pub enum NeighborhoodType {
     Decision,
     /// A user preference that should be respected.
     Preference,
-    /// A marked insight (default for am_salient without prefix).
+    /// A marked insight (default for `am_salient` without prefix).
     Insight,
-    /// Bulk-imported reference material (via am_ingest).
+    /// Bulk-imported reference material (via `am_ingest`).
     Ingested,
 }
 
 impl NeighborhoodType {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Memory => "memory",
@@ -36,6 +37,7 @@ impl NeighborhoodType {
         }
     }
 
+    #[must_use]
     pub fn from_str_lossy(s: &str) -> Self {
         match s {
             "decision" => Self::Decision,
@@ -67,6 +69,7 @@ pub struct Neighborhood {
 }
 
 impl Neighborhood {
+    #[must_use]
     pub fn new(seed: Quaternion, source_text: String) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -80,7 +83,7 @@ impl Neighborhood {
     }
 
     /// Create a neighborhood from tokens, placing each word within
-    /// NEIGHBORHOOD_RADIUS of the seed with golden-angle phasor spacing.
+    /// `NEIGHBORHOOD_RADIUS` of the seed with golden-angle phasor spacing.
     pub fn from_tokens(
         tokens: &[String],
         seed: Option<Quaternion>,
@@ -100,10 +103,12 @@ impl Neighborhood {
         neighborhood
     }
 
+    #[must_use]
     pub fn count(&self) -> usize {
         self.occurrences.len()
     }
 
+    #[must_use]
     pub fn total_activation(&self) -> u32 {
         self.occurrences.iter().map(|o| o.activation_count).sum()
     }
@@ -112,6 +117,7 @@ impl Neighborhood {
     ///
     /// `n` is the total number of occurrences across all episodes in the system,
     /// used as the normalization denominator. Returns `count / n * M`.
+    #[must_use]
     pub fn mass(&self, n: usize) -> f64 {
         if n == 0 {
             return 0.0;
@@ -127,6 +133,7 @@ impl Neighborhood {
     ///
     /// `episode_occurrence_count` is the total number of occurrences in the
     /// containing episode (not the number of episodes in the system).
+    #[must_use]
     pub fn is_vivid(&self, episode_occurrence_count: usize) -> bool {
         if episode_occurrence_count == 0 {
             return false;
@@ -159,7 +166,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     #[test]

@@ -7,7 +7,7 @@
 use crate::system::DAESystem;
 
 /// Recency decay coefficient for non-decision memories.
-/// score *= 1.0 / (1.0 + days_old * RECENCY_DECAY_RATE)
+/// score *= 1.0 / (1.0 + `days_old` * `RECENCY_DECAY_RATE`)
 pub(crate) const RECENCY_DECAY_RATE: f64 = 0.01;
 
 /// Compute days since an episode's timestamp (empty or unparseable returns 0.0).

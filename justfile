@@ -15,6 +15,9 @@ clippy:
 
 check: fmt clippy
 
+check-pedantic:
+    cargo clippy -p am-core --all-targets -- -W clippy::pedantic -D warnings
+
 audit:
     cargo audit
 

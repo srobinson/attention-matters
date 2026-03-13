@@ -51,7 +51,7 @@ pub struct ContextResult {
     pub metrics: ContextMetrics,
     /// Neighborhood IDs included in this result (for session recall tracking).
     pub included_ids: Vec<Uuid>,
-    /// Neighborhood IDs categorized by recall type (for am_feedback).
+    /// Neighborhood IDs categorized by recall type (for `am_feedback`).
     pub recalled_ids: CategorizedIds,
     /// Estimated LLM token cost of the recalled content.
     pub token_estimate: TokenEstimate,
@@ -119,23 +119,23 @@ fn format_entry(
             lines.push("[Source: Previously marked salient]".to_string());
         }
         RecallCategory::Subconscious => {
-            lines.push(format!("SUBCONSCIOUS RECALL {}:", index));
-            lines.push(format!("[Source: {}]", ep_name));
+            lines.push(format!("SUBCONSCIOUS RECALL {index}:"));
+            lines.push(format!("[Source: {ep_name}]"));
         }
         RecallCategory::Novel => {
             lines.push("NOVEL CONNECTION:".to_string());
-            lines.push(format!("[Source: {}]", ep_name));
+            lines.push(format!("[Source: {ep_name}]"));
         }
     }
     // Decisions get [DECIDED] prefix so the AI knows not to re-litigate
     let formatted_text = if nbhd_type == NeighborhoodType::Decision {
-        format!("[DECIDED] {}", text)
+        format!("[DECIDED] {text}")
     } else if nbhd_type == NeighborhoodType::Preference {
-        format!("[PREFERENCE] {}", text)
+        format!("[PREFERENCE] {text}")
     } else {
         text.to_string()
     };
-    lines.push(format!("\"{}\"", formatted_text));
+    lines.push(format!("\"{formatted_text}\""));
     lines
 }
 
@@ -155,7 +155,7 @@ fn apply_diminishing_returns(
                     NeighborhoodType::Decision | NeighborhoodType::Preference => 0.5,
                     _ => 1.0,
                 };
-                c.score *= 1.0 / (1.0 + count as f64 * decay_rate);
+                c.score *= 1.0 / (1.0 + f64::from(count) * decay_rate);
             }
             c
         })
@@ -580,7 +580,7 @@ pub struct IndexStats {
 }
 
 /// Compose a compact index of the best-matching neighborhoods without full content.
-/// Same scoring pipeline as compose_context_budgeted but returns only metadata.
+/// Same scoring pipeline as `compose_context_budgeted` but returns only metadata.
 pub fn compose_index(
     system: &mut DAESystem,
     surface: &SurfaceResult,
@@ -614,7 +614,7 @@ pub fn compose_index(
                     NeighborhoodType::Decision | NeighborhoodType::Preference => 0.5,
                     _ => 1.0,
                 };
-                score *= 1.0 / (1.0 + count as f64 * decay_rate);
+                score *= 1.0 / (1.0 + f64::from(count) * decay_rate);
             }
             (c, score)
         })
@@ -688,14 +688,14 @@ pub fn retrieve_by_ids(system: &mut DAESystem, ids: &[Uuid]) -> Vec<IncludedFrag
             (nbhd, episode.name.clone(), RecallCategory::Subconscious)
         };
 
-        let text = if !nbhd.source_text.is_empty() {
-            nbhd.source_text.clone()
-        } else {
+        let text = if nbhd.source_text.is_empty() {
             nbhd.occurrences
                 .iter()
                 .map(|o| o.word.as_str())
                 .collect::<Vec<_>>()
                 .join(" ")
+        } else {
+            nbhd.source_text.clone()
         };
 
         fragments.push(IncludedFragment {
@@ -734,7 +734,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_full_system() -> DAESystem {
@@ -967,7 +967,7 @@ mod tests {
         let surface = compute_surface(&sys, &result);
 
         let budget = BudgetConfig {
-            max_tokens: 100000,
+            max_tokens: 100_000,
             min_conscious: 1,
             min_subconscious: 1,
             min_novel: 0,
@@ -1186,8 +1186,7 @@ mod tests {
         let decision_score = decision_entries[0].score;
         assert!(
             decision_score > 0.0,
-            "relevant decision should have positive score, got {}",
-            decision_score,
+            "relevant decision should have positive score, got {decision_score}",
         );
     }
 
@@ -1244,8 +1243,7 @@ mod tests {
             let decision_score = decision_entries[0].score;
             assert!(
                 decision_score <= 100.0,
-                "irrelevant decision should NOT score at old flat 100.0, got {}",
-                decision_score,
+                "irrelevant decision should NOT score at old flat 100.0, got {decision_score}",
             );
         }
         // Either way: the cooking result should outrank any irrelevant decision
@@ -1322,9 +1320,7 @@ mod tests {
         let s2 = f2.unwrap().score;
         assert!(
             s1 < s2,
-            "recalled neighborhood should score lower: recalled={}, fresh={}",
-            s1,
-            s2,
+            "recalled neighborhood should score lower: recalled={s1}, fresh={s2}",
         );
     }
 
@@ -1413,8 +1409,7 @@ mod tests {
             let ratio = d2.score / d1.score;
             assert!(
                 ratio > 0.5,
-                "softer decay ratio should be > 0.5 (standard), got {}",
-                ratio,
+                "softer decay ratio should be > 0.5 (standard), got {ratio}",
             );
         }
     }
@@ -1908,7 +1903,7 @@ mod tests {
         if ctx.included.len() > 1 {
             // If weak match is included, it should score lower than strong
             let scores: Vec<f64> = ctx.included.iter().map(|f| f.score).collect();
-            let max_score = scores.iter().cloned().fold(f64::MIN, f64::max);
+            let max_score = scores.iter().copied().fold(f64::MIN, f64::max);
             assert!(
                 strong.unwrap().score >= max_score * 0.5,
                 "strong match should be among the top scorers"
@@ -1979,22 +1974,29 @@ mod tests {
         sys.add_episode(ep);
 
         // Identical word sets should have overlap = 1.0
-        let words_a: HashSet<String> = ["alpha", "beta"].iter().map(|s| s.to_string()).collect();
-        let words_b: HashSet<String> = ["alpha", "beta"].iter().map(|s| s.to_string()).collect();
+        let words_a: HashSet<String> = ["alpha", "beta"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
+        let words_b: HashSet<String> = ["alpha", "beta"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let overlap = idf_weighted_overlap(&words_a, &words_b, &mut sys);
         assert!(
             (overlap - 1.0).abs() < 0.01,
-            "identical sets should have overlap ~1.0, got {}",
-            overlap,
+            "identical sets should have overlap ~1.0, got {overlap}",
         );
 
         // Disjoint word sets should have overlap = 0.0
-        let words_c: HashSet<String> = ["gamma", "delta"].iter().map(|s| s.to_string()).collect();
+        let words_c: HashSet<String> = ["gamma", "delta"]
+            .iter()
+            .map(std::string::ToString::to_string)
+            .collect();
         let overlap2 = idf_weighted_overlap(&words_a, &words_c, &mut sys);
         assert!(
             overlap2 < 0.01,
-            "disjoint sets should have overlap ~0.0, got {}",
-            overlap2,
+            "disjoint sets should have overlap ~0.0, got {overlap2}",
         );
 
         // Empty sets
@@ -2002,8 +2004,7 @@ mod tests {
         let overlap3 = idf_weighted_overlap(&empty, &words_a, &mut sys);
         assert!(
             overlap3 < 0.01,
-            "empty set overlap should be ~0.0, got {}",
-            overlap3,
+            "empty set overlap should be ~0.0, got {overlap3}",
         );
     }
 
@@ -2339,13 +2340,11 @@ mod tests {
         let standard_ratio = standard.score / 10.0;
         assert!(
             (decision_ratio - 2.0 / 3.0).abs() < 0.01,
-            "decision ratio should be ~0.667, got {}",
-            decision_ratio,
+            "decision ratio should be ~0.667, got {decision_ratio}",
         );
         assert!(
             (standard_ratio - 0.5).abs() < 0.01,
-            "standard ratio should be ~0.5, got {}",
-            standard_ratio,
+            "standard ratio should be ~0.5, got {standard_ratio}",
         );
     }
 

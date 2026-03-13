@@ -20,7 +20,7 @@ pub struct WordGroup {
     pub con_refs: Vec<OccurrenceRef>,
 }
 
-/// Full result from process_query.
+/// Full result from `process_query`.
 pub struct QueryResult {
     pub activation: ActivationResult,
     pub interference: Vec<InterferenceResult>,
@@ -29,7 +29,7 @@ pub struct QueryResult {
     pub query_token_count: usize,
 }
 
-/// Stateless query processor operating on a DAESystem.
+/// Stateless query processor operating on a `DAESystem`.
 pub struct QueryEngine;
 
 impl QueryEngine {
@@ -303,6 +303,7 @@ impl QueryEngine {
 
     /// Compute interference between subconscious and conscious occurrences.
     /// Returns interference results and word groups for Kuramoto.
+    #[must_use]
     pub fn compute_interference(
         system: &DAESystem,
         subconscious: &[OccurrenceRef],
@@ -325,9 +326,8 @@ impl QueryEngine {
         let mut word_groups = Vec::new();
 
         for (word, sub_refs) in &sub_by_word {
-            let con_refs = match con_by_word.get(word) {
-                Some(refs) => refs,
-                None => continue,
+            let Some(con_refs) = con_by_word.get(word) else {
+                continue;
             };
 
             // Circular mean phase of conscious occurrences
@@ -451,7 +451,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_test_system() -> DAESystem {
@@ -623,8 +623,8 @@ mod tests {
         let activation = QueryEngine::activate(&mut sys, "quantum");
 
         // Get initial phase diff
-        let sub_refs = activation.subconscious.to_vec();
-        let con_refs = activation.conscious.to_vec();
+        let sub_refs = activation.subconscious.clone();
+        let con_refs = activation.conscious.clone();
 
         if sub_refs.is_empty() || con_refs.is_empty() {
             return; // Skip if no overlap

@@ -11,6 +11,7 @@ pub struct DaemonPhasor {
 
 impl DaemonPhasor {
     /// Create a phasor with the given phase angle, normalized to [0, 2π).
+    #[must_use]
     pub fn new(theta: f64) -> Self {
         Self {
             theta: theta.rem_euclid(std::f64::consts::TAU),
@@ -18,18 +19,21 @@ impl DaemonPhasor {
     }
 
     /// Create phasor from index using golden-angle spacing.
-    /// theta = base_theta + index * GOLDEN_ANGLE
+    /// theta = `base_theta` + index * `GOLDEN_ANGLE`
+    #[must_use]
     pub fn from_index(index: usize, base_theta: f64) -> Self {
         Self::new(base_theta + index as f64 * GOLDEN_ANGLE)
     }
 
     /// Phasor interference: cos(self.theta - other.theta).
     /// Range: [-1, +1]. +1 = in phase, -1 = out of phase.
+    #[must_use]
     pub fn interference(self, other: Self) -> f64 {
         (self.theta - other.theta).cos()
     }
 
     /// Circular interpolation along the shortest arc.
+    #[must_use]
     pub fn slerp(self, other: Self, t: f64) -> Self {
         let mut diff = other.theta - self.theta;
         // Wrap to [-π, π] for shortest path

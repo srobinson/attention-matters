@@ -1,10 +1,11 @@
 //! Lightweight UTC date/time utilities (no chrono dependency).
 //!
-//! Uses Howard Hinnant's civil_from_days algorithm for Unix-to-date conversion.
+//! Uses Howard Hinnant's `civil_from_days` algorithm for Unix-to-date conversion.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Current UTC time as Unix seconds.
+#[must_use]
 pub fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -13,11 +14,13 @@ pub fn now_unix_secs() -> u64 {
 }
 
 /// Current UTC timestamp in ISO-8601 format.
+#[must_use]
 pub fn now_iso8601() -> String {
     unix_to_iso8601(now_unix_secs())
 }
 
 /// Convert Unix seconds to ISO-8601 UTC string.
+#[must_use]
 pub fn unix_to_iso8601(secs: u64) -> String {
     let days = (secs / 86400) as i64;
     let time_of_day = secs % 86400;
@@ -29,12 +32,12 @@ pub fn unix_to_iso8601(secs: u64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{hours:02}:{minutes:02}:{seconds:02}Z")
 }
 
-/// Howard Hinnant's civil_from_days: Unix epoch days → (year, month, day).
+/// Howard Hinnant's `civil_from_days`: Unix epoch days → (year, month, day).
 fn civil_from_days(days: i64) -> (i64, u64, u64) {
-    let z = days + 719468;
-    let era = if z >= 0 { z } else { z - 146096 } / 146097;
-    let doe = (z - era * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
     let y = yoe as i64 + era * 400;
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let mp = (5 * doy + 2) / 153;
@@ -56,7 +59,7 @@ mod tests {
     #[test]
     fn test_known_date() {
         // 2026-02-21T00:00:00Z = 1771632000
-        assert_eq!(unix_to_iso8601(1771632000), "2026-02-21T00:00:00Z");
+        assert_eq!(unix_to_iso8601(1_771_632_000), "2026-02-21T00:00:00Z");
     }
 
     #[test]

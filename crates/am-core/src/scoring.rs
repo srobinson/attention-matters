@@ -68,8 +68,8 @@ pub(crate) struct RankedCandidate {
 /// Score and categorize all activated neighborhoods into ranked candidates.
 /// Conscious neighborhoods scored by IDF-weighted activation.
 /// Subconscious neighborhoods scored by IDF-weighted activation.
-/// Novel candidates: subconscious with activated_count <= 2, no words in common
-/// with conscious, scored by max_word_weight * max_plasticity / activated_count.
+/// Novel candidates: subconscious with `activated_count` <= 2, no words in common
+/// with conscious, scored by `max_word_weight` * `max_plasticity` / `activated_count`.
 pub(crate) fn rank_candidates(
     system: &mut DAESystem,
     query_result: &QueryResult,
@@ -184,7 +184,7 @@ pub(crate) fn rank_candidates(
 }
 
 /// Aggregate per-neighborhood mean interference from pairwise results.
-/// Returns map of neighborhood_id -> mean cos(phase_diff).
+/// Returns map of `neighborhood_id` -> mean `cos(phase_diff)`.
 /// Aggregates both sides of each pair so conscious and subconscious
 /// neighborhoods both receive interference values.
 pub(crate) fn aggregate_interference(
@@ -215,8 +215,6 @@ fn score_neighborhoods(
     is_conscious: bool,
     query_token_count: usize,
 ) -> HashMap<Uuid, ScoredNeighborhood> {
-    let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
-
     // Pre-collect data to avoid borrow conflicts.
     // Superseded neighborhoods are excluded - they've been explicitly replaced.
     struct OccData {
@@ -289,6 +287,7 @@ fn score_neighborhoods(
         HashMap::new()
     };
 
+    let mut scored: HashMap<Uuid, ScoredNeighborhood> = HashMap::new();
     for d in &data {
         let weight = system.get_word_weight(&d.word);
 
@@ -306,7 +305,7 @@ fn score_neighborhoods(
                 epoch: d.epoch,
             });
 
-        entry.score += weight * d.activation_count as f64;
+        entry.score += weight * f64::from(d.activation_count);
         entry.words.insert(d.word.clone());
         entry.activated_count += 1;
         if weight > entry.max_word_weight {
@@ -379,8 +378,8 @@ pub(crate) fn idf_weighted_overlap(
 
 /// Detect overlapping neighborhoods across conscious and subconscious scores
 /// and suppress older ones. For each pair with IDF-weighted overlap above
-/// OVERLAP_THRESHOLD, the lower-epoch neighborhood gets its score multiplied
-/// by OVERLAP_SUPPRESSION (0.1x). This ensures that when contradicting memories
+/// `OVERLAP_THRESHOLD`, the lower-epoch neighborhood gets its score multiplied
+/// by `OVERLAP_SUPPRESSION` (0.1x). This ensures that when contradicting memories
 /// exist, only the newest version ranks highly.
 fn overlap_suppress(
     con_scored: &mut HashMap<Uuid, ScoredNeighborhood>,

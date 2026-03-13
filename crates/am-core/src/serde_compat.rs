@@ -97,7 +97,8 @@ pub struct WireOccurrence {
 // --- Conversion: Wire → Domain ---
 
 impl WireExport {
-    /// Convert wire format to domain DAESystem.
+    /// Convert wire format to domain `DAESystem`.
+    #[must_use]
     pub fn into_system(self) -> DAESystem {
         let mut sys = DAESystem::new(&self.system.agent_name);
 
@@ -115,7 +116,7 @@ impl WireExport {
         sys
     }
 
-    /// Create wire export from domain DAESystem.
+    /// Create wire export from domain `DAESystem`.
     pub fn from_system(system: &DAESystem) -> Self {
         let conscious = domain_episode_to_wire(&system.conscious_episode);
         let episodes: Vec<WireEpisode> =
@@ -124,9 +125,9 @@ impl WireExport {
         let total_activation: u64 = system
             .episodes
             .iter()
-            .map(|e| e.total_activation() as u64)
+            .map(|e| u64::from(e.total_activation()))
             .sum::<u64>()
-            + system.conscious_episode.total_activation() as u64;
+            + u64::from(system.conscious_episode.total_activation());
 
         WireExport {
             version: CURRENT_VERSION.to_string(),
@@ -221,13 +222,23 @@ fn domain_neighborhood_to_wire(nbhd: &Neighborhood) -> WireNeighborhood {
     }
 }
 
-/// Deserialize a v0.7.2 JSON export into a DAESystem.
+/// Deserialize a v0.7.2 JSON export into a `DAESystem`.
+///
+/// # Errors
+///
+/// Returns `serde_json::Error` if the JSON is malformed or does not match
+/// the v0.7.2 wire format schema.
 pub fn import_json(json: &str) -> Result<DAESystem, serde_json::Error> {
     let wire: WireExport = serde_json::from_str(json)?;
     Ok(wire.into_system())
 }
 
-/// Serialize a DAESystem to v0.7.2 JSON wire format.
+/// Serialize a `DAESystem` to v0.7.2 JSON wire format.
+///
+/// # Errors
+///
+/// Returns `serde_json::Error` if serialization fails (should not occur
+/// with well-formed system data).
 pub fn export_json(system: &DAESystem) -> Result<String, serde_json::Error> {
     let wire = WireExport::from_system(system);
     serde_json::to_string_pretty(&wire)
@@ -246,7 +257,7 @@ mod tests {
     }
 
     fn to_tokens(words: &[&str]) -> Vec<String> {
-        words.iter().map(|s| s.to_string()).collect()
+        words.iter().map(std::string::ToString::to_string).collect()
     }
 
     fn make_test_system() -> DAESystem {

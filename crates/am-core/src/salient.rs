@@ -18,6 +18,7 @@ static SALIENT_RE: LazyLock<Regex> =
 
 /// Detect neighborhood type from text prefix (DECISION: / PREFERENCE:).
 /// Returns the detected type and the text with the prefix stripped.
+#[must_use]
 pub fn detect_neighborhood_type(text: &str) -> (NeighborhoodType, &str) {
     let trimmed = text.trim();
     if let Some(rest) = trimmed.strip_prefix("DECISION:") {

@@ -20,6 +20,7 @@ pub struct Occurrence {
 }
 
 impl Occurrence {
+    #[must_use]
     pub fn new(
         word: String,
         position: Quaternion,
@@ -41,14 +42,15 @@ impl Occurrence {
         self.activation_count = self.activation_count.saturating_add(1);
     }
 
-    /// OpenClaw drift rate formula: ratio / THRESHOLD, capped at 0.
+    /// `OpenClaw` drift rate formula: ratio / THRESHOLD, capped at 0.
     /// Fresh words (c=0) don't drift. Drift increases with activation
     /// until anchored at c/C > THRESHOLD.
+    #[must_use]
     pub fn drift_rate(&self, container_activation: u32) -> f64 {
         if container_activation == 0 {
             return 0.0;
         }
-        let ratio = self.activation_count as f64 / container_activation as f64;
+        let ratio = f64::from(self.activation_count) / f64::from(container_activation);
         if ratio > THRESHOLD {
             return 0.0;
         }
@@ -57,27 +59,30 @@ impl Occurrence {
 
     /// Plasticity: 1 / (1 + ln(1 + c))
     /// Diminishing returns - each activation contributes less.
+    #[must_use]
     pub fn plasticity(&self) -> f64 {
-        1.0 / (1.0 + (1.0 + self.activation_count as f64).ln())
+        1.0 / (1.0 + (1.0 + f64::from(self.activation_count)).ln())
     }
 
     /// Whether this occurrence is anchored (drift rate = 0).
+    #[must_use]
     pub fn is_anchored(&self, container_activation: u32) -> bool {
         if container_activation == 0 {
             return true;
         }
-        (self.activation_count as f64 / container_activation as f64) > THRESHOLD
+        (f64::from(self.activation_count) / f64::from(container_activation)) > THRESHOLD
     }
 
     /// Mass contribution of this occurrence relative to total system occurrences.
     ///
     /// `n` is the total number of occurrences across all episodes in the system,
     /// used as the normalization denominator. Returns `activation_count / n * M`.
+    #[must_use]
     pub fn mass(&self, n: usize) -> f64 {
         if n == 0 {
             return 0.0;
         }
-        (self.activation_count as f64 / n as f64) * M
+        (f64::from(self.activation_count) / n as f64) * M
     }
 }
 

@@ -16,7 +16,7 @@ pub const M: f64 = 1.0;
 /// Numerical epsilon for near-zero comparisons
 pub const EPSILON: f64 = 1e-10;
 
-/// SLERP near-parallel threshold (OpenClaw standard)
+/// SLERP near-parallel threshold (`OpenClaw` standard)
 pub const SLERP_THRESHOLD: f64 = 0.9995;
 
 /// Maximum mobile occurrence count for O(n^2) pairwise drift.
