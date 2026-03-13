@@ -675,8 +675,6 @@ impl Store {
             .query_row("SELECT COUNT(*) FROM neighborhoods", [], |row| row.get(0))?)
     }
 
-    /// Run a GC pass: evict cold occurrences, clean empty structures, VACUUM.
-    /// Returns (evicted_occurrences, removed_episodes).
     /// Count occurrences eligible for GC eviction at the given activation floor.
     /// Excludes conscious episodes.
     pub fn gc_eligible_count(&self, activation_floor: u32) -> Result<u64> {
@@ -691,6 +689,8 @@ impl Store {
         Ok(count)
     }
 
+    /// Run a GC pass: evict cold occurrences, clean empty structures, VACUUM.
+    /// Returns (evicted_occurrences, removed_episodes).
     /// Conscious episodes (is_conscious = 1) are never touched.
     /// Respects retention policy: grace epoch window and retention days.
     pub fn gc_pass(
