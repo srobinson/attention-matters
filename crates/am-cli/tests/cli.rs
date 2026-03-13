@@ -616,6 +616,51 @@ fn gc_evicts_cold_occurrences() {
 }
 
 #[test]
+fn gc_target_mb_triggers_aggressive_eviction() {
+    let dir = TempDir::new().unwrap();
+
+    // Disable retention protections so GC works on small test data
+    std::fs::write(
+        dir.path().join(".am.config.toml"),
+        "[retention]\nmin_neighborhoods = 0\ngrace_epochs = 0\nretention_days = 0\n",
+    )
+    .unwrap();
+
+    let input = dir.path().join("gc-target.txt");
+    std::fs::write(
+        &input,
+        "Quantum entanglement connects particles across spacetime. \
+         Bell inequality violations confirm nonlocal correlations. \
+         Decoherence destroys quantum superposition in macroscopic systems.",
+    )
+    .unwrap();
+
+    am_cmd(&dir).args(["ingest"]).arg(&input).assert().success();
+
+    // Verify data exists before GC
+    let before = am_cmd(&dir).args(["stats"]).output().unwrap();
+    let before_stdout = String::from_utf8_lossy(&before.stdout);
+    let episodes_before: usize = extract_stat_value(&before_stdout, "episodes:")
+        .parse()
+        .unwrap_or(0);
+    assert!(episodes_before > 0, "should have data before GC");
+
+    // target-mb=0 forces aggressive size-based eviction since any DB > 0 bytes exceeds target
+    am_cmd(&dir)
+        .args(["gc", "--target-mb", "0"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("GC complete"));
+
+    // Stats should show 0 episodes after aggressive eviction
+    am_cmd(&dir)
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("episodes:   0"));
+}
+
+#[test]
 fn forget_term() {
     let dir = TempDir::new().unwrap();
 
