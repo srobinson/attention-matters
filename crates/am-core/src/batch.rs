@@ -44,8 +44,12 @@ impl BatchQueryEngine {
     ///
     /// Strategy:
     /// 1. Collect union of all query tokens (deduplicated).
-    /// 2. Activate the union once - single index rebuild, single activation pass.
-    /// 3. Drift the union once - single O(n²) or O(n) pass.
+    /// 2. Activate each token once per query that contains it. A token
+    ///    appearing in N queries gets `activation_count += N`, matching
+    ///    the behavior of N independent `process_query` calls. The index
+    ///    rebuild happens once (amortized), but the activation counts
+    ///    reflect true per-query demand.
+    /// 3. Drift the union once - single O(n^2) or O(n) pass.
     /// 4. Compute interference once for the full activated set.
     /// 5. For each individual query, build a per-query activation subset,
     ///    compute surface, and compose context with its own budget.
@@ -62,7 +66,7 @@ impl BatchQueryEngine {
             return Vec::new();
         }
 
-        // Step 1: Union of all query tokens
+        // Step 1: Union of all query tokens and per-query token sets
         let mut all_tokens: HashSet<String> = HashSet::new();
         let per_query_tokens: Vec<HashSet<String>> = requests
             .iter()
@@ -75,16 +79,41 @@ impl BatchQueryEngine {
             })
             .collect();
 
-        // Step 2: Activate the union once
+        // Count how many queries contain each token. A token shared by N
+        // queries must be activated N times to match sequential semantics.
+        let mut token_query_count: HashMap<String, usize> = HashMap::new();
+        for query_set in &per_query_tokens {
+            for token in query_set {
+                *token_query_count.entry(token.clone()).or_insert(0) += 1;
+            }
+        }
+
+        // Step 2: Activate each token, calling activate_word once for the
+        // index lookup but bumping activation_count by (N-1) extra times
+        // for tokens shared across N queries.
         let mut all_subconscious: Vec<OccurrenceRef> = Vec::new();
         let mut all_conscious: Vec<OccurrenceRef> = Vec::new();
 
-        // Build word→refs map for per-query partitioning
+        // Build word->refs map for per-query partitioning
         let mut word_to_sub_refs: HashMap<String, Vec<OccurrenceRef>> = HashMap::new();
         let mut word_to_con_refs: HashMap<String, Vec<OccurrenceRef>> = HashMap::new();
 
         for token in &all_tokens {
+            // First call: activates once (activation_count += 1) and
+            // returns the occurrence refs we need for partitioning.
             let activation = system.activate_word(token);
+
+            // Additional activations for queries beyond the first.
+            let extra = token_query_count.get(token).copied().unwrap_or(1) - 1;
+            if extra > 0 {
+                for r in activation.subconscious.iter().chain(&activation.conscious) {
+                    let occ = system.get_occurrence_mut(*r);
+                    for _ in 0..extra {
+                        occ.activate();
+                    }
+                }
+            }
+
             for r in &activation.subconscious {
                 word_to_sub_refs.entry(token.clone()).or_default().push(*r);
             }
@@ -365,7 +394,7 @@ mod tests {
     fn test_batch_overlapping_queries_share_activation() {
         let mut sys = make_batch_system();
 
-        // Two queries that share "quantum" - this word gets activated once
+        // Two queries that share "quantum" - activated twice (once per query)
         let requests = vec![
             BatchQueryRequest {
                 query: "quantum physics".to_string(),
@@ -393,5 +422,115 @@ mod tests {
             !results[1].context.context.is_empty(),
             "second query should have context"
         );
+    }
+
+    /// Batch activation counts must match sequential activation counts.
+    ///
+    /// If word W appears in N queries, running those N queries sequentially
+    /// calls activate_word(W) N times, producing activation_count = N.
+    /// Batch must produce the same count so that drift_rate, plasticity,
+    /// and anchoring thresholds behave identically.
+    #[test]
+    fn test_batch_activation_matches_sequential_for_shared_tokens() {
+        // Sequential: 3 separate queries each containing "quantum"
+        let mut sys_seq = make_batch_system();
+        QueryEngine::activate(&mut sys_seq, "quantum alpha");
+        QueryEngine::activate(&mut sys_seq, "quantum beta");
+        QueryEngine::activate(&mut sys_seq, "quantum gamma");
+
+        let seq_counts: Vec<u32> = sys_seq
+            .get_word_occurrences("quantum")
+            .iter()
+            .map(|r| sys_seq.get_occurrence(*r).activation_count)
+            .collect();
+
+        // Batch: 3 queries in one batch, all containing "quantum"
+        let mut sys_batch = make_batch_system();
+        let requests = vec![
+            BatchQueryRequest {
+                query: "quantum alpha".to_string(),
+                max_tokens: Some(4096),
+            },
+            BatchQueryRequest {
+                query: "quantum beta".to_string(),
+                max_tokens: Some(4096),
+            },
+            BatchQueryRequest {
+                query: "quantum gamma".to_string(),
+                max_tokens: Some(4096),
+            },
+        ];
+        let _results = BatchQueryEngine::batch_query(&mut sys_batch, &requests);
+
+        let batch_counts: Vec<u32> = sys_batch
+            .get_word_occurrences("quantum")
+            .iter()
+            .map(|r| sys_batch.get_occurrence(*r).activation_count)
+            .collect();
+
+        // Both paths should produce the same activation count for "quantum".
+        // Conscious occurrences start at activation_count=1 (pre-activated
+        // by add_to_conscious), so their final count is 1+3=4 rather than 3.
+        assert_eq!(
+            seq_counts.len(),
+            batch_counts.len(),
+            "same number of quantum occurrences"
+        );
+        for (i, (s, b)) in seq_counts.iter().zip(&batch_counts).enumerate() {
+            assert_eq!(
+                s, b,
+                "occurrence {i}: sequential activation_count ({s}) must match batch ({b})"
+            );
+        }
+
+        // Every occurrence should have been activated at least 3 times
+        // (the number of queries containing "quantum").
+        for (i, count) in batch_counts.iter().enumerate() {
+            assert!(
+                *count >= 3,
+                "occurrence {i}: expected activation_count >= 3 for token in 3 queries, got {count}"
+            );
+        }
+    }
+
+    /// Tokens unique to a single query get activation_count = 1 in batch,
+    /// matching sequential behavior.
+    #[test]
+    fn test_batch_activation_unique_tokens_count_once() {
+        let mut sys = make_batch_system();
+        let requests = vec![
+            BatchQueryRequest {
+                query: "quantum physics".to_string(),
+                max_tokens: Some(4096),
+            },
+            BatchQueryRequest {
+                query: "rust compiler".to_string(),
+                max_tokens: Some(4096),
+            },
+        ];
+        let _results = BatchQueryEngine::batch_query(&mut sys, &requests);
+
+        // "physics" only appears in query 1, "compiler" only in query 2.
+        // Each should have activation_count == 1.
+        let physics_counts: Vec<u32> = sys
+            .get_word_occurrences("physics")
+            .iter()
+            .map(|r| sys.get_occurrence(*r).activation_count)
+            .collect();
+        let compiler_counts: Vec<u32> = sys
+            .get_word_occurrences("compiler")
+            .iter()
+            .map(|r| sys.get_occurrence(*r).activation_count)
+            .collect();
+
+        for (i, count) in physics_counts.iter().enumerate() {
+            assert_eq!(*count, 1, "physics occurrence {i}: expected 1, got {count}");
+        }
+        for (i, count) in compiler_counts.iter().enumerate() {
+            assert_eq!(
+                *count, 1,
+                "compiler occurrence {i}: expected 1, got {count}"
+            );
+        }
     }
 }
