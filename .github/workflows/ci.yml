@@ -1,10 +1,9 @@
 name: CI
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
@@ -14,6 +13,12 @@ env:
 
 jobs:
   check:
+    name: Check
+    # PR: always run. Push to main: only on direct pushes (skip merged PRs and release-please).
+    if: >-
+      github.event_name == 'pull_request'
+      || (github.event.head_commit.committer.username != 'web-flow'
+          && !contains(github.event.head_commit.message, 'chore(main): release'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -32,6 +37,11 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+      - name: Audit
+        run: |
+          cargo install cargo-audit --locked --quiet
+          cargo audit
 
   bench:
     if: github.event_name == 'pull_request'
@@ -60,12 +70,3 @@ jobs:
 
       - name: Check for regressions (15% threshold)
         run: ./scripts/bench-gate.sh --compare
-
-  audit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: rustsec/audit-check@v2.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
