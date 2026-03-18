@@ -1,4 +1,6 @@
 mod colors;
+#[path = "generated_help.rs"]
+mod generated_help;
 mod jsonrpc;
 mod server;
 mod sync;
@@ -95,26 +97,26 @@ enum Commands {
     )]
     Serve,
 
-    /// Query the memory system and show recall
     #[command(
+        about = generated_help::QUERY_ABOUT,
         long_about = "Query the geometric memory system.\n\n\
             Activates matching words on the S³ manifold, drifts related\n\
             concepts closer via IDF-weighted SLERP, computes phasor\n\
             interference, and returns composed context split into:\n\
-            • Conscious recall (previously marked salient)\n\
-            • Subconscious recall (from ingested documents/conversations)\n\
-            • Novel connections (lateral associations via interference)",
+            * Conscious recall (previously marked salient)\n\
+            * Subconscious recall (from ingested documents/conversations)\n\
+            * Novel connections (lateral associations via interference)",
         after_help = "Examples:\n  \
             am query \"authentication middleware\"\n  \
             am query \"database schema migration\" --verbose"
     )]
     Query {
-        /// Text to query (natural language)
+        #[arg(help = generated_help::QUERY_TEXT_HELP)]
         text: String,
     },
 
-    /// Ingest documents into geometric memory
     #[command(
+        about = generated_help::INGEST_ABOUT,
         long_about = "Ingest document files as memory episodes.\n\n\
             Text is split into 3-sentence chunks, each becoming a\n\
             neighborhood of word occurrences placed on the S³ manifold\n\
@@ -134,8 +136,8 @@ enum Commands {
         dir: Option<PathBuf>,
     },
 
-    /// Show memory system statistics
     #[command(
+        about = generated_help::STATS_ABOUT,
         long_about = "Display memory statistics.\n\n\
             Shows total occurrences (N), episode count, conscious memory\n\
             count, database size, and activation distribution.",
@@ -144,8 +146,8 @@ enum Commands {
     )]
     Stats,
 
-    /// Export memory state to portable JSON
     #[command(
+        about = generated_help::EXPORT_ABOUT,
         long_about = "Export the full memory state as v0.7.2-compatible JSON.\n\n\
             The exported file contains all episodes, neighborhoods,\n\
             occurrences, and conscious memories. Can be imported on\n\
@@ -158,8 +160,8 @@ enum Commands {
         path: PathBuf,
     },
 
-    /// Import memory state from JSON
     #[command(
+        about = generated_help::IMPORT_ABOUT,
         long_about = "Import a previously exported memory state.\n\n\
             Replaces the current memory with the imported state.\n\
             All memories are stored in the unified brain database.",
