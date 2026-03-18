@@ -1,6 +1,4 @@
 mod colors;
-// Wired in ALP-1457 when tool handlers are ported to manual dispatch.
-#[allow(dead_code)]
 mod jsonrpc;
 mod server;
 mod sync;
@@ -18,7 +16,6 @@ use anyhow::{Context, Result};
 use clap::{ColorChoice, Parser, Subcommand, ValueEnum};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
-use rmcp::{ServiceExt, transport::stdio};
 
 #[derive(Parser)]
 #[command(
@@ -353,17 +350,12 @@ fn init_tracing(verbose: bool) {
         .init();
 }
 
-// Tokio multi-thread runtime is used for I/O concurrency (async stdin/stdout
-// for the MCP stdio transport), not for parallel tool execution. All tool
-// handlers serialize through ServerState's single Mutex. See server.rs for
-// the concurrency model documentation.
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let cli = Cli::parse();
     init_tracing(cli.verbose);
 
     match &cli.command {
-        Commands::Serve => cmd_serve(&cli).await,
+        Commands::Serve => cmd_serve(&cli),
         Commands::Query { text } => cmd_query(&cli, text),
         Commands::Ingest { files, dir } => cmd_ingest(&cli, files, dir.as_deref()),
         Commands::Stats => cmd_stats(&cli),
@@ -457,87 +449,57 @@ fn is_process_alive(_pid: u32) -> bool {
     false // conservative: assume dead on non-unix
 }
 
-async fn cmd_serve(cli: &Cli) -> Result<()> {
+fn cmd_serve(cli: &Cli) -> Result<()> {
     let store = open_store(cli)?;
     tracing::info!("starting MCP server");
 
     let pidfile = acquire_pidfile();
 
     let server = server::AmServer::new(store).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let server_handle = server.clone(); // Arc clone - cheap; used for shutdown checkpoint
-    let service = match server.serve(stdio()).await {
-        Ok(s) => s,
-        Err(e) => {
-            // stdin closed before MCP init completed - treat as clean shutdown
-            tracing::info!("MCP server exited during init: {e}");
-            if let Some(path) = pidfile {
-                release_pidfile(&path);
-            }
-            return Ok(());
-        }
-    };
 
-    // Race stdin EOF against OS signals - whichever fires first triggers shutdown
-    let shutdown_reason = tokio::select! {
-        result = service.waiting() => {
-            if let Err(e) = result {
-                tracing::warn!("MCP server error: {e}");
-            }
-            "stdin EOF"
-        }
-        _ = shutdown_signal() => {
-            "signal"
-        }
-    };
-    tracing::info!("shutdown triggered by {shutdown_reason}");
+    // Install signal handlers that close stdin to unblock the stdio loop.
+    // Without this, SIGTERM would kill the process before cleanup runs.
+    install_signal_handlers();
 
-    // Clean shutdown with 5s timeout - an orphan is worse than a dirty exit
-    let pidfile_clone = pidfile.clone();
-    let clean = tokio::time::timeout(std::time::Duration::from_secs(5), async move {
-        // Explicit WAL checkpoint via the server's store (belt + suspenders with Drop)
-        server_handle.checkpoint_wal().await;
-        // Pidfile cleanup
-        if let Some(path) = pidfile_clone {
-            release_pidfile(&path);
-        }
-    })
-    .await;
+    // Run the JSON-RPC stdio loop. Blocks until stdin closes or I/O error.
+    let result = jsonrpc::run_stdio_loop(|name, args| server.dispatch_tool(name, args));
 
-    if clean.is_err() {
-        eprintln!("[am] shutdown timeout, forcing exit");
-        // Still try to remove pidfile even on timeout
-        if let Some(path) = pidfile {
-            release_pidfile(&path);
-        }
-        std::process::exit(1);
+    // Clean shutdown: WAL checkpoint + pidfile cleanup
+    server.checkpoint_wal();
+    if let Some(path) = pidfile {
+        release_pidfile(&path);
     }
 
-    Ok(())
+    result
 }
 
-/// Wait for SIGTERM, SIGINT, or SIGHUP (Unix) / ctrl_c (all platforms)
-async fn shutdown_signal() {
+/// Install signal handlers that close stdin to unblock the blocking stdio loop.
+///
+/// On Unix, SIGTERM/SIGHUP/SIGINT close `/dev/stdin` via dup2, causing
+/// `BufRead::lines()` to return `None` and the loop to exit cleanly.
+fn install_signal_handlers() {
     #[cfg(unix)]
     {
-        use tokio::signal::unix::{SignalKind, signal};
-        let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler");
-        let mut sighup = signal(SignalKind::hangup()).expect("SIGHUP handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {
-                tracing::info!("received SIGINT");
-            }
-            _ = sigterm.recv() => {
-                tracing::info!("received SIGTERM");
-            }
-            _ = sighup.recv() => {
-                tracing::info!("received SIGHUP");
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static SIGNALED: AtomicBool = AtomicBool::new(false);
+
+        unsafe extern "C" fn handler(_sig: libc::c_int) {
+            unsafe {
+                if SIGNALED.swap(true, Ordering::SeqCst) {
+                    // Second signal: force exit
+                    libc::_exit(1);
+                }
+                // Close stdin to unblock the blocking read in the stdio loop.
+                // This causes `lines()` to yield `None`, ending the loop cleanly.
+                libc::close(0);
             }
         }
-    }
-    #[cfg(not(unix))]
-    {
-        tokio::signal::ctrl_c().await.expect("ctrl_c handler");
-        tracing::info!("received ctrl_c");
+
+        unsafe {
+            libc::signal(libc::SIGTERM, handler as *const () as libc::sighandler_t);
+            libc::signal(libc::SIGHUP, handler as *const () as libc::sighandler_t);
+            libc::signal(libc::SIGINT, handler as *const () as libc::sighandler_t);
+        }
     }
 }
 
