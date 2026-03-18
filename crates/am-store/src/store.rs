@@ -500,21 +500,17 @@ impl Store {
         drop(stmt);
 
         if !entries.is_empty() {
-            // Delete only the rows we read, identified by rowid. If new rows
-            // arrive from another connection between SELECT and DELETE, they
-            // survive for the next drain call (at-least-once semantics).
-            let placeholders: String = entries
-                .iter()
-                .enumerate()
-                .map(|(i, _)| format!("?{}", i + 1))
-                .collect::<Vec<_>>()
-                .join(",");
-            let sql = format!("DELETE FROM conversation_buffer WHERE id IN ({placeholders})");
-            let id_params: Vec<&dyn rusqlite::types::ToSql> = entries
-                .iter()
-                .map(|(id, _, _)| id as &dyn rusqlite::types::ToSql)
-                .collect();
-            tx.execute(&sql, id_params.as_slice())?;
+            // Delete exactly the rows we read using a parameterized range
+            // on the rowid. Since we fetched ORDER BY id, entries are
+            // contiguous. Any rows arriving from another connection after
+            // our SELECT will have id > max and survive for the next drain
+            // (at-least-once semantics).
+            let min_id = entries.first().expect("non-empty").0;
+            let max_id = entries.last().expect("non-empty").0;
+            tx.execute(
+                "DELETE FROM conversation_buffer WHERE id >= ?1 AND id <= ?2",
+                params![min_id, max_id],
+            )?;
         }
 
         let results: Vec<(String, String)> = entries.into_iter().map(|(_, u, a)| (u, a)).collect();

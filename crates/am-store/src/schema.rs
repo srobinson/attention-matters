@@ -215,19 +215,20 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         initialize(&conn).unwrap();
 
-        // Verify tables exist by querying them
-        for table in &[
-            "episodes",
-            "neighborhoods",
-            "occurrences",
-            "metadata",
-            "conversation_buffer",
-        ] {
-            let count: i64 = conn
-                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
-                    row.get(0)
-                })
-                .unwrap();
+        // Verify tables exist by querying them (no format!-based SQL;
+        // table names cannot be parameterized, so use explicit queries)
+        let table_counts: &[(&str, &str)] = &[
+            ("episodes", "SELECT count(*) FROM episodes"),
+            ("neighborhoods", "SELECT count(*) FROM neighborhoods"),
+            ("occurrences", "SELECT count(*) FROM occurrences"),
+            ("metadata", "SELECT count(*) FROM metadata"),
+            (
+                "conversation_buffer",
+                "SELECT count(*) FROM conversation_buffer",
+            ),
+        ];
+        for (table, sql) in table_counts {
+            let count: i64 = conn.query_row(sql, [], |row| row.get(0)).unwrap();
             assert!(count >= 0, "table {table} should exist");
         }
     }
