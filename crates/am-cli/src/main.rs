@@ -608,9 +608,8 @@ fn cmd_stats(cli: &Cli) -> Result<()> {
     let store = open_store(cli)?;
     let system = store.load_system().context("failed to load system")?;
 
-    let db_size = store.store().db_size();
+    let db_size = store.db_size();
     let activation = store
-        .store()
         .activation_distribution()
         .context("failed to get activation stats")?;
 

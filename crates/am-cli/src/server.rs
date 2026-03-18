@@ -309,7 +309,7 @@ impl<S: AmStore> AmServer<S> {
         window.retain(|_, ts| *ts > cutoff);
     }
 
-    fn stats_json(system: &mut DAESystem) -> serde_json::Value {
+    fn stats_json(system: &DAESystem) -> serde_json::Value {
         let n = system.n();
         let episodes = system.episodes.len();
         let conscious = system.conscious_episode.neighborhoods.len();
@@ -332,10 +332,12 @@ impl<S: AmStore> AmServer<S> {
         check_input_size(&req.text, "text")?;
 
         let mut state = self.state.lock().expect("poisoned mutex");
-        // Snapshot session_recalled before destructuring (avoids borrow conflict)
-        let session_recalled_snapshot = state.session_recalled.clone();
         let ServerState {
-            system, store, rng, ..
+            system,
+            store,
+            rng,
+            session_recalled,
+            ..
         } = &mut *state;
 
         flush_orphaned_buffer(store, system, rng);
@@ -357,7 +359,7 @@ impl<S: AmStore> AmServer<S> {
                 &query_result,
                 &query_result.interference,
                 &budget,
-                Some(&session_recalled_snapshot),
+                Some(session_recalled),
             );
             let ids: Vec<Uuid> = composed
                 .included
@@ -409,7 +411,7 @@ impl<S: AmStore> AmServer<S> {
                 &surface,
                 &query_result,
                 &query_result.interference,
-                Some(&session_recalled_snapshot),
+                Some(session_recalled),
             );
             let ids = composed.included_ids.clone();
             let recalled = &composed.recalled_ids;
@@ -442,7 +444,7 @@ impl<S: AmStore> AmServer<S> {
             &surface,
             &query_result,
             &query_result.interference,
-            Some(&session_recalled_snapshot),
+            Some(session_recalled),
         );
         let mut sorted_entries = index.entries;
         sorted_entries.sort_by(|a, b| b.epoch.cmp(&a.epoch));
@@ -467,7 +469,7 @@ impl<S: AmStore> AmServer<S> {
 
         // Increment recall count for returned neighborhood IDs (diminishing returns)
         for id in new_ids {
-            *state.session_recalled.entry(id).or_insert(0) += 1;
+            *session_recalled.entry(id).or_insert(0) += 1;
         }
 
         Ok(tool_result_text(
@@ -481,9 +483,12 @@ impl<S: AmStore> AmServer<S> {
         check_input_size(&req.text, "text")?;
 
         let mut state = self.state.lock().expect("poisoned mutex");
-        let session_recalled_snapshot = state.session_recalled.clone();
         let ServerState {
-            system, store, rng, ..
+            system,
+            store,
+            rng,
+            session_recalled,
+            ..
         } = &mut *state;
 
         flush_orphaned_buffer(store, system, rng);
@@ -496,7 +501,7 @@ impl<S: AmStore> AmServer<S> {
             &surface,
             &query_result,
             &query_result.interference,
-            Some(&session_recalled_snapshot),
+            Some(session_recalled),
         );
 
         persist_manifest(store, system, &query_result.manifest, "query_index");
@@ -792,8 +797,8 @@ impl<S: AmStore> AmServer<S> {
     }
 
     fn am_stats(&self) -> Result<Value, String> {
-        let mut state = self.state.lock().expect("poisoned mutex");
-        let mut stats = Self::stats_json(&mut state.system);
+        let state = self.state.lock().expect("poisoned mutex");
+        let mut stats = Self::stats_json(&state.system);
 
         // Add store-level stats (DB size, activation distribution)
         let db_size = state.store.db_size();
@@ -836,7 +841,7 @@ impl<S: AmStore> AmServer<S> {
 
         let result = serde_json::json!({
             "imported": true,
-            "stats": Self::stats_json(&mut state.system),
+            "stats": Self::stats_json(&state.system),
         });
 
         Ok(tool_result_text(
