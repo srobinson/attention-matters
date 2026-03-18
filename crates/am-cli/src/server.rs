@@ -262,7 +262,7 @@ impl<S: AmStore> AmServer<S> {
 
     /// Explicitly flush WAL on the brain store.
     /// Belt-and-suspenders with Store::Drop, but ensures checkpoint runs
-    /// even when the tokio runtime is shutting down.
+    /// before process exit.
     pub fn checkpoint_wal(&self) {
         let state = self.state.lock().expect("poisoned mutex");
         if let Err(e) = state.store.checkpoint_truncate() {

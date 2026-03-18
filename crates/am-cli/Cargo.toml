@@ -12,10 +12,7 @@ path = "src/main.rs"
 [dependencies]
 am-core = { workspace = true }
 am-store = { path = "../am-store" }
-rmcp = { workspace = true }
-tokio = { workspace = true }
 clap = { workspace = true }
-schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
