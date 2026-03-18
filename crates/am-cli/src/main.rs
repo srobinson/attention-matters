@@ -1,4 +1,5 @@
 mod colors;
+mod jsonrpc;
 mod server;
 mod sync;
 mod sync_dispatch;
