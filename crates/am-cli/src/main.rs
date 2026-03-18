@@ -87,13 +87,14 @@ enum Commands {
     #[command(
         long_about = "Start the MCP (Model Context Protocol) server on stdio transport.\n\n\
             This is the primary mode - Claude Code launches this automatically\n\
-            when configured as an MCP server. The server exposes 8 tools that\n\
+            when configured as an MCP server. The server exposes 12 tools that\n\
             the AI agent calls to build and query geometric memory.",
         after_help = "Setup:\n  \
             claude mcp add am -- npx -y attention-matters serve\n\n\
             The server exposes:\n  \
-            am_query, am_activate_response, am_salient, am_buffer,\n  \
-            am_ingest, am_stats, am_export, am_import"
+            am_query, am_query_index, am_retrieve, am_activate_response,\n  \
+            am_salient, am_buffer, am_ingest, am_stats, am_export,\n  \
+            am_import, am_feedback, am_batch_query"
     )]
     Serve,
 
