@@ -365,4 +365,27 @@ mod tests {
         let version2 = get_schema_version(&conn).unwrap();
         assert_eq!(version2, Some(SCHEMA_VERSION));
     }
+
+    #[test]
+    fn test_indexes_created() {
+        let conn = Connection::open_in_memory().unwrap();
+        initialize(&conn).unwrap();
+
+        // Query sqlite_master for all indexes we expect
+        let expected = [
+            "idx_occ_word",
+            "idx_occ_neighborhood",
+            "idx_nbhd_episode",
+            "idx_ep_conscious",
+            "idx_nbhd_episode_epoch",
+            "idx_occ_nbhd_activation",
+        ];
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?1")
+            .unwrap();
+        for name in &expected {
+            let exists: bool = stmt.exists([name]).unwrap();
+            assert!(exists, "index {name} should exist");
+        }
+    }
 }
