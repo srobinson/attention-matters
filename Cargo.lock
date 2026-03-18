@@ -32,6 +32,7 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "clap",
+ "indexmap",
  "libc",
  "predicates",
  "pulldown-cmark",
@@ -43,6 +44,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
  "uuid",
@@ -72,6 +74,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "thiserror",
  "toml",
  "tracing",
  "uuid",
@@ -714,6 +717,8 @@ checksum = "7714e70437a7dc3ac8eb7e6f8df75fd8eb422675fc7678aff7364301092b1017"
 dependencies = [
  "equivalent",
  "hashbrown 0.16.1",
+ "serde",
+ "serde_core",
 ]
 
 [[package]]
