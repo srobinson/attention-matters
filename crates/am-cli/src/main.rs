@@ -1,4 +1,6 @@
 mod colors;
+// Wired in ALP-1457 when tool handlers are ported to manual dispatch.
+#[allow(dead_code)]
 mod jsonrpc;
 mod server;
 mod sync;
