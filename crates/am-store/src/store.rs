@@ -4,7 +4,8 @@ use rusqlite::{Connection, params};
 use uuid::Uuid;
 
 use am_core::{
-    DAESystem, DaemonPhasor, Episode, Neighborhood, NeighborhoodType, Occurrence, Quaternion,
+    ActivationStats, DAESystem, DaemonPhasor, Episode, Neighborhood, NeighborhoodType, Occurrence,
+    Quaternion,
 };
 
 use crate::error::{Result, StoreError};
@@ -18,14 +19,6 @@ pub struct GcResult {
     pub before_occurrences: u64,
     pub before_size: u64,
     pub after_size: u64,
-}
-
-#[derive(Debug)]
-pub struct ActivationStats {
-    pub total: u64,
-    pub zero_activation: u64,
-    pub max_activation: u32,
-    pub mean_activation: f64,
 }
 
 #[derive(Debug)]
