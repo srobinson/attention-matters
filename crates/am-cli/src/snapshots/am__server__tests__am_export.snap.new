@@ -1,0 +1,299 @@
+---
+source: crates/am-cli/src/server.rs
+assertion_line: 2058
+expression: json
+---
+{
+  "conversationBuffer": [],
+  "conversationHistory": [],
+  "system": {
+    "N": 21,
+    "agentName": "unknown",
+    "consciousEpisode": {
+      "id": "05f35fae-7319-4901-8c01-2cdf458a3cd3",
+      "isConscious": true,
+      "name": "conscious",
+      "neighborhoods": [],
+      "timestamp": "2026-03-18T04:14:52Z"
+    },
+    "episodes": [
+      {
+        "id": "96e42c39-23a1-41ec-b8f3-c76df096182b",
+        "isConscious": false,
+        "name": "rust-safety",
+        "neighborhoods": [
+          {
+            "epoch": 1,
+            "id": "d1b43597-9761-449a-afec-242aed6316eb",
+            "neighborhoodType": "ingested",
+            "occurrences": [
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 0.0,
+                "position": [
+                  -0.13124363660137425,
+                  0.9897253244424108,
+                  0.05459046052127409,
+                  -0.015452237025321308
+                ],
+                "word": "rust"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 2.3999632297286535,
+                "position": [
+                  0.14446832010445868,
+                  0.7857299264991726,
+                  -0.19719460212177584,
+                  -0.5682179828057493
+                ],
+                "word": "ownership"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 4.799926459457307,
+                "position": [
+                  0.8132473061006098,
+                  0.05761152942309714,
+                  0.14296493074939112,
+                  -0.5611334595026879
+                ],
+                "word": "rules"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 0.9167043820063744,
+                "position": [
+                  -0.1809347496906792,
+                  0.6282220602427767,
+                  0.5654565347270775,
+                  -0.5028504416952797
+                ],
+                "word": "prevent"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 3.316667611735028,
+                "position": [
+                  0.68745180366408,
+                  0.21869530427649583,
+                  0.4427242083359246,
+                  -0.532520099977215
+                ],
+                "word": "data"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 5.716630841463681,
+                "position": [
+                  0.6987748799424692,
+                  0.6508193966892918,
+                  0.010598891510048144,
+                  0.29670767356631084
+                ],
+                "word": "races"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 1.8334087640127483,
+                "position": [
+                  -0.03071801723221873,
+                  0.9956883759918268,
+                  0.08731404321289551,
+                  0.006108943435368969
+                ],
+                "word": "at"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 4.2333719937414,
+                "position": [
+                  0.2013931996387126,
+                  0.466493486392456,
+                  0.021220683707900367,
+                  -0.8610309453647194
+                ],
+                "word": "compile"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 0.3501499162904693,
+                "position": [
+                  0.63925831333195,
+                  0.47002569319885057,
+                  0.04828674972045851,
+                  -0.6067067218766942
+                ],
+                "word": "time"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 2.7501131460191246,
+                "position": [
+                  0.5648388627344054,
+                  0.16035391680219058,
+                  0.8018868273662493,
+                  -0.11054952106450144
+                ],
+                "word": "the"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 5.150076375747776,
+                "position": [
+                  0.24216412354398825,
+                  0.3303065894296004,
+                  0.8731362484337903,
+                  -0.26436184656361406
+                ],
+                "word": "borrow"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 1.2668542982968418,
+                "position": [
+                  0.4150758179088632,
+                  0.4122145962407605,
+                  0.7993235063805839,
+                  -0.13737948966568458
+                ],
+                "word": "checker"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 3.666817528025497,
+                "position": [
+                  0.490630234851941,
+                  0.31438217984834077,
+                  -0.1713459275303594,
+                  -0.7944094603928729
+                ],
+                "word": "enforces"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 6.066780757754152,
+                "position": [
+                  0.7039911784791184,
+                  0.5571583160224691,
+                  0.43516100351354,
+                  -0.06786702094299912
+                ],
+                "word": "exclusive"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 2.1835586803032143,
+                "position": [
+                  0.5658150369483651,
+                  0.689437076862647,
+                  0.27025776197415,
+                  -0.36261633044160135
+                ],
+                "word": "mutable"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 4.58352191003187,
+                "position": [
+                  -0.0828492327372396,
+                  0.7833865185224508,
+                  0.19647066227928223,
+                  -0.5838157638293651
+                ],
+                "word": "access"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 0.7002998325809386,
+                "position": [
+                  0.30096133931835767,
+                  0.8274849011570111,
+                  0.10211498633505234,
+                  -0.4628860984720367
+                ],
+                "word": "lifetimes"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 3.100263062309594,
+                "position": [
+                  0.2866905492689967,
+                  0.41707571221430856,
+                  0.3673021507522819,
+                  -0.7803496070951252
+                ],
+                "word": "track"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 5.500226292038249,
+                "position": [
+                  0.12980027038138553,
+                  0.958477241172537,
+                  -0.2162169401078211,
+                  -0.13312964648647002
+                ],
+                "word": "reference"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 1.6170042145873111,
+                "position": [
+                  0.6117031248267379,
+                  0.5710515671063423,
+                  0.5328067110709978,
+                  -0.12584277261845933
+                ],
+                "word": "validity"
+              },
+              {
+                "activationCount": 0,
+                "neighborhoodId": "d1b43597-9761-449a-afec-242aed6316eb",
+                "phasor": 4.016967444315966,
+                "position": [
+                  -0.4086858580780338,
+                  0.593326221141583,
+                  0.3680465795789164,
+                  -0.5877768113605122
+                ],
+                "word": "statically"
+              }
+            ],
+            "seed": [
+              0.412113757327959,
+              0.6682599157733168,
+              0.3728390978574405,
+              -0.4945522652870186
+            ],
+            "sourceText": "Rust ownership rules prevent data races at compile time. The borrow checker enforces exclusive mutable access. Lifetimes track reference validity statically."
+          }
+        ],
+        "timestamp": "2026-03-18T04:14:52Z"
+      }
+    ],
+    "totalActivation": 0
+  },
+  "timestamp": "",
+  "version": "0.7.2"
+}

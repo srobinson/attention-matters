@@ -1,0 +1,18 @@
+---
+source: crates/am-cli/src/server.rs
+assertion_line: 2158
+expression: json
+---
+{
+  "count": 1,
+  "entries": [
+    {
+      "category": "Subconscious",
+      "episode": "rust-safety",
+      "id": "8040902b-351d-4382-9a8a-883b42d3c08a",
+      "text": "Rust ownership rules prevent data races at compile time. The borrow checker enforces exclusive mutable access. Lifetimes track reference validity statically.",
+      "tokens": 21,
+      "type": "Ingested"
+    }
+  ]
+}

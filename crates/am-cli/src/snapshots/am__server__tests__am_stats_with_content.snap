@@ -1,0 +1,15 @@
+---
+source: crates/am-cli/src/server.rs
+expression: json
+---
+{
+  "activation": {
+    "max": 0,
+    "mean": 0.0,
+    "zero_count": 21
+  },
+  "conscious": 0,
+  "db_size_bytes": 69632,
+  "episodes": 1,
+  "n": 21
+}

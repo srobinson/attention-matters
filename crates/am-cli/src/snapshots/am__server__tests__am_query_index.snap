@@ -1,0 +1,24 @@
+---
+source: crates/am-cli/src/server.rs
+expression: json
+---
+{
+  "entries": [
+    {
+      "category": "Subconscious",
+      "epoch": 1,
+      "id": "[uuid]",
+      "score": "[float]",
+      "summary": "Rust ownership rules prevent data races at compile time. The borrow checker enforces exclusive mutab...",
+      "token_estimate": 40,
+      "type": "Ingested"
+    }
+  ],
+  "stats": {
+    "conscious": 0,
+    "episodes": 1,
+    "n": 21
+  },
+  "total_candidates": 2,
+  "total_tokens_if_fetched": 40
+}

@@ -1,0 +1,12 @@
+---
+source: crates/am-cli/src/server.rs
+expression: json
+---
+{
+  "stats": {
+    "conscious": 1,
+    "episodes": 0,
+    "n": 3
+  },
+  "stored": 1
+}

@@ -1,0 +1,58 @@
+---
+source: crates/am-cli/src/server.rs
+expression: json
+---
+{
+  "batch_size": 2,
+  "results": [
+    {
+      "activated_count": 2,
+      "budget": {
+        "[budget]": "[budget]",
+        "[budget]": "[budget]",
+        "[budget]": "[budget]",
+        "[budget]": "[budget]"
+      },
+      "context": "[context_text]",
+      "metrics": {
+        "[metric]": "[metric]",
+        "[metric]": "[metric]",
+        "[metric]": "[metric]"
+      },
+      "query": "rust ownership",
+      "recalled_ids": {
+        "[ids]": "[ids]",
+        "[ids]": "[ids]",
+        "[ids]": "[ids]"
+      },
+      "token_estimate": "[count]"
+    },
+    {
+      "activated_count": 2,
+      "budget": {
+        "[budget]": "[budget]",
+        "[budget]": "[budget]",
+        "[budget]": "[budget]",
+        "[budget]": "[budget]"
+      },
+      "context": "[context_text]",
+      "metrics": {
+        "[metric]": "[metric]",
+        "[metric]": "[metric]",
+        "[metric]": "[metric]"
+      },
+      "query": "borrow checker",
+      "recalled_ids": {
+        "[ids]": "[ids]",
+        "[ids]": "[ids]",
+        "[ids]": "[ids]"
+      },
+      "token_estimate": "[count]"
+    }
+  ],
+  "stats": {
+    "conscious": 0,
+    "episodes": 1,
+    "n": 21
+  }
+}

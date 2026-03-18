@@ -1919,4 +1919,255 @@ mod tests {
         let result = server.am_query_index(&serde_json::json!({ "text": oversized }));
         assert!(result.is_err(), "should reject input exceeding size limit");
     }
+
+    // --- Snapshot tests for MCP tool response shapes ---
+
+    /// Server with pre-ingested content for snapshot tests requiring data.
+    fn make_server_with_content() -> AmServer<BrainStore> {
+        let server = make_server();
+        server
+            .am_ingest(&serde_json::json!({
+                "text": "Rust ownership rules prevent data races at compile time. The borrow checker enforces exclusive mutable access. Lifetimes track reference validity statically.",
+                "name": "rust-safety"
+            }))
+            .unwrap();
+        server
+    }
+
+    #[test]
+    fn snapshot_am_stats_empty() {
+        let server = make_server();
+        let result = server.am_stats().unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_stats_empty", json, {
+            ".db_bytes" => "[db_bytes]",
+        });
+    }
+
+    #[test]
+    fn snapshot_am_stats_with_content() {
+        let server = make_server_with_content();
+        let result = server.am_stats().unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_stats_with_content", json, {
+            ".db_bytes" => "[db_bytes]",
+            ".activation.mean" => insta::rounded_redaction(2),
+        });
+    }
+
+    #[test]
+    fn snapshot_am_ingest() {
+        let server = make_server();
+        let result = server
+            .am_ingest(&serde_json::json!({
+                "text": "Testing snapshot output format.",
+                "name": "snapshot-test"
+            }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_ingest", json, {
+            ".neighborhoods" => "[count]",
+            ".occurrences" => "[count]",
+        });
+    }
+
+    #[test]
+    fn snapshot_am_query() {
+        let server = make_server_with_content();
+        let result = server
+            .am_query(&serde_json::json!({ "text": "rust borrow checker" }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_query", json, {
+            ".context" => "[context_text]",
+            ".metrics.drift_magnitude" => "[float]",
+            ".metrics.phase_coherence" => "[float]",
+            ".metrics.interference_score" => "[float]",
+            ".metrics.query_terms" => "[terms]",
+            ".stats.**" => insta::dynamic_redaction(|value, _| {
+                if value.as_f64().is_some() { insta::internals::Content::String("[number]".into()) }
+                else { value.clone() }
+            }),
+            ".recalled_ids.**" => "[ids]",
+            ".budget.**" => "[budget]",
+            ".index" => "[index]",
+        });
+    }
+
+    #[test]
+    fn snapshot_am_query_index() {
+        let server = make_server_with_content();
+        let result = server
+            .am_query_index(&serde_json::json!({ "text": "rust ownership" }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_query_index", json, {
+            ".entries[].id" => "[uuid]",
+            ".entries[].score" => "[float]",
+            ".entries[].preview" => "[text]",
+            ".total" => "[count]",
+        });
+    }
+
+    #[test]
+    fn snapshot_am_salient() {
+        let server = make_server();
+        let result = server
+            .am_salient(&serde_json::json!({ "text": "Important architectural decision" }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_salient", json, {
+            ".id" => "[uuid]",
+            ".occurrences" => "[count]",
+        });
+    }
+
+    #[test]
+    fn snapshot_am_buffer() {
+        let server = make_server();
+        let result = server
+            .am_buffer(&serde_json::json!({
+                "user": "What is ownership?",
+                "assistant": "Ownership is Rust's memory management system."
+            }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_buffer", json);
+    }
+
+    #[test]
+    fn snapshot_am_activate_response() {
+        let server = make_server_with_content();
+        let result = server
+            .am_activate_response(&serde_json::json!({
+                "text": "The borrow checker prevents data races."
+            }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_activate_response", json, {
+            ".activated" => "[count]",
+            ".total_occurrences" => "[count]",
+        });
+    }
+
+    #[test]
+    fn snapshot_am_export() {
+        let server = make_server_with_content();
+        let result = server.am_export().unwrap();
+        let json = parse_tool_result(&result);
+
+        // Verify structure rather than snapshot (export contains non-deterministic
+        // quaternion positions and UUIDs that change every run)
+        assert_eq!(json["version"], "0.7.2");
+        assert!(json["system"]["episodes"].is_array());
+        assert!(json["system"]["consciousEpisode"].is_object());
+        assert!(json["system"]["agentName"].is_string());
+        assert!(json["system"]["N"].is_number());
+        assert!(json["conversationBuffer"].is_array());
+        assert!(json["conversationHistory"].is_array());
+    }
+
+    #[test]
+    fn snapshot_am_import() {
+        let server = make_server_with_content();
+        // Export first, parse the JSON text back to a Value for import
+        let export_result = server.am_export().unwrap();
+        let export_text = export_result["content"][0]["text"].as_str().unwrap();
+        let state_value: serde_json::Value = serde_json::from_str(export_text).unwrap();
+
+        let server2 = make_server();
+        let result = server2
+            .am_import(&serde_json::json!({ "state": state_value }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_import", json);
+    }
+
+    #[test]
+    fn snapshot_am_feedback_boost() {
+        let server = make_server_with_content();
+        let ids = ingest_and_get_neighborhood_ids(&server);
+        if ids.is_empty() {
+            return; // Skip if no neighborhoods (determinism guard)
+        }
+        let result = server
+            .am_feedback(&serde_json::json!({
+                "query": "quantum",
+                "neighborhood_ids": ids,
+                "signal": "boost"
+            }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+
+        // Structure assertion (neighborhood IDs are non-deterministic across runs)
+        assert!(json["boosted"].is_number());
+        assert!(json["demoted"].is_number());
+        assert!(json.get("stats").is_some());
+    }
+
+    #[test]
+    fn snapshot_am_batch_query() {
+        let server = make_server_with_content();
+        let result = server
+            .am_batch_query(&serde_json::json!({
+                "queries": [
+                    { "query": "rust ownership" },
+                    { "query": "borrow checker" }
+                ]
+            }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+        insta::assert_json_snapshot!("am_batch_query", json, {
+            ".results[].context" => "[context_text]",
+            ".results[].metrics.**" => "[metric]",
+            ".results[].stats.**" => insta::dynamic_redaction(|value, _| {
+                if value.as_f64().is_some() { insta::internals::Content::String("[number]".into()) }
+                else { value.clone() }
+            }),
+            ".results[].recalled_ids.**" => "[ids]",
+            ".results[].budget.**" => "[budget]",
+            ".results[].token_estimate" => "[count]",
+            ".results[].index" => "[index]",
+        });
+    }
+
+    #[test]
+    fn snapshot_am_retrieve() {
+        let server = make_server_with_content();
+        // Get neighborhood IDs by querying the ingested content
+        let query_result = server
+            .am_query(&serde_json::json!({ "text": "rust ownership borrow" }))
+            .unwrap();
+        let query_json = parse_tool_result(&query_result);
+        let recalled = &query_json["recalled_ids"];
+        let mut ids = Vec::new();
+        for cat in &["conscious", "subconscious", "novel"] {
+            if let Some(arr) = recalled[cat].as_array() {
+                for id in arr {
+                    if let Some(s) = id.as_str() {
+                        ids.push(s.to_string());
+                    }
+                }
+            }
+        }
+        if ids.is_empty() {
+            return;
+        }
+
+        let result = server
+            .am_retrieve(&serde_json::json!({ "ids": [ids[0]] }))
+            .unwrap();
+        let json = parse_tool_result(&result);
+
+        // Structure assertion (neighborhood data is non-deterministic)
+        let entries = json["entries"].as_array().unwrap();
+        assert!(!entries.is_empty());
+        for entry in entries {
+            assert!(entry["id"].is_string());
+            assert!(entry["episode"].is_string());
+            assert!(entry["text"].is_string());
+            assert!(entry["category"].is_string());
+        }
+        assert!(json["count"].is_number());
+    }
 }
