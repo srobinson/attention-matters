@@ -8,3 +8,7 @@
 /.nancy
 /target
 npm/*/scripts/am
+
+# build.rs generated files
+crates/am-cli/src/generated_schema.rs
+crates/am-cli/src/generated_help.rs
