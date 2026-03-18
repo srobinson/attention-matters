@@ -3,7 +3,7 @@
 //! Provides a minimal, HashMap-backed store that exercises tool handler
 //! logic without requiring SQLite. Not intended for production use.
 
-use std::cell::RefCell;
+use std::sync::Mutex;
 
 use am_core::{
     ActivationStats, AmStore, DAESystem, DaemonPhasor, Episode, Neighborhood, Quaternion,
@@ -20,14 +20,15 @@ pub enum MemoryStoreError {
 
 /// In-memory `AmStore` for tool handler unit tests.
 ///
-/// Uses `RefCell` for interior mutability since the `AmStore` trait
+/// Uses `Mutex` for interior mutability since the `AmStore` trait
 /// takes `&self` (matching the rusqlite `Connection` pattern).
-/// Single-threaded test use only.
+/// `Mutex` (rather than `RefCell`) makes this type `Send`, which is
+/// required by `AmServer<S: AmStore + Send>`.
 ///
 /// System state is stored as serialized JSON and deserialized on load,
 /// mirroring the SQLite round-trip behavior of `BrainStore`.
 pub struct InMemoryStore {
-    state: RefCell<MemoryState>,
+    state: Mutex<MemoryState>,
 }
 
 struct MemoryState {
@@ -41,7 +42,7 @@ impl InMemoryStore {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            state: RefCell::new(MemoryState {
+            state: Mutex::new(MemoryState {
                 system_json: None,
                 buffer: Vec::new(),
             }),
@@ -56,7 +57,7 @@ impl InMemoryStore {
     pub fn with_system(system: &DAESystem) -> Self {
         let json = export_json(system).expect("DAESystem serialization should not fail");
         Self {
-            state: RefCell::new(MemoryState {
+            state: Mutex::new(MemoryState {
                 system_json: Some(json),
                 buffer: Vec::new(),
             }),
@@ -78,7 +79,7 @@ impl AmStore for InMemoryStore {
     type Error = MemoryStoreError;
 
     fn load_system(&self) -> Result<DAESystem, Self::Error> {
-        let state = self.state.borrow();
+        let state = self.state.lock().unwrap();
         match &state.system_json {
             Some(json) => Self::load_system_inner(json),
             None => Err(MemoryStoreError::Other("no system loaded".into())),
@@ -88,7 +89,7 @@ impl AmStore for InMemoryStore {
     fn save_system(&self, system: &DAESystem) -> Result<(), Self::Error> {
         let json =
             export_json(system).map_err(|e| MemoryStoreError::Other(format!("serialize: {e}")))?;
-        self.state.borrow_mut().system_json = Some(json);
+        self.state.lock().unwrap().system_json = Some(json);
         Ok(())
     }
 
@@ -205,18 +206,18 @@ impl AmStore for InMemoryStore {
     }
 
     fn append_buffer(&self, user: &str, assistant: &str) -> Result<usize, Self::Error> {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock().unwrap();
         state.buffer.push((user.to_owned(), assistant.to_owned()));
         Ok(state.buffer.len())
     }
 
     fn drain_buffer(&self) -> Result<Vec<(String, String)>, Self::Error> {
-        let mut state = self.state.borrow_mut();
+        let mut state = self.state.lock().unwrap();
         Ok(std::mem::take(&mut state.buffer))
     }
 
     fn buffer_count(&self) -> Result<usize, Self::Error> {
-        Ok(self.state.borrow().buffer.len())
+        Ok(self.state.lock().unwrap().buffer.len())
     }
 
     fn activation_distribution(&self) -> Result<ActivationStats, Self::Error> {
@@ -366,6 +367,12 @@ impl AmStore for InMemoryStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Compile-time assertion: InMemoryStore must be Send (required by AmServer<S: Send>).
+    const _: () = {
+        const fn assert_send<T: Send>() {}
+        assert_send::<InMemoryStore>();
+    };
 
     #[test]
     fn test_buffer_roundtrip() {
