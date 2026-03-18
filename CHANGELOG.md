@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.18](https://github.com/srobinson/attention-matters/compare/v0.1.17...v0.1.18) (2026-03-18)
+
+
+### Features
+
+* architecture alignment - rmcp to JSON-RPC, store trait, quality ([#31](https://github.com/srobinson/attention-matters/issues/31)) ([2c80552](https://github.com/srobinson/attention-matters/commit/2c8055202e9102db71fc23c0adbf971ef97c9858))
+
 ## [0.1.17](https://github.com/srobinson/attention-matters/compare/v0.1.16...v0.1.17) (2026-03-13)
 
 
