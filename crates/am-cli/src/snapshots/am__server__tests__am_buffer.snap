@@ -1,0 +1,8 @@
+---
+source: crates/am-cli/src/server.rs
+expression: json
+---
+{
+  "buffer_size": 1,
+  "episode_created": null
+}

@@ -1,0 +1,219 @@
+# Single source of truth for all tool documentation.
+# build.rs reads this file and generates:
+#   src/generated_schema.rs  — MCP tool list JSON
+#   src/generated_help.rs    — CLI help string constants
+
+[skill]
+workflow = """
+## Geometric Memory Workflow
+
+1. **Query** — `am_query(text: "topic")` — recall relevant context from past sessions.
+2. **Buffer** — `am_buffer(user, assistant)` — buffer conversation exchanges (auto-ingests after 3).
+3. **Ingest** — `am_ingest(text)` — ingest reference material as a memory episode.
+4. **Salient** — `am_salient(text)` — mark an insight as conscious (cross-session) memory.
+5. **Feedback** — `am_feedback(query, neighborhood_ids, signal)` — reinforce or demote recalled memories.
+6. **Activate** — `am_activate_response(text)` — strengthen connections from response text.
+7. **Stats** — `am_stats()` — memory system diagnostics.
+
+### Two-Phase Retrieval
+
+For large manifolds, use am_query_index first (~50-100 tokens/entry), then am_retrieve
+with selected IDs to fetch only the memories you need.
+
+### Batch Queries
+
+Use am_batch_query when dispatching context to multiple workers. Amortized IDF across
+all queries is much more efficient than N separate am_query calls.
+"""
+
+# Tool order matches the MCP tools/list response order.
+
+[tools.am_query]
+cli_name        = "query"
+mcp_description = "Query geometric memory. Call this at the START of every session with the user's first message to recall relevant context from past sessions. Returns conscious recall (insights you previously marked important), subconscious recall (relevant past conversations/documents), and novel connections (lateral associations). Use the returned context silently - weave it into your response naturally without announcing 'I remember...'."
+cli_about       = "Query geometric memory for relevant context."
+
+[[tools.am_query.params]]
+name            = "text"
+type            = "string"
+required        = true
+mcp_description = "The text to query the memory system with"
+cli_help        = "Query text"
+cli_flag        = "text"
+
+[[tools.am_query.params]]
+name            = "max_tokens"
+type            = "integer"
+mcp_description = "Optional maximum token budget for composed context. When provided, uses budget-aware composition that fits the best-scoring fragments within the token limit. Nancy's prompt compiler uses this to say \"give me the best context that fits in N tokens\"."
+cli_help        = "Maximum token budget for composed context"
+cli_flag        = "--max-tokens"
+
+[tools.am_query_index]
+cli_name        = "query-index"
+mcp_description = "Two-phase retrieval: get a compact index of matching memories without full content. Returns neighborhood IDs, types, scores, summaries (first 100 chars), and token estimates. Use this first to see what's available (~50-100 tokens/entry vs ~500-1000 for full content), then call am_retrieve with selected IDs to fetch only the memories you need. Reduces context pollution for large manifolds."
+cli_about       = "Get a compact index of matching memories (two-phase retrieval step 1)."
+
+[[tools.am_query_index.params]]
+name            = "text"
+type            = "string"
+required        = true
+mcp_description = "The query text to search memory for"
+cli_help        = "Query text"
+cli_flag        = "text"
+
+[tools.am_retrieve]
+cli_name        = "retrieve"
+mcp_description = "Retrieve full content for specific neighborhood IDs. Phase 2 of two-phase retrieval: after reviewing am_query_index results, call this with the IDs of memories you want to see in full. Returns complete text for each requested neighborhood."
+cli_about       = "Retrieve full content for specific neighborhood IDs (two-phase retrieval step 2)."
+
+[[tools.am_retrieve.params]]
+name            = "ids"
+type            = "array"
+items_type      = "string"
+required        = true
+mcp_description = "Neighborhood UUIDs to retrieve full content for (from am_query_index results)"
+cli_help        = "Neighborhood UUIDs to retrieve"
+cli_flag        = "ids"
+
+[tools.am_activate_response]
+cli_name        = "activate-response"
+mcp_description = "Strengthen memory connections from your response text. Call this after giving a substantive response - it activates matching memories, drifts related concepts closer together on the manifold, and applies phase coupling. This is how the memory system consolidates over time. Not needed for every response - use after meaningful technical exchanges, not simple acknowledgements."
+cli_about       = "Strengthen memory connections from response text."
+
+[[tools.am_activate_response.params]]
+name            = "text"
+type            = "string"
+required        = true
+mcp_description = "Response text to strengthen connections for"
+cli_help        = "Response text"
+cli_flag        = "text"
+
+[tools.am_salient]
+cli_name        = "salient"
+mcp_description = "Mark an insight as conscious memory - something worth remembering across sessions and across projects. Use for: architecture decisions, user preferences, recurring patterns, hard-won debugging insights, project conventions. These surface as CONSCIOUS RECALL in future queries. Be selective - mark only genuinely reusable insights, not routine facts. Writes to brain-wide memory, queryable from any project. To replace outdated memories, pass their UUIDs (from am_query recalled_ids) in the supersedes array."
+cli_about       = "Mark an insight as conscious (cross-session) memory."
+
+[[tools.am_salient.params]]
+name            = "text"
+type            = "string"
+required        = true
+mcp_description = "Text to mark as conscious memory (may contain salient tags)"
+cli_help        = "Text to mark as conscious memory"
+cli_flag        = "text"
+
+[[tools.am_salient.params]]
+name            = "supersedes"
+type            = "array"
+items_type      = "string"
+mcp_description = "Optional list of neighborhood UUIDs that this new memory supersedes. Superseded neighborhoods are permanently excluded from future recall. Use recalled_ids from am_query to identify which memories to replace."
+cli_help        = "Neighborhood UUIDs this memory supersedes"
+cli_flag        = "--supersedes"
+
+[tools.am_buffer]
+cli_name        = "buffer"
+mcp_description = "Buffer a conversation exchange. Call with each substantive user/assistant exchange pair. After 3 exchanges, automatically creates a memory episode on the geometric manifold. This is how conversations become searchable memories in future sessions. Skip trivial exchanges (greetings, confirmations) - buffer the ones with real content."
+cli_about       = "Buffer a conversation exchange pair."
+
+[[tools.am_buffer.params]]
+name            = "user"
+type            = "string"
+required        = true
+mcp_description = "User's message text"
+cli_help        = "User's message text"
+cli_flag        = "user"
+
+[[tools.am_buffer.params]]
+name            = "assistant"
+type            = "string"
+required        = true
+mcp_description = "Assistant's response text"
+cli_help        = "Assistant's response text"
+cli_flag        = "assistant"
+
+[tools.am_ingest]
+cli_name        = "ingest"
+mcp_description = "Ingest a document as a memory episode. Use when the user shares important reference material (design docs, specs, READMEs) that should be searchable in future sessions. Text is chunked into neighborhoods and placed on the geometric manifold."
+cli_about       = "Ingest a document as a memory episode."
+
+[[tools.am_ingest.params]]
+name            = "text"
+type            = "string"
+required        = true
+mcp_description = "Document text to ingest"
+cli_help        = "Document text to ingest"
+cli_flag        = "text"
+
+[[tools.am_ingest.params]]
+name            = "name"
+type            = "string"
+mcp_description = "Optional name for the episode"
+cli_help        = "Episode name"
+cli_flag        = "--name"
+
+[tools.am_stats]
+cli_name        = "stats"
+mcp_description = "Get memory system statistics: total occurrences (N), episode count, and conscious memory count. Useful for understanding memory state. Not needed routinely - call when the user asks about memory or for diagnostics."
+cli_about       = "Get memory system statistics."
+
+[tools.am_export]
+cli_name        = "export"
+mcp_description = "Export the full DAE system state as v0.7.2 compatible JSON."
+cli_about       = "Export the full DAE system state as JSON."
+
+[tools.am_import]
+cli_name        = "import"
+mcp_description = "Import a full DAE system state from v0.7.2 compatible JSON. Replaces current state."
+cli_about       = "Import a full DAE system state from JSON."
+
+[[tools.am_import.params]]
+name            = "state"
+type            = "object"
+required        = true
+mcp_description = "Full state JSON to import"
+cli_help        = "Full state JSON to import"
+cli_flag        = "state"
+
+[tools.am_feedback]
+cli_name        = "feedback"
+mcp_description = "Provide relevance feedback on recalled memories. Call this when you know whether a recalled memory was actually helpful (boost) or unhelpful (demote). Boost drifts the memory's occurrences closer to where they were needed on the manifold and increases activation. Demote decays activation, making the memory less prominent in future queries. This is how the memory system learns what works."
+cli_about       = "Provide relevance feedback on recalled memories."
+
+[[tools.am_feedback.params]]
+name            = "query"
+type            = "string"
+required        = true
+mcp_description = "The original query text that produced the recall"
+cli_help        = "Original query text"
+cli_flag        = "query"
+
+[[tools.am_feedback.params]]
+name            = "neighborhood_ids"
+type            = "array"
+items_type      = "string"
+required        = true
+mcp_description = "UUIDs of the neighborhoods that were recalled and shown to the user"
+cli_help        = "Neighborhood UUIDs to provide feedback on"
+cli_flag        = "neighborhood-ids"
+
+[[tools.am_feedback.params]]
+name            = "signal"
+type            = "string"
+required        = true
+enum            = ["boost", "demote"]
+mcp_description = "Feedback signal: \"boost\" if the recall was helpful, \"demote\" if not"
+cli_help        = "Feedback signal: boost or demote"
+cli_flag        = "signal"
+
+[tools.am_batch_query]
+cli_name        = "batch-query"
+mcp_description = "Batch query: process multiple queries in a single pass with amortized IDF computation. Use when dispatching context to multiple workers simultaneously - activates the union of all query tokens once, drifts once, then partitions results per query. Much more efficient than N separate am_query calls. Each query can have its own token budget."
+cli_about       = "Process multiple queries in a single batch pass."
+
+[[tools.am_batch_query.params]]
+name            = "queries"
+type            = "array"
+items_type      = "object"
+required        = true
+mcp_description = "List of queries to process in a single batch. IDF computation is amortized across all queries - much more efficient than querying one at a time when dispatching to multiple workers."
+cli_help        = "List of queries (JSON array of {query, max_tokens?} objects)"
+cli_flag        = "queries"

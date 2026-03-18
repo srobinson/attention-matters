@@ -1,0 +1,29 @@
+---
+source: crates/am-cli/src/server.rs
+expression: json
+---
+{
+  "context": "[context_text]",
+  "index": "[index]",
+  "metrics": {
+    "conscious": 0,
+    "novel": 0,
+    "subconscious": 1
+  },
+  "recalled_ids": {
+    "[ids]": "[ids]",
+    "[ids]": "[ids]",
+    "[ids]": "[ids]"
+  },
+  "stats": {
+    "conscious": 0,
+    "episodes": 1,
+    "n": 21
+  },
+  "token_estimate": {
+    "conscious": 0,
+    "novel": 0,
+    "subconscious": 40,
+    "total": 40
+  }
+}

@@ -12,10 +12,7 @@ path = "src/main.rs"
 [dependencies]
 am-core = { workspace = true }
 am-store = { path = "../am-store" }
-rmcp = { workspace = true }
-tokio = { workspace = true }
 clap = { workspace = true }
-schemars = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
@@ -29,7 +26,14 @@ rustc-hash = "2"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[build-dependencies]
+indexmap = { version = "2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
 [dev-dependencies]
 assert_cmd = "2"
+insta = { version = "1", features = ["json", "redactions"] }
 predicates = "3"
 tempfile = "3"

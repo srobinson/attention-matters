@@ -1,0 +1,9 @@
+---
+source: crates/am-cli/src/server.rs
+expression: json
+---
+{
+  "episode": "snapshot-test",
+  "neighborhoods": "[count]",
+  "occurrences": "[count]"
+}

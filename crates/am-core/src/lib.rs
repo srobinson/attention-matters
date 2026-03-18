@@ -32,6 +32,7 @@
 // use std::collections::HashMap.
 #![allow(clippy::implicit_hasher)]
 
+mod activation_stats;
 mod batch;
 mod compose;
 mod constants;
@@ -46,11 +47,13 @@ pub(crate) mod recency;
 mod salient;
 pub(crate) mod scoring;
 mod serde_compat;
+mod store_trait;
 mod surface;
 mod system;
 mod time;
 mod tokenizer;
 
+pub use activation_stats::ActivationStats;
 pub use batch::{BatchQueryEngine, BatchQueryOutput, BatchQueryRequest, BatchQueryResult};
 pub use compose::{
     BudgetConfig, BudgetedContextResult, CategorizedIds, ContextMetrics, ContextResult,
@@ -70,6 +73,7 @@ pub use quaternion::{Quaternion, WeightedSum};
 pub use query::{QueryEngine, QueryManifest, QueryResult};
 pub use salient::{detect_neighborhood_type, extract_salient, mark_salient_typed};
 pub use serde_compat::{CURRENT_VERSION, export_json, import_json};
+pub use store_trait::AmStore;
 pub use surface::{SurfaceResult, compute_surface};
 pub use system::{DAESystem, EpisodeRef, NeighborhoodRef, OccurrenceRef};
 pub use time::{now_iso8601, now_unix_secs, unix_to_iso8601};
