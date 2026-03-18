@@ -384,6 +384,26 @@ impl AmStore for BrainStore {
     fn checkpoint_truncate(&self) -> Result<()> {
         self.store.checkpoint_truncate()
     }
+
+    fn forget_episode(&self, episode_id: &str) -> Result<u64> {
+        self.store.forget_episode(episode_id)
+    }
+
+    fn forget_conscious(&self, neighborhood_id: &str) -> Result<u64> {
+        self.store.forget_conscious(neighborhood_id)
+    }
+
+    fn forget_term(&self, term: &str) -> Result<(u64, u64, u64)> {
+        self.store.forget_term(term)
+    }
+
+    fn import_json_str(&self, json: &str) -> Result<()> {
+        self.store.import_json_str(json)
+    }
+
+    fn export_json_string(&self) -> Result<String> {
+        self.store.export_json_string()
+    }
 }
 
 #[cfg(test)]

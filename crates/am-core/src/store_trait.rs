@@ -117,4 +117,39 @@ pub trait AmStore {
     /// # Errors
     /// Returns `Self::Error` if the checkpoint operation fails.
     fn checkpoint_truncate(&self) -> Result<(), Self::Error>;
+
+    // --- CLI-facing methods (forget, import/export) ---
+
+    /// Delete a subconscious episode and all its contents.
+    /// Returns the number of occurrences removed (0 if not found).
+    ///
+    /// # Errors
+    /// Returns `Self::Error` if the episode is conscious or the delete fails.
+    fn forget_episode(&self, episode_id: &str) -> Result<u64, Self::Error>;
+
+    /// Delete a conscious neighborhood by UUID.
+    /// Returns the number of occurrences removed (0 if not found).
+    ///
+    /// # Errors
+    /// Returns `Self::Error` if the neighborhood is not conscious or the delete fails.
+    fn forget_conscious(&self, neighborhood_id: &str) -> Result<u64, Self::Error>;
+
+    /// Delete all occurrences matching a word (case-insensitive) and clean empty structures.
+    /// Returns `(removed_occurrences, removed_neighborhoods, removed_episodes)`.
+    ///
+    /// # Errors
+    /// Returns `Self::Error` if the delete transaction fails.
+    fn forget_term(&self, term: &str) -> Result<(u64, u64, u64), Self::Error>;
+
+    /// Import a v0.7.2 JSON string into the store (replaces all state).
+    ///
+    /// # Errors
+    /// Returns `Self::Error` if the JSON is invalid or the write fails.
+    fn import_json_str(&self, json: &str) -> Result<(), Self::Error>;
+
+    /// Export the store contents as a v0.7.2 JSON string.
+    ///
+    /// # Errors
+    /// Returns `Self::Error` if serialization or the read fails.
+    fn export_json_string(&self) -> Result<String, Self::Error>;
 }

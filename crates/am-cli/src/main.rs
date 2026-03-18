@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use std::io::Write;
 
-use am_core::{QueryEngine, compose_context, compute_surface, export_json, ingest_text};
+use am_core::{AmStore, QueryEngine, compose_context, compute_surface, export_json, ingest_text};
 use am_store::{BrainStore, Config};
 use anyhow::{Context, Result};
 use clap::{ColorChoice, Parser, Subcommand, ValueEnum};
@@ -1123,18 +1123,19 @@ fn cmd_forget(
     conscious_id: Option<&str>,
 ) -> Result<()> {
     let store = open_store(cli)?;
-    let db = store.store();
     let colors::Colors { bold, reset, .. } = colors::Colors::stdout();
 
     if let Some(id) = episode_id {
-        let removed = db.forget_episode(id).context("failed to forget episode")?;
+        let removed = store
+            .forget_episode(id)
+            .context("failed to forget episode")?;
         if removed == 0 {
             println!("Episode not found: {id}");
         } else {
             println!("{bold}Forgot{reset} episode {id} ({removed} occurrences removed)");
         }
     } else if let Some(id) = conscious_id {
-        let removed = db
+        let removed = store
             .forget_conscious(id)
             .context("failed to forget conscious memory")?;
         if removed == 0 {
@@ -1144,7 +1145,7 @@ fn cmd_forget(
         }
     } else if let Some(word) = term {
         let (removed_occs, removed_nbhds, removed_eps) =
-            db.forget_term(word).context("failed to forget term")?;
+            store.forget_term(word).context("failed to forget term")?;
         if removed_occs == 0 {
             println!("No occurrences of \"{word}\" found.");
         } else {
