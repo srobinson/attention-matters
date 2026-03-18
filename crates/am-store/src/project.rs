@@ -1,10 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::{env, fs};
 
-use am_core::{DAESystem, Episode};
+use am_core::{
+    ActivationStats, AmStore, DAESystem, DaemonPhasor, Episode, Neighborhood, Quaternion,
+};
+use uuid::Uuid;
 
 use crate::config::Config;
-use crate::error::Result;
+use crate::error::{Result, StoreError};
 use crate::store::Store;
 
 /// Default base directory for all am storage.
@@ -316,6 +319,70 @@ impl BrainStore {
     /// Export the brain store to a v0.7.2 JSON file.
     pub fn export_json_file(&self, path: &Path) -> Result<()> {
         self.store.export_json_file(path)
+    }
+}
+
+impl AmStore for BrainStore {
+    type Error = StoreError;
+
+    fn load_system(&self) -> Result<DAESystem> {
+        self.store.load_system()
+    }
+
+    fn save_system(&self, system: &DAESystem) -> Result<()> {
+        self.store.save_system(system)
+    }
+
+    fn save_episode(&self, episode: &Episode) -> Result<()> {
+        self.store.save_episode(episode)
+    }
+
+    fn save_neighborhood(&self, episode: &Episode, neighborhood: &Neighborhood) -> Result<()> {
+        self.store.save_neighborhood(episode, neighborhood)
+    }
+
+    fn batch_increment_activation(&self, ids: &[Uuid]) -> Result<()> {
+        self.store.batch_increment_activation(ids)
+    }
+
+    fn batch_set_activation_counts(&self, batch: &[(Uuid, u32)]) -> Result<()> {
+        self.store.batch_set_activation_counts(batch)
+    }
+
+    fn save_occurrence_positions(&self, batch: &[(Uuid, Quaternion, DaemonPhasor)]) -> Result<()> {
+        self.store.save_occurrence_positions(batch)
+    }
+
+    fn mark_superseded(&self, old_id: Uuid, new_id: Uuid) -> Result<()> {
+        self.store.mark_superseded(old_id, new_id)
+    }
+
+    fn append_buffer(&self, user: &str, assistant: &str) -> Result<usize> {
+        self.store.append_buffer(user, assistant)
+    }
+
+    fn drain_buffer(&self) -> Result<Vec<(String, String)>> {
+        self.store.drain_buffer()
+    }
+
+    fn buffer_count(&self) -> Result<usize> {
+        self.store.buffer_count()
+    }
+
+    fn activation_distribution(&self) -> Result<ActivationStats> {
+        self.store.activation_distribution()
+    }
+
+    fn db_size(&self) -> u64 {
+        self.store.db_size()
+    }
+
+    fn health_check(&self) -> Result<()> {
+        self.store.health_check()
+    }
+
+    fn checkpoint_truncate(&self) -> Result<()> {
+        self.store.checkpoint_truncate()
     }
 }
 
