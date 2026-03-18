@@ -9,12 +9,11 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use am_core::{
-    BatchQueryEngine, BatchQueryRequest, BudgetConfig, DAESystem, DaemonPhasor, FeedbackSignal,
-    Quaternion, QueryEngine, QueryManifest, RecallCategory, apply_feedback, compose_context,
-    compose_context_budgeted, compose_index, compute_surface, export_json, extract_salient,
-    import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
+    AmStore, BatchQueryEngine, BatchQueryRequest, BudgetConfig, DAESystem, DaemonPhasor,
+    FeedbackSignal, Quaternion, QueryEngine, QueryManifest, RecallCategory, apply_feedback,
+    compose_context, compose_context_budgeted, compose_index, compute_surface, export_json,
+    extract_salient, import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
 };
-use am_store::{BrainStore, StoreError};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
@@ -36,20 +35,13 @@ fn check_input_size(value: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Convert a `StoreError` to a tool error string, preserving the variant name as a
-/// machine-readable prefix so callers can distinguish error classes without
-/// parsing free-form text.
-fn store_err_to_string(e: StoreError) -> String {
-    let (category, detail) = match &e {
-        StoreError::Sqlite(inner) => ("sqlite", inner.to_string()),
-        StoreError::Io(inner) => ("io", inner.to_string()),
-        StoreError::InvalidData(msg) => ("invalid_data", msg.clone()),
-    };
-    format!("[{category}] {detail}")
+/// Convert a store error into a tool error string.
+fn store_err_to_string(e: impl std::fmt::Display) -> String {
+    format!("[store] {e}")
 }
 
-pub struct AmServer {
-    state: Mutex<ServerState>,
+pub struct AmServer<S: AmStore> {
+    state: Mutex<ServerState<S>>,
 }
 
 /// All mutable server state behind a single `std::sync::Mutex`.
@@ -75,9 +67,9 @@ pub struct AmServer {
 ///
 /// The `SmallRng` would move to per-request construction (already cheap) or
 /// thread-local storage.
-struct ServerState {
+struct ServerState<S: AmStore> {
     system: DAESystem,
-    store: BrainStore,
+    store: S,
     rng: SmallRng,
     /// Neighborhood recall counts this session (process lifetime).
     /// Tracks how many times each neighborhood has been returned.
@@ -125,7 +117,7 @@ fn collect_occurrence_positions(
 /// Persist query manifest mutations to the store: drifted positions and
 /// activated occurrence counts.
 fn persist_manifest(
-    store: &BrainStore,
+    store: &impl AmStore,
     system: &DAESystem,
     manifest: &QueryManifest,
     context: &str,
@@ -152,10 +144,10 @@ fn persist_manifest(
 ///
 /// Called at the start of query paths to ensure buffered exchanges from previous
 /// sessions are ingested before recall. Persists the system state after ingestion.
-fn flush_orphaned_buffer(store: &BrainStore, system: &mut DAESystem, rng: &mut SmallRng) {
-    let orphaned = store.store().buffer_count().unwrap_or(0);
+fn flush_orphaned_buffer(store: &impl AmStore, system: &mut DAESystem, rng: &mut SmallRng) {
+    let orphaned = store.buffer_count().unwrap_or(0);
     if orphaned > 0
-        && let Ok(exchanges) = store.store().drain_buffer()
+        && let Ok(exchanges) = store.drain_buffer()
     {
         let combined: String = exchanges
             .iter()
@@ -253,8 +245,8 @@ struct RetrieveByIdsRequest {
     ids: Vec<String>,
 }
 
-impl AmServer {
-    pub fn new(store: BrainStore) -> std::result::Result<Self, StoreError> {
+impl<S: AmStore> AmServer<S> {
+    pub fn new(store: S) -> std::result::Result<Self, S::Error> {
         let system = store.load_system()?;
         let rng = SmallRng::from_os_rng();
         Ok(Self {
@@ -273,7 +265,7 @@ impl AmServer {
     /// even when the tokio runtime is shutting down.
     pub fn checkpoint_wal(&self) {
         let state = self.state.lock().expect("poisoned mutex");
-        if let Err(e) = state.store.store().checkpoint_truncate() {
+        if let Err(e) = state.store.checkpoint_truncate() {
             tracing::warn!("WAL checkpoint failed: {e}");
         }
         tracing::info!("WAL checkpoint complete");
@@ -660,7 +652,7 @@ impl AmServer {
                     // Update in-memory
                     if system.mark_superseded(old_id, new_id) {
                         // Persist targeted update to SQLite
-                        if let Err(e) = store.store().mark_superseded(old_id, new_id) {
+                        if let Err(e) = store.mark_superseded(old_id, new_id) {
                             tracing::error!("failed to persist supersession: {e}");
                         }
                         superseded_count += 1;
@@ -719,7 +711,7 @@ impl AmServer {
         if dedup_window.contains_key(&hash) {
             let result = serde_json::json!({
                 "deduplicated": true,
-                "buffer_size": store.store().buffer_count().unwrap_or(0),
+                "buffer_size": store.buffer_count().unwrap_or(0),
             });
             return Ok(tool_result_text(
                 &serde_json::to_string_pretty(&result).unwrap_or_default(),
@@ -728,14 +720,13 @@ impl AmServer {
         dedup_window.insert(hash, Instant::now());
 
         let buffer_size = store
-            .store()
             .append_buffer(&req.user, &req.assistant)
             .map_err(store_err_to_string)?;
 
         let mut episode_created: Option<String> = None;
 
         if buffer_size >= BUFFER_THRESHOLD {
-            let exchanges = store.store().drain_buffer().map_err(store_err_to_string)?;
+            let exchanges = store.drain_buffer().map_err(store_err_to_string)?;
 
             let combined: String = exchanges
                 .iter()
@@ -805,9 +796,9 @@ impl AmServer {
         let mut stats = Self::stats_json(&mut state.system);
 
         // Add store-level stats (DB size, activation distribution)
-        let db_size = state.store.store().db_size();
+        let db_size = state.store.db_size();
         stats["db_size_bytes"] = serde_json::json!(db_size);
-        if let Ok(activation) = state.store.store().activation_distribution() {
+        if let Ok(activation) = state.store.activation_distribution() {
             stats["activation"] = serde_json::json!({
                 "mean": activation.mean_activation,
                 "max": activation.max_activation,
@@ -989,8 +980,9 @@ impl AmServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use am_store::BrainStore;
 
-    fn make_server() -> AmServer {
+    fn make_server() -> AmServer<BrainStore> {
         let store = BrainStore::open_in_memory().unwrap();
         AmServer::new(store).unwrap()
     }
@@ -1687,7 +1679,7 @@ mod tests {
     }
 
     /// Helper: ingest content and return neighborhood IDs from a query.
-    fn ingest_and_get_neighborhood_ids(server: &AmServer) -> Vec<String> {
+    fn ingest_and_get_neighborhood_ids(server: &AmServer<BrainStore>) -> Vec<String> {
         server
             .am_ingest(&serde_json::json!({
                 "text": "Quantum mechanics describes particle behavior at subatomic scales. Wave functions collapse upon measurement. Entanglement connects distant particles.",
