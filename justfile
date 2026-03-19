@@ -4,6 +4,12 @@ default:
 build:
     cargo build --workspace
 
+release:
+    cargo build --workspace --release
+
+install: release
+    cargo install --path crates/am-cli
+
 test:
     cargo nextest run --workspace
     cargo test --workspace --doc
@@ -30,6 +36,3 @@ bench-gate:
 
 audit:
     cargo audit
-
-install:
-    cargo install --path crates/am-cli
