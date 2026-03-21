@@ -29,8 +29,10 @@ Every config field has a `Default` impl. Defaults live in the code, not in a shi
 ```rust
 impl Default for Config {
     fn default() -> Self {
+        let data_dir = project::default_base_dir()
+            .unwrap_or_else(|_| PathBuf::from("~/.attention-matters"));
         Self {
-            data_dir: project::default_base_dir(),
+            data_dir,
             gc_enabled: false,
             db_size_mb: 50,
             // ...
@@ -38,6 +40,8 @@ impl Default for Config {
     }
 }
 ```
+
+`Default::default()` is a best-effort fallback for contexts that cannot propagate errors (e.g. struct update syntax). The runtime load path uses `runtime_defaults()` instead, which returns `Result` and avoids the `unwrap_or_else`.
 
 ### Layer 2: Config file
 
@@ -144,10 +148,19 @@ Every project exposes a single `pub fn load() -> Result<Config>` that orchestrat
 
 ```rust
 pub fn load() -> crate::error::Result<Config> {
-    let mut cfg = runtime_defaults()?;          // Layer 1 (fallible: home resolution)
+    // Layer 1: runtime defaults. If home is unresolvable, use an empty
+    // data_dir placeholder. File config or env vars may override it
+    // before validation catches an invalid final state.
+    let mut cfg = match runtime_defaults() {
+        Ok(defaults) => defaults,
+        Err(_) => Config {
+            data_dir: PathBuf::new(),
+            ..Default::default()
+        },
+    };
 
     if let Some(path) = find_config_file() {    // Layer 2
-        apply_file_config(&mut cfg, &path);
+        apply_file_config(&mut cfg, &path)?;
     }
 
     // Layer 3: env vars override everything
@@ -167,13 +180,14 @@ pub fn load() -> crate::error::Result<Config> {
 - Can be called multiple times safely
 - Returns `Result<Config>` - validation errors are propagated, not swallowed
 - Returns owned `Config`, not a reference to a singleton
+- Home resolution failure is not immediately fatal: file config or env vars can supply an absolute `data_dir`, bypassing the need for home. Validation catches unresolved paths at the end.
 
 ## Path Handling
 
 All path config values MUST support tilde expansion:
 
 ```rust
-fn resolve_home_dir() -> crate::error::Result<PathBuf> {
+pub fn resolve_home_dir() -> crate::error::Result<PathBuf> {
     env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
         .map(PathBuf::from)
@@ -205,7 +219,7 @@ fn expand_tilde(path: &str) -> crate::error::Result<PathBuf> {
 | Env var missing | Skip silently. |
 | Env var parse failure | Log `tracing::warn!` with var name, raw value, and expected type. Fall back to file/default value. |
 | Semantic validation failure | Return `StoreError::InvalidData`. Caller exits non-zero. |
-| Home directory unresolvable | Return `StoreError::InvalidData`. No CWD fallback. |
+| Home directory unresolvable | Use empty placeholder for `data_dir`. File config or env vars can override with an absolute path. If `data_dir` is still empty or relative after all layers merge, `validate()` returns `StoreError::InvalidData`. No CWD fallback. |
 | Data directory missing | Create it (at database init time, not config load). |
 
 Config loading MUST NOT panic. Config loading returns `Result` - syntax/deserialization errors fall through to defaults (fail open), but semantic validation errors on the resolved config are returned as errors (fail closed).
@@ -220,7 +234,7 @@ project init --global # writes to ~/.project/.project.config.toml
 project init --force  # overwrite existing (prints path being overwritten)
 ```
 
-`init --force` prints the path being overwritten. No diff or confirmation (that is the purpose of --force), but the user sees what was replaced.
+`init --force` overwrites without prompting. The output always prints the path that was written, so the user sees what happened. No diff or confirmation (that is the purpose of --force).
 
 The generated file comments out all values with their defaults, serving as inline documentation:
 
@@ -321,7 +335,7 @@ fn parse_toml_partial() {
 - [ ] `resolve_home_dir()` shared helper (no CWD fallback)
 - [ ] `expand_tilde()` returning `Result<PathBuf>`
 - [ ] Env var overrides with `<PROJECT>_*` prefix (warn on parse failure)
-- [ ] `init` subcommand generating commented defaults (--force prints overwritten path)
+- [ ] `init` subcommand generating commented defaults (--force overwrites without prompting, prints written path)
 - [ ] Config tests (defaults, tilde, partial TOML, nested sections, validation rules, startup failure)
 - [ ] Tracing setup (WARN default, --verbose, RUST_LOG)
 - [ ] SQLite pragmas (if applicable, log checkpoint failures at debug)
