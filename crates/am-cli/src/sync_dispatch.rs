@@ -154,7 +154,7 @@ fn cmd_sync_single(cli: &Cli, hook: sync::HookInput, dry_run: bool) -> Result<()
     );
 
     // Write debug log if sync_log_dir is configured
-    let config = load_config();
+    let config = load_config()?;
     if let Some(ref log_dir) = config.sync_log_dir
         && let Err(e) = write_sync_log(log_dir, session_prefix, &extracted)
     {

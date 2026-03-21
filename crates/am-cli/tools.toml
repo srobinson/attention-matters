@@ -1,19 +1,24 @@
 # Single source of truth for all tool documentation.
 # build.rs reads this file and generates:
-#   src/generated_schema.rs  — MCP tool list JSON
-#   src/generated_help.rs    — CLI help string constants
+#   src/generated_schema.rs  - MCP tool list JSON
+#   src/generated_help.rs    - CLI help string constants
+#
+# Sections:
+#   [cli]       - Root CLI help (am --help)
+#   [tools.*]   - MCP tools (exposed via MCP protocol; some also have CLI subcommands)
+#   [commands.*] - CLI-only commands (no MCP exposure)
 
 [skill]
 workflow = """
 ## Geometric Memory Workflow
 
-1. **Query** — `am_query(text: "topic")` — recall relevant context from past sessions.
-2. **Buffer** — `am_buffer(user, assistant)` — buffer conversation exchanges (auto-ingests after 3).
-3. **Ingest** — `am_ingest(text)` — ingest reference material as a memory episode.
-4. **Salient** — `am_salient(text)` — mark an insight as conscious (cross-session) memory.
-5. **Feedback** — `am_feedback(query, neighborhood_ids, signal)` — reinforce or demote recalled memories.
-6. **Activate** — `am_activate_response(text)` — strengthen connections from response text.
-7. **Stats** — `am_stats()` — memory system diagnostics.
+1. **Query** - `am_query(text: "topic")` - recall relevant context from past sessions.
+2. **Buffer** - `am_buffer(user, assistant)` - buffer conversation exchanges (auto-ingests after 3).
+3. **Ingest** - `am_ingest(text)` - ingest reference material as a memory episode.
+4. **Salient** - `am_salient(text)` - mark an insight as conscious (cross-session) memory.
+5. **Feedback** - `am_feedback(query, neighborhood_ids, signal)` - reinforce or demote recalled memories.
+6. **Activate** - `am_activate_response(text)` - strengthen connections from response text.
+7. **Stats** - `am_stats()` - memory system diagnostics.
 
 ### Two-Phase Retrieval
 
@@ -26,12 +31,81 @@ Use am_batch_query when dispatching context to multiple workers. Amortized IDF a
 all queries is much more efficient than N separate am_query calls.
 """
 
-# Tool order matches the MCP tools/list response order.
+# ---------------------------------------------------------------------------
+# Root CLI help (am --help)
+# ---------------------------------------------------------------------------
+
+[cli]
+about = "Geometric memory for AI agents - persistent recall across sessions"
+long_about = """
+am - Geometric memory for AI agents
+
+Models memory as points on a 3-sphere (S\u00B3 manifold) using quaternion positions,
+golden-angle phasors, IDF-weighted drift, and Kuramoto phase coupling. Memories
+aren't stored in flat text - they're positioned in geometric space where related
+concepts naturally cluster through physics-inspired dynamics.
+
+How it works:
+  - Words are placed on S\u00B3 as quaternion positions within neighborhoods
+  - Querying activates matching words and drifts them closer via SLERP
+  - Phase coupling synchronizes related concepts across sessions
+  - Conscious memories (marked salient) persist globally across projects
+
+As an MCP server (primary mode):
+  Claude Code runs `am serve` automatically. The AI calls these tools:
+    am_query              Recall context at session start
+    am_activate_response  Strengthen connections after responses
+    am_salient            Mark insights as conscious memory
+    am_buffer             Buffer exchanges, auto-create episodes
+    am_ingest             Ingest documents as memory episodes
+    am_stats              Memory system diagnostics
+    am_export / am_import Portable state backup and restore
+
+As a CLI (for humans):
+  Query, ingest, inspect, and manage memories directly."""
+after_help = """\
+Setup with Claude Code:
+  claude mcp add am -- npx -y attention-matters serve
+
+Quick start:
+  am ingest README.md              # Feed a document into memory
+  am query "authentication flow"   # Recall relevant context
+  am inspect                       # See what's in memory
+  am inspect conscious             # Browse conscious memories
+  am stats                         # System diagnostics
+
+Data location:  ~/.attention-matters/brain.db
+  Single unified brain - one product, one memory.
+
+Configuration:  ~/.attention-matters/.am.config.toml
+  Environment variables override file values:
+    AM_DATA_DIR     Base directory for brain.db and config
+    AM_GC_ENABLED   Enable automatic GC on startup (default: false)
+    AM_DB_SIZE_MB   DB size limit in MB for GC threshold (default: 50)
+
+https://github.com/srobinson/attention-matters"""
+
+# ---------------------------------------------------------------------------
+# MCP tools - order matches MCP tools/list response order
+# ---------------------------------------------------------------------------
 
 [tools.am_query]
 cli_name        = "query"
 mcp_description = "Query geometric memory. Call this at the START of every session with the user's first message to recall relevant context from past sessions. Returns conscious recall (insights you previously marked important), subconscious recall (relevant past conversations/documents), and novel connections (lateral associations). Use the returned context silently - weave it into your response naturally without announcing 'I remember...'."
 cli_about       = "Query geometric memory for relevant context."
+cli_long_about  = """
+Query the geometric memory system.
+
+Activates matching words on the S\u00B3 manifold, drifts related
+concepts closer via IDF-weighted SLERP, computes phasor
+interference, and returns composed context split into:
+* Conscious recall (previously marked salient)
+* Subconscious recall (from ingested documents/conversations)
+* Novel connections (lateral associations via interference)"""
+cli_after_help  = """\
+Examples:
+  am query "authentication middleware"
+  am query "database schema migration" --verbose"""
 
 [[tools.am_query.params]]
 name            = "text"
@@ -134,6 +208,17 @@ cli_flag        = "assistant"
 cli_name        = "ingest"
 mcp_description = "Ingest a document as a memory episode. Use when the user shares important reference material (design docs, specs, READMEs) that should be searchable in future sessions. Text is chunked into neighborhoods and placed on the geometric manifold."
 cli_about       = "Ingest a document as a memory episode."
+cli_long_about  = """
+Ingest document files as memory episodes.
+
+Text is split into 3-sentence chunks, each becoming a
+neighborhood of word occurrences placed on the S\u00B3 manifold
+with golden-angle phasor spacing. Supports .txt, .md, .html."""
+cli_after_help  = """\
+Examples:
+  am ingest README.md ARCHITECTURE.md
+  am ingest --dir ./docs
+  am ingest --dir ./docs notes.txt"""
 
 [[tools.am_ingest.params]]
 name            = "text"
@@ -154,16 +239,41 @@ cli_flag        = "--name"
 cli_name        = "stats"
 mcp_description = "Get memory system statistics: total occurrences (N), episode count, and conscious memory count. Useful for understanding memory state. Not needed routinely - call when the user asks about memory or for diagnostics."
 cli_about       = "Get memory system statistics."
+cli_long_about  = """
+Display memory statistics.
+
+Shows total occurrences (N), episode count, conscious memory
+count, database size, and activation distribution."""
+cli_after_help  = """\
+Example:
+  am stats"""
 
 [tools.am_export]
 cli_name        = "export"
 mcp_description = "Export the full DAE system state as v0.7.2 compatible JSON."
 cli_about       = "Export the full DAE system state as JSON."
+cli_long_about  = """
+Export the full memory state as v0.7.2-compatible JSON.
+
+The exported file contains all episodes, neighborhoods,
+occurrences, and conscious memories. Can be imported on
+another machine or into a different project."""
+cli_after_help  = """\
+Example:
+  am export backup.json"""
 
 [tools.am_import]
 cli_name        = "import"
 mcp_description = "Import a full DAE system state from v0.7.2 compatible JSON. Replaces current state."
 cli_about       = "Import a full DAE system state from JSON."
+cli_long_about  = """
+Import a previously exported memory state.
+
+Replaces the current memory with the imported state.
+All memories are stored in the unified brain database."""
+cli_after_help  = """\
+Example:
+  am import backup.json"""
 
 [[tools.am_import.params]]
 name            = "state"
@@ -217,3 +327,120 @@ required        = true
 mcp_description = "List of queries to process in a single batch. IDF computation is amortized across all queries - much more efficient than querying one at a time when dispatching to multiple workers."
 cli_help        = "List of queries (JSON array of {query, max_tokens?} objects)"
 cli_flag        = "queries"
+
+# ---------------------------------------------------------------------------
+# CLI-only commands - no MCP exposure
+# ---------------------------------------------------------------------------
+
+[commands.serve]
+cli_name       = "serve"
+cli_about      = "Start MCP server on stdio transport"
+cli_long_about = """
+Start the MCP (Model Context Protocol) server on stdio transport.
+
+This is the primary mode - Claude Code launches this automatically
+when configured as an MCP server. The server exposes 12 tools that
+the AI agent calls to build and query geometric memory."""
+cli_after_help = """\
+Setup:
+  claude mcp add am -- npx -y attention-matters serve
+
+The server exposes:
+  am_query, am_query_index, am_retrieve, am_activate_response,
+  am_salient, am_buffer, am_ingest, am_stats, am_export,
+  am_import, am_feedback, am_batch_query"""
+
+[commands.inspect]
+cli_name       = "inspect"
+cli_about      = "Browse memories, episodes, and neighborhoods"
+cli_long_about = """
+Inspect the contents of geometric memory.
+
+Five modes let you see exactly what's stored:
+\u2022 overview (default) - summary with top words and recent episodes
+\u2022 conscious - list all conscious (salient) memories
+\u2022 episodes - list subconscious episodes with stats
+\u2022 neighborhoods - all neighborhoods ranked by activation
+\u2022 --query - run a query and show the full recall breakdown
+
+Trust requires transparency. This command shows you
+what the AI remembers and why."""
+cli_after_help = """\
+Examples:
+  am inspect                        # Overview
+  am inspect conscious              # List conscious memories
+  am inspect episodes --limit 50    # More episodes
+  am inspect neighborhoods --json   # Machine-readable
+  am inspect --query "auth flow"    # Query with full breakdown"""
+
+[commands.sync]
+cli_name       = "sync"
+cli_about      = "Ingest Claude Code session transcripts into memory"
+cli_long_about = """
+Sync Claude Code session transcripts into geometric memory.
+
+Two modes:
+1. Stdin (hook-triggered): reads transcript_path + session_id from
+   JSON on stdin and ingests that single session. Used by Claude Code
+   PreCompact/Stop hooks.
+2. Discovery (--all): walks the filesystem to discover and re-ingest
+   all session transcripts. For manual bulk re-sync.
+
+Replace semantics: if an episode with the same name already exists,
+it is replaced (not duplicated)."""
+cli_after_help = """\
+Examples:
+  echo '{...}' | am sync     # Ingest single session from hook stdin
+  am sync --all              # Discover and re-ingest all transcripts
+  am sync --all --dry-run    # Show what would be ingested
+  am sync --all --dir ~/.claude  # Custom Claude config directory"""
+
+[commands.gc]
+cli_name       = "gc"
+cli_about      = "Garbage collect: prune cold occurrences and compact storage"
+cli_long_about = """
+Run garbage collection on the memory database.
+
+Removes low-activation occurrences (below the activation floor),
+cleans up empty neighborhoods and episodes, then VACUUMs the
+SQLite database to reclaim disk space.
+
+Conscious memories are never auto-evicted."""
+cli_after_help = """\
+Examples:
+  am gc                     # Default: floor=1 (remove zero-activation)
+  am gc --floor 2           # Remove occurrences activated \u22642 times
+  am gc --dry-run           # Preview what would be removed
+  am gc --target-mb 10      # Shrink DB to ~10 MB"""
+
+[commands.forget]
+cli_name       = "forget"
+cli_about      = "Selectively forget memories by term, episode, or conscious ID"
+cli_long_about = """
+Remove specific memories from the database.
+
+Three modes:
+\u2022 By term: removes all occurrences of a word across all episodes
+\u2022 By episode: removes an entire subconscious episode by UUID
+\u2022 By conscious ID: removes a specific conscious memory by UUID
+
+Use `am inspect` to find IDs before forgetting."""
+cli_after_help = """\
+Examples:
+  am forget password            # Remove all occurrences of "password"
+  am forget --episode abc123    # Remove episode by ID
+  am forget --conscious def456  # Remove conscious memory by ID"""
+
+[commands.init]
+cli_name       = "init"
+cli_about      = "Generate a default .am.config.toml"
+cli_long_about = """
+Generate a fully commented .am.config.toml with all fields
+and their compiled defaults. Writes to the current directory
+by default, or to ~/.attention-matters/ with --global.
+If a config file already exists, prompts before overwriting."""
+cli_after_help = """\
+Examples:
+  am init                 # Write config to current directory
+  am init --global        # Write config to ~/.attention-matters/
+  am init --force         # Overwrite without prompting"""
