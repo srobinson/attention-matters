@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use am_core::ingest_text;
+use am_core::tokenizer::ingest_text;
 use anyhow::{Context, Result};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -234,7 +234,11 @@ fn cmd_sync_discover(
 
     // Defer store/system loading until we know we need to write. In dry-run
     // mode this avoids creating brain.db as a side effect.
-    let mut store_state: Option<(am_store::BrainStore, am_core::DAESystem, SmallRng)> = None;
+    let mut store_state: Option<(
+        am_store::project::BrainStore,
+        am_core::system::DAESystem,
+        SmallRng,
+    )> = None;
 
     let mut total_episodes = 0u32;
     let mut total_text_len = 0usize;

@@ -1,4 +1,4 @@
-use am_core::unix_to_iso8601;
+use am_core::time::unix_to_iso8601;
 use rusqlite::Connection;
 
 use crate::error::Result;
@@ -173,7 +173,7 @@ fn backfill_empty_timestamps(conn: &Connection) -> Result<()> {
     }
 
     // Distribute timestamps from 2026-02-01T00:00:00Z to now, evenly spaced
-    let now_secs = am_core::now_unix_secs();
+    let now_secs = am_core::time::now_unix_secs();
     // 2026-02-01T00:00:00Z = 1769904000 Unix seconds
     let start_secs: u64 = 1769904000;
     let end_secs = now_secs.max(start_secs + 1);

@@ -90,7 +90,7 @@ impl QueryEngine {
     /// # Examples
     ///
     /// ```
-    /// use am_core::{DAESystem, QueryEngine, ingest_text};
+    /// use am_core::{system::DAESystem, query::QueryEngine, tokenizer::ingest_text};
     /// use rand::SeedableRng;
     /// use rand::rngs::SmallRng;
     ///

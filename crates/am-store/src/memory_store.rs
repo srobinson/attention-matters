@@ -6,8 +6,14 @@
 use std::sync::Mutex;
 
 use am_core::{
-    ActivationStats, AmStore, DAESystem, DaemonPhasor, Episode, Neighborhood, Quaternion,
-    export_json, import_json,
+    activation_stats::ActivationStats,
+    episode::Episode,
+    neighborhood::Neighborhood,
+    phasor::DaemonPhasor,
+    quaternion::Quaternion,
+    serde_compat::{export_json, import_json},
+    store_trait::AmStore,
+    system::DAESystem,
 };
 use uuid::Uuid;
 
@@ -352,14 +358,14 @@ impl AmStore for InMemoryStore {
     }
 
     fn import_json_str(&self, json: &str) -> Result<(), Self::Error> {
-        let system = am_core::import_json(json)
+        let system = am_core::serde_compat::import_json(json)
             .map_err(|e| MemoryStoreError::Other(format!("invalid JSON: {e}")))?;
         self.save_system(&system)
     }
 
     fn export_json_string(&self) -> Result<String, Self::Error> {
         let system = self.load_system()?;
-        am_core::export_json(&system)
+        am_core::serde_compat::export_json(&system)
             .map_err(|e| MemoryStoreError::Other(format!("JSON export failed: {e}")))
     }
 }
@@ -428,7 +434,7 @@ mod tests {
     }
 
     fn make_populated_store() -> InMemoryStore {
-        use am_core::{Episode, Neighborhood};
+        use am_core::{episode::Episode, neighborhood::Neighborhood};
         use rand::SeedableRng;
         use rand::rngs::SmallRng;
 

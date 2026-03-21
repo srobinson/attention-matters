@@ -11,8 +11,8 @@ use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
-use am_core::{DAESystem, Episode, Neighborhood};
-use am_store::BrainStore;
+use am_core::{episode::Episode, neighborhood::Neighborhood, system::DAESystem};
+use am_store::project::BrainStore;
 
 /// Build a synthetic DAESystem with `n_episodes` episodes, each containing
 /// ~5 neighborhoods of ~10 occurrences (~50 occurrences per episode).

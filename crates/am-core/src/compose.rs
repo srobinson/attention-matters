@@ -175,7 +175,7 @@ fn apply_diminishing_returns(
 /// Full ingest, query, compose pipeline:
 ///
 /// ```
-/// use am_core::{DAESystem, QueryEngine, compose_context, compute_surface, ingest_text};
+/// use am_core::{system::DAESystem, query::QueryEngine, compose::compose_context, surface::compute_surface, tokenizer::ingest_text};
 /// use rand::SeedableRng;
 /// use rand::rngs::SmallRng;
 ///

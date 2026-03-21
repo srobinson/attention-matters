@@ -123,7 +123,7 @@ pub struct ActivationResult {
 /// # Examples
 ///
 /// ```
-/// use am_core::{DAESystem, ingest_text};
+/// use am_core::{system::DAESystem, tokenizer::ingest_text};
 /// use rand::SeedableRng;
 /// use rand::rngs::SmallRng;
 ///

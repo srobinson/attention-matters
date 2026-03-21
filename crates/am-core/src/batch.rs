@@ -50,7 +50,7 @@ pub struct BatchQueryOutput {
 /// # Examples
 ///
 /// ```
-/// use am_core::{DAESystem, BatchQueryEngine, BatchQueryRequest, ingest_text};
+/// use am_core::{system::DAESystem, batch::{BatchQueryEngine, BatchQueryRequest}, tokenizer::ingest_text};
 /// use rand::SeedableRng;
 /// use rand::rngs::SmallRng;
 ///

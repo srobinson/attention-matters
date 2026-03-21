@@ -12,11 +12,13 @@ use rand::Rng;
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
-use am_core::{DAESystem, Episode, Neighborhood, QueryEngine};
+use am_core::{
+    episode::Episode, neighborhood::Neighborhood, query::QueryEngine, system::DAESystem,
+};
 
 /// Build a system with `n` activated occurrences spread across episodes.
 /// Each episode has one neighborhood with ~10 occurrences.
-fn build_system(n: usize, rng: &mut SmallRng) -> (DAESystem, Vec<am_core::OccurrenceRef>) {
+fn build_system(n: usize, rng: &mut SmallRng) -> (DAESystem, Vec<am_core::system::OccurrenceRef>) {
     let mut system = DAESystem::new("bench");
 
     let words: Vec<String> = (0..20).map(|i| format!("word{i}")).collect();

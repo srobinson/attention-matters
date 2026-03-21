@@ -2,8 +2,13 @@
 //! ingest → query → surface → compose, across crate boundaries.
 
 use am_core::{
-    DAESystem, QueryEngine, compose_context, compute_surface, export_json, extract_salient,
-    import_json, ingest_text,
+    compose::compose_context,
+    query::QueryEngine,
+    salient::extract_salient,
+    serde_compat::{export_json, import_json},
+    surface::compute_surface,
+    system::DAESystem,
+    tokenizer::ingest_text,
 };
 use rand::SeedableRng;
 use rand::rngs::SmallRng;

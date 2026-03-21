@@ -12,8 +12,11 @@ use std::path::PathBuf;
 
 use std::io::Write;
 
-use am_core::{AmStore, QueryEngine, compose_context, compute_surface, export_json, ingest_text};
-use am_store::{BrainStore, Config};
+use am_core::{
+    compose::compose_context, query::QueryEngine, serde_compat::export_json, store_trait::AmStore,
+    surface::compute_surface, tokenizer::ingest_text,
+};
+use am_store::{config::Config, project::BrainStore};
 use anyhow::{Context, Result};
 use clap::{ColorChoice, Parser, Subcommand, ValueEnum};
 use rand::SeedableRng;
@@ -277,7 +280,7 @@ fn pidfile_path() -> Option<PathBuf> {
     let base = std::env::var("AM_DATA_DIR")
         .ok()
         .map(PathBuf::from)
-        .or_else(|| am_store::default_base_dir().ok())?;
+        .or_else(|| am_store::project::default_base_dir().ok())?;
     Some(base.join("am-serve.pid"))
 }
 

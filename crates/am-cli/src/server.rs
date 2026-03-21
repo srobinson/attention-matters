@@ -9,10 +9,21 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use am_core::{
-    AmStore, BatchQueryEngine, BatchQueryRequest, BudgetConfig, DAESystem, DaemonPhasor,
-    FeedbackSignal, Quaternion, QueryEngine, QueryManifest, RecallCategory, apply_feedback,
-    compose_context, compose_context_budgeted, compose_index, compute_surface, export_json,
-    extract_salient, import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
+    batch::{BatchQueryEngine, BatchQueryRequest},
+    compose::{
+        BudgetConfig, RecallCategory, compose_context, compose_context_budgeted, compose_index,
+        retrieve_by_ids,
+    },
+    feedback::{FeedbackSignal, apply_feedback},
+    phasor::DaemonPhasor,
+    quaternion::Quaternion,
+    query::{QueryEngine, QueryManifest},
+    salient::{extract_salient, mark_salient_typed},
+    serde_compat::{export_json, import_json},
+    store_trait::AmStore,
+    surface::compute_surface,
+    system::DAESystem,
+    tokenizer::ingest_text,
 };
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -985,7 +996,7 @@ impl<S: AmStore> AmServer<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use am_store::BrainStore;
+    use am_store::project::BrainStore;
 
     fn make_server() -> AmServer<BrainStore> {
         let store = BrainStore::open_in_memory().unwrap();
