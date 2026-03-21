@@ -77,6 +77,31 @@ impl Config {
     pub fn db_size_limit_bytes(&self) -> u64 {
         self.db_size_mb * 1024 * 1024
     }
+
+    /// Validate semantic invariants on the resolved config.
+    ///
+    /// Parse errors are handled earlier (warn + fallback). This catches
+    /// values that are syntactically valid but operationally nonsensical.
+    fn validate(&self) -> crate::error::Result<()> {
+        if self.data_dir.as_os_str().is_empty() {
+            return Err(crate::error::StoreError::InvalidData(
+                "data_dir must not be empty".into(),
+            ));
+        }
+        if !self.data_dir.is_absolute() {
+            return Err(crate::error::StoreError::InvalidData(format!(
+                "data_dir must be an absolute path, got: {}",
+                self.data_dir.display()
+            )));
+        }
+        if self.gc_enabled && self.db_size_mb < 1 {
+            return Err(crate::error::StoreError::InvalidData(format!(
+                "db_size_mb must be >= 1 when gc_enabled is true, got: {}",
+                self.db_size_mb
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Load configuration with the following precedence (highest wins):
@@ -90,7 +115,7 @@ impl Config {
 ///
 /// The config file's `data_dir` field controls where the database lives.
 /// `AM_DATA_DIR` overrides `data_dir` from the file.
-pub fn load() -> Config {
+pub fn load() -> crate::error::Result<Config> {
     let mut cfg = Config::default();
 
     // Find config file: CWD first, then global fallback
@@ -103,21 +128,30 @@ pub fn load() -> Config {
     if let Ok(dir) = env::var("AM_DATA_DIR") {
         cfg.data_dir = expand_tilde(&dir);
     }
-    if let Ok(val) = env::var("AM_GC_ENABLED")
-        && let Ok(b) = val.parse::<bool>()
-    {
-        cfg.gc_enabled = b;
+    if let Ok(val) = env::var("AM_GC_ENABLED") {
+        match val.parse::<bool>() {
+            Ok(b) => cfg.gc_enabled = b,
+            Err(_) => tracing::warn!(
+                "AM_GC_ENABLED={val:?}: expected bool, falling back to {}",
+                cfg.gc_enabled
+            ),
+        }
     }
-    if let Ok(val) = env::var("AM_DB_SIZE_MB")
-        && let Ok(mb) = val.parse::<u64>()
-    {
-        cfg.db_size_mb = mb;
+    if let Ok(val) = env::var("AM_DB_SIZE_MB") {
+        match val.parse::<u64>() {
+            Ok(mb) => cfg.db_size_mb = mb,
+            Err(_) => tracing::warn!(
+                "AM_DB_SIZE_MB={val:?}: expected integer, falling back to {}",
+                cfg.db_size_mb
+            ),
+        }
     }
     if let Ok(val) = env::var("AM_SYNC_LOG_DIR") {
         cfg.sync_log_dir = Some(expand_tilde(&val));
     }
 
-    cfg
+    cfg.validate()?;
+    Ok(cfg)
 }
 
 /// Find the config file (first match wins):
@@ -340,5 +374,71 @@ recency_weight = 3.0
         assert_eq!(policy.retention_days, am_core::DEFAULT_RETENTION_DAYS);
         assert_eq!(policy.min_neighborhoods, am_core::DEFAULT_MIN_NEIGHBORHOODS);
         assert!((policy.recency_weight - am_core::DEFAULT_RECENCY_WEIGHT).abs() < 1e-10);
+    }
+
+    #[test]
+    fn validate_rejects_empty_data_dir() {
+        let cfg = Config {
+            data_dir: PathBuf::from(""),
+            ..Config::default()
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("data_dir"),
+            "error should name the field"
+        );
+        assert!(err.to_string().contains("must not be empty"));
+    }
+
+    #[test]
+    fn validate_rejects_relative_data_dir() {
+        let cfg = Config {
+            data_dir: PathBuf::from("relative/path"),
+            ..Config::default()
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("data_dir"),
+            "error should name the field"
+        );
+        assert!(err.to_string().contains("absolute"));
+    }
+
+    #[test]
+    fn validate_rejects_gc_with_zero_db_size() {
+        let cfg = Config {
+            data_dir: PathBuf::from("/tmp/am-test"),
+            gc_enabled: true,
+            db_size_mb: 0,
+            ..Config::default()
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("db_size_mb"),
+            "error should name the field"
+        );
+        assert!(err.to_string().contains(">= 1"));
+    }
+
+    #[test]
+    fn validate_accepts_gc_disabled_with_zero_db_size() {
+        let cfg = Config {
+            data_dir: PathBuf::from("/tmp/am-test"),
+            gc_enabled: false,
+            db_size_mb: 0,
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_valid_config() {
+        let cfg = Config {
+            data_dir: PathBuf::from("/tmp/am-test"),
+            gc_enabled: true,
+            db_size_mb: 50,
+            ..Config::default()
+        };
+        assert!(cfg.validate().is_ok());
     }
 }

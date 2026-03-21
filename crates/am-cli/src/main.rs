@@ -328,12 +328,12 @@ enum InspectMode {
     Neighborhoods,
 }
 
-pub(crate) fn load_config() -> Config {
-    am_store::config::load()
+pub(crate) fn load_config() -> Result<Config> {
+    am_store::config::load().context("invalid configuration")
 }
 
 pub(crate) fn open_store(_cli: &Cli) -> Result<BrainStore> {
-    let config = load_config();
+    let config = load_config()?;
     BrainStore::open(&config).context("failed to open brain store")
 }
 
@@ -1085,7 +1085,7 @@ fn cmd_gc(cli: &Cli, floor: u32, target_mb: Option<u64>, dry_run: bool) -> Resul
     }
 
     // Run activation-floor GC pass
-    let config = load_config();
+    let config = load_config()?;
     let result = db.gc_pass(floor, &config.retention).context("GC failed")?;
 
     println!("{bold}GC complete{reset}\n");

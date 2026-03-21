@@ -699,3 +699,48 @@ fn forget_requires_argument() {
     // No term, no --episode, no --conscious
     am_cmd(&dir).args(["forget"]).assert().failure();
 }
+
+// -- Config validation integration tests --
+
+#[test]
+fn config_validation_gc_with_zero_db_size() {
+    let dir = TempDir::new().unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.env("AM_DATA_DIR", dir.path())
+        .env("AM_GC_ENABLED", "true")
+        .env("AM_DB_SIZE_MB", "0")
+        .args(["stats"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("db_size_mb"))
+        .stderr(predicate::str::contains(">= 1"));
+}
+
+#[test]
+fn config_validation_relative_data_dir() {
+    let _dir = TempDir::new().unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.env("AM_DATA_DIR", "relative/path")
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .args(["stats"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("data_dir"))
+        .stderr(predicate::str::contains("absolute"));
+}
+
+#[test]
+fn config_validation_malformed_toml_still_works() {
+    let dir = TempDir::new().unwrap();
+    // Write invalid TOML to the data dir
+    std::fs::write(dir.path().join(".am.config.toml"), "not valid toml [[[").unwrap();
+    // Should still succeed because parse errors are fail-open (warn + fallback)
+    am_cmd(&dir)
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("N:"));
+}
