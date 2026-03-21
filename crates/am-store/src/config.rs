@@ -320,14 +320,21 @@ pub fn generate_default_toml() -> String {
 /// Checks $HOME, then $USERPROFILE. Returns an error if neither is set.
 /// This is the single source of truth for home resolution in am-store.
 pub fn resolve_home_dir() -> crate::error::Result<PathBuf> {
-    env::var("HOME")
+    let home = env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
-        .map(PathBuf::from)
         .map_err(|_| {
             crate::error::StoreError::InvalidData(
                 "could not determine home directory: neither HOME nor USERPROFILE is set".into(),
             )
-        })
+        })?;
+
+    let path = PathBuf::from(&home);
+    if home.is_empty() || !path.is_absolute() {
+        return Err(crate::error::StoreError::InvalidData(format!(
+            "home directory must be an absolute path, got: {home:?}"
+        )));
+    }
+    Ok(path)
 }
 
 fn expand_tilde(path: &str) -> crate::error::Result<PathBuf> {
@@ -498,6 +505,79 @@ recency_weight = 3.0
         // HOME is set in normal test environments
         let home = resolve_home_dir().unwrap();
         assert!(home.is_absolute());
+    }
+
+    #[test]
+    fn resolve_home_dir_rejects_relative_home() {
+        temp_env::with_vars(
+            [
+                ("HOME", Some("relativehome")),
+                ("USERPROFILE", None::<&str>),
+            ],
+            || {
+                let result = resolve_home_dir();
+                assert!(result.is_err());
+                let msg = result.unwrap_err().to_string();
+                assert!(
+                    msg.contains("absolute"),
+                    "error should mention absolute: {msg}"
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_home_dir_rejects_empty_home() {
+        temp_env::with_vars([("HOME", Some("")), ("USERPROFILE", None::<&str>)], || {
+            let result = resolve_home_dir();
+            assert!(result.is_err());
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("absolute"),
+                "error should mention absolute: {msg}"
+            );
+        });
+    }
+
+    #[test]
+    fn resolve_home_dir_prefers_home_over_userprofile() {
+        temp_env::with_vars(
+            [("HOME", Some("/first")), ("USERPROFILE", Some("/second"))],
+            || {
+                let home = resolve_home_dir().unwrap();
+                assert_eq!(home, PathBuf::from("/first"));
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_home_dir_falls_back_to_userprofile() {
+        temp_env::with_vars(
+            [("HOME", None::<&str>), ("USERPROFILE", Some("/fallback"))],
+            || {
+                let home = resolve_home_dir().unwrap();
+                assert_eq!(home, PathBuf::from("/fallback"));
+            },
+        );
+    }
+
+    #[test]
+    fn resolve_home_dir_rejects_relative_userprofile_fallback() {
+        temp_env::with_vars(
+            [
+                ("HOME", None::<&str>),
+                ("USERPROFILE", Some("relative/profile")),
+            ],
+            || {
+                let result = resolve_home_dir();
+                assert!(result.is_err());
+                let msg = result.unwrap_err().to_string();
+                assert!(
+                    msg.contains("absolute"),
+                    "error should mention absolute: {msg}"
+                );
+            },
+        );
     }
 
     #[test]

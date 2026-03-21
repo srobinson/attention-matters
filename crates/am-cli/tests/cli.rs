@@ -745,6 +745,50 @@ fn config_validation_malformed_toml_still_works() {
         .stdout(predicate::str::contains("N:"));
 }
 
+// -- Relative HOME rejection (ALP-1635) --
+
+#[test]
+fn relative_home_without_data_dir_fails() {
+    let _dir = TempDir::new().unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.env("HOME", "relativehome")
+        .env_remove("USERPROFILE")
+        .env_remove("AM_DATA_DIR")
+        .args(["stats"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("data_dir"));
+}
+
+#[test]
+fn empty_home_without_data_dir_fails() {
+    let _dir = TempDir::new().unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.env("HOME", "")
+        .env_remove("USERPROFILE")
+        .env_remove("AM_DATA_DIR")
+        .args(["stats"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("data_dir"));
+}
+
+#[test]
+fn relative_home_with_absolute_data_dir_succeeds() {
+    let dir = TempDir::new().unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.env("HOME", "relativehome")
+        .env_remove("USERPROFILE")
+        .env("AM_DATA_DIR", dir.path())
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("N:"));
+}
+
 // -- P3: Home resolution integration tests --
 
 #[test]
