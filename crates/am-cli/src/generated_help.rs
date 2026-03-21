@@ -2,7 +2,18 @@
 #![allow(dead_code, unused)]
 #![allow(clippy::all)]
 #[rustfmt::skip]
+pub const CLI_ABOUT: &str = "Geometric memory for AI agents - persistent recall across sessions";
+#[rustfmt::skip]
+pub const CLI_LONG_ABOUT: &str = "am - Geometric memory for AI agents\n\nModels memory as points on a 3-sphere (S³ manifold) using quaternion positions,\ngolden-angle phasors, IDF-weighted drift, and Kuramoto phase coupling. Memories\naren't stored in flat text - they're positioned in geometric space where related\nconcepts naturally cluster through physics-inspired dynamics.\n\nHow it works:\n  - Words are placed on S³ as quaternion positions within neighborhoods\n  - Querying activates matching words and drifts them closer via SLERP\n  - Phase coupling synchronizes related concepts across sessions\n  - Conscious memories (marked salient) persist globally across projects\n\nAs an MCP server (primary mode):\n  Claude Code runs `am serve` automatically. The AI calls these tools:\n    am_query              Recall context at session start\n    am_activate_response  Strengthen connections after responses\n    am_salient            Mark insights as conscious memory\n    am_buffer             Buffer exchanges, auto-create episodes\n    am_ingest             Ingest documents as memory episodes\n    am_stats              Memory system diagnostics\n    am_export / am_import Portable state backup and restore\n\nAs a CLI (for humans):\n  Query, ingest, inspect, and manage memories directly.";
+#[rustfmt::skip]
+pub const CLI_AFTER_HELP: &str = "Setup with Claude Code:\n  claude mcp add am -- npx -y attention-matters serve\n\nQuick start:\n  am ingest README.md              # Feed a document into memory\n  am query \"authentication flow\"   # Recall relevant context\n  am inspect                       # See what's in memory\n  am inspect conscious             # Browse conscious memories\n  am stats                         # System diagnostics\n\nData location:  ~/.attention-matters/brain.db\n  Single unified brain - one product, one memory.\n\nConfiguration:  ~/.attention-matters/.am.config.toml\n  Environment variables override file values:\n    AM_DATA_DIR     Base directory for brain.db and config\n    AM_GC_ENABLED   Enable automatic GC on startup (default: false)\n    AM_DB_SIZE_MB   DB size limit in MB for GC threshold (default: 50)\n\nhttps://github.com/srobinson/attention-matters";
+
+#[rustfmt::skip]
 pub const QUERY_ABOUT: &str = "Query geometric memory for relevant context.";
+#[rustfmt::skip]
+pub const QUERY_LONG_ABOUT: &str = "Query the geometric memory system.\n\nActivates matching words on the S³ manifold, drifts related\nconcepts closer via IDF-weighted SLERP, computes phasor\ninterference, and returns composed context split into:\n* Conscious recall (previously marked salient)\n* Subconscious recall (from ingested documents/conversations)\n* Novel connections (lateral associations via interference)";
+#[rustfmt::skip]
+pub const QUERY_AFTER_HELP: &str = "Examples:\n  am query \"authentication middleware\"\n  am query \"database schema migration\" --verbose";
 #[rustfmt::skip]
 pub const QUERY_TEXT_HELP: &str = "Query text";
 #[rustfmt::skip]
@@ -40,18 +51,34 @@ pub const BUFFER_ASSISTANT_HELP: &str = "Assistant's response text";
 #[rustfmt::skip]
 pub const INGEST_ABOUT: &str = "Ingest a document as a memory episode.";
 #[rustfmt::skip]
+pub const INGEST_LONG_ABOUT: &str = "Ingest document files as memory episodes.\n\nText is split into 3-sentence chunks, each becoming a\nneighborhood of word occurrences placed on the S³ manifold\nwith golden-angle phasor spacing. Supports .txt, .md, .html.";
+#[rustfmt::skip]
+pub const INGEST_AFTER_HELP: &str = "Examples:\n  am ingest README.md ARCHITECTURE.md\n  am ingest --dir ./docs\n  am ingest --dir ./docs notes.txt";
+#[rustfmt::skip]
 pub const INGEST_TEXT_HELP: &str = "Document text to ingest";
 #[rustfmt::skip]
 pub const INGEST_NAME_HELP: &str = "Episode name";
 
 #[rustfmt::skip]
 pub const STATS_ABOUT: &str = "Get memory system statistics.";
+#[rustfmt::skip]
+pub const STATS_LONG_ABOUT: &str = "Display memory statistics.\n\nShows total occurrences (N), episode count, conscious memory\ncount, database size, and activation distribution.";
+#[rustfmt::skip]
+pub const STATS_AFTER_HELP: &str = "Example:\n  am stats";
 
 #[rustfmt::skip]
 pub const EXPORT_ABOUT: &str = "Export the full DAE system state as JSON.";
+#[rustfmt::skip]
+pub const EXPORT_LONG_ABOUT: &str = "Export the full memory state as v0.7.2-compatible JSON.\n\nThe exported file contains all episodes, neighborhoods,\noccurrences, and conscious memories. Can be imported on\nanother machine or into a different project.";
+#[rustfmt::skip]
+pub const EXPORT_AFTER_HELP: &str = "Example:\n  am export backup.json";
 
 #[rustfmt::skip]
 pub const IMPORT_ABOUT: &str = "Import a full DAE system state from JSON.";
+#[rustfmt::skip]
+pub const IMPORT_LONG_ABOUT: &str = "Import a previously exported memory state.\n\nReplaces the current memory with the imported state.\nAll memories are stored in the unified brain database.";
+#[rustfmt::skip]
+pub const IMPORT_AFTER_HELP: &str = "Example:\n  am import backup.json";
 #[rustfmt::skip]
 pub const IMPORT_STATE_HELP: &str = "Full state JSON to import";
 
@@ -68,3 +95,45 @@ pub const FEEDBACK_SIGNAL_HELP: &str = "Feedback signal: boost or demote";
 pub const BATCH_QUERY_ABOUT: &str = "Process multiple queries in a single batch pass.";
 #[rustfmt::skip]
 pub const BATCH_QUERY_QUERIES_HELP: &str = "List of queries (JSON array of {query, max_tokens?} objects)";
+
+#[rustfmt::skip]
+pub const SERVE_ABOUT: &str = "Start MCP server on stdio transport";
+#[rustfmt::skip]
+pub const SERVE_LONG_ABOUT: &str = "Start the MCP (Model Context Protocol) server on stdio transport.\n\nThis is the primary mode - Claude Code launches this automatically\nwhen configured as an MCP server. The server exposes 12 tools that\nthe AI agent calls to build and query geometric memory.";
+#[rustfmt::skip]
+pub const SERVE_AFTER_HELP: &str = "Setup:\n  claude mcp add am -- npx -y attention-matters serve\n\nThe server exposes:\n  am_query, am_query_index, am_retrieve, am_activate_response,\n  am_salient, am_buffer, am_ingest, am_stats, am_export,\n  am_import, am_feedback, am_batch_query";
+
+#[rustfmt::skip]
+pub const INSPECT_ABOUT: &str = "Browse memories, episodes, and neighborhoods";
+#[rustfmt::skip]
+pub const INSPECT_LONG_ABOUT: &str = "Inspect the contents of geometric memory.\n\nFive modes let you see exactly what's stored:\n• overview (default) - summary with top words and recent episodes\n• conscious - list all conscious (salient) memories\n• episodes - list subconscious episodes with stats\n• neighborhoods - all neighborhoods ranked by activation\n• --query - run a query and show the full recall breakdown\n\nTrust requires transparency. This command shows you\nwhat the AI remembers and why.";
+#[rustfmt::skip]
+pub const INSPECT_AFTER_HELP: &str = "Examples:\n  am inspect                        # Overview\n  am inspect conscious              # List conscious memories\n  am inspect episodes --limit 50    # More episodes\n  am inspect neighborhoods --json   # Machine-readable\n  am inspect --query \"auth flow\"    # Query with full breakdown";
+
+#[rustfmt::skip]
+pub const SYNC_ABOUT: &str = "Ingest Claude Code session transcripts into memory";
+#[rustfmt::skip]
+pub const SYNC_LONG_ABOUT: &str = "Sync Claude Code session transcripts into geometric memory.\n\nTwo modes:\n1. Stdin (hook-triggered): reads transcript_path + session_id from\n   JSON on stdin and ingests that single session. Used by Claude Code\n   PreCompact/Stop hooks.\n2. Discovery (--all): walks the filesystem to discover and re-ingest\n   all session transcripts. For manual bulk re-sync.\n\nReplace semantics: if an episode with the same name already exists,\nit is replaced (not duplicated).";
+#[rustfmt::skip]
+pub const SYNC_AFTER_HELP: &str = "Examples:\n  echo '{...}' | am sync     # Ingest single session from hook stdin\n  am sync --all              # Discover and re-ingest all transcripts\n  am sync --all --dry-run    # Show what would be ingested\n  am sync --all --dir ~/.claude  # Custom Claude config directory";
+
+#[rustfmt::skip]
+pub const GC_ABOUT: &str = "Garbage collect: prune cold occurrences and compact storage";
+#[rustfmt::skip]
+pub const GC_LONG_ABOUT: &str = "Run garbage collection on the memory database.\n\nRemoves low-activation occurrences (below the activation floor),\ncleans up empty neighborhoods and episodes, then VACUUMs the\nSQLite database to reclaim disk space.\n\nConscious memories are never auto-evicted.";
+#[rustfmt::skip]
+pub const GC_AFTER_HELP: &str = "Examples:\n  am gc                     # Default: floor=1 (remove zero-activation)\n  am gc --floor 2           # Remove occurrences activated ≤2 times\n  am gc --dry-run           # Preview what would be removed\n  am gc --target-mb 10      # Shrink DB to ~10 MB";
+
+#[rustfmt::skip]
+pub const FORGET_ABOUT: &str = "Selectively forget memories by term, episode, or conscious ID";
+#[rustfmt::skip]
+pub const FORGET_LONG_ABOUT: &str = "Remove specific memories from the database.\n\nThree modes:\n• By term: removes all occurrences of a word across all episodes\n• By episode: removes an entire subconscious episode by UUID\n• By conscious ID: removes a specific conscious memory by UUID\n\nUse `am inspect` to find IDs before forgetting.";
+#[rustfmt::skip]
+pub const FORGET_AFTER_HELP: &str = "Examples:\n  am forget password            # Remove all occurrences of \"password\"\n  am forget --episode abc123    # Remove episode by ID\n  am forget --conscious def456  # Remove conscious memory by ID";
+
+#[rustfmt::skip]
+pub const INIT_ABOUT: &str = "Generate a default .am.config.toml";
+#[rustfmt::skip]
+pub const INIT_LONG_ABOUT: &str = "Generate a fully commented .am.config.toml with all fields\nand their compiled defaults. Writes to the current directory\nby default, or to ~/.attention-matters/ with --global.\nIf a config file already exists, prompts before overwriting.";
+#[rustfmt::skip]
+pub const INIT_AFTER_HELP: &str = "Examples:\n  am init                 # Write config to current directory\n  am init --global        # Write config to ~/.attention-matters/\n  am init --force         # Overwrite without prompting";

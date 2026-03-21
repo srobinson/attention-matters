@@ -22,53 +22,9 @@ use rand::rngs::SmallRng;
 #[derive(Parser)]
 #[command(
     name = "am",
-    about = "Geometric memory for AI agents - persistent recall across sessions",
-    long_about = "\
-am - Geometric memory for AI agents
-
-Models memory as points on a 3-sphere (S³ manifold) using quaternion positions,
-golden-angle phasors, IDF-weighted drift, and Kuramoto phase coupling. Memories
-aren't stored in flat text - they're positioned in geometric space where related
-concepts naturally cluster through physics-inspired dynamics.
-
-How it works:
-  - Words are placed on S³ as quaternion positions within neighborhoods
-  - Querying activates matching words and drifts them closer via SLERP
-  - Phase coupling synchronizes related concepts across sessions
-  - Conscious memories (marked salient) persist globally across projects
-
-As an MCP server (primary mode):
-  Claude Code runs `am serve` automatically. The AI calls these tools:
-    am_query              Recall context at session start
-    am_activate_response  Strengthen connections after responses
-    am_salient            Mark insights as conscious memory
-    am_buffer             Buffer exchanges, auto-create episodes
-    am_ingest             Ingest documents as memory episodes
-    am_stats              Memory system diagnostics
-    am_export / am_import Portable state backup and restore
-
-As a CLI (for humans):
-  Query, ingest, inspect, and manage memories directly.",
-    after_help = "Setup with Claude Code:
-  claude mcp add am -- npx -y attention-matters serve
-
-Quick start:
-  am ingest README.md              # Feed a document into memory
-  am query \"authentication flow\"   # Recall relevant context
-  am inspect                       # See what's in memory
-  am inspect conscious             # Browse conscious memories
-  am stats                         # System diagnostics
-
-Data location:  ~/.attention-matters/brain.db
-  Single unified brain - one product, one memory.
-
-Configuration:  ~/.attention-matters/.am.config.toml
-  Environment variables override file values:
-    AM_DATA_DIR     Base directory for brain.db and config
-    AM_GC_ENABLED   Enable automatic GC on startup (default: false)
-    AM_DB_SIZE_MB   DB size limit in MB for GC threshold (default: 50)
-
-https://github.com/srobinson/attention-matters",
+    about = generated_help::CLI_ABOUT,
+    long_about = generated_help::CLI_LONG_ABOUT,
+    after_help = generated_help::CLI_AFTER_HELP,
     version,
     color = ColorChoice::Auto
 )]
@@ -83,33 +39,17 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start MCP server on stdio transport
     #[command(
-        long_about = "Start the MCP (Model Context Protocol) server on stdio transport.\n\n\
-            This is the primary mode - Claude Code launches this automatically\n\
-            when configured as an MCP server. The server exposes 12 tools that\n\
-            the AI agent calls to build and query geometric memory.",
-        after_help = "Setup:\n  \
-            claude mcp add am -- npx -y attention-matters serve\n\n\
-            The server exposes:\n  \
-            am_query, am_query_index, am_retrieve, am_activate_response,\n  \
-            am_salient, am_buffer, am_ingest, am_stats, am_export,\n  \
-            am_import, am_feedback, am_batch_query"
+        about = generated_help::SERVE_ABOUT,
+        long_about = generated_help::SERVE_LONG_ABOUT,
+        after_help = generated_help::SERVE_AFTER_HELP,
     )]
     Serve,
 
     #[command(
         about = generated_help::QUERY_ABOUT,
-        long_about = "Query the geometric memory system.\n\n\
-            Activates matching words on the S³ manifold, drifts related\n\
-            concepts closer via IDF-weighted SLERP, computes phasor\n\
-            interference, and returns composed context split into:\n\
-            * Conscious recall (previously marked salient)\n\
-            * Subconscious recall (from ingested documents/conversations)\n\
-            * Novel connections (lateral associations via interference)",
-        after_help = "Examples:\n  \
-            am query \"authentication middleware\"\n  \
-            am query \"database schema migration\" --verbose"
+        long_about = generated_help::QUERY_LONG_ABOUT,
+        after_help = generated_help::QUERY_AFTER_HELP,
     )]
     Query {
         #[arg(help = generated_help::QUERY_TEXT_HELP)]
@@ -118,14 +58,8 @@ enum Commands {
 
     #[command(
         about = generated_help::INGEST_ABOUT,
-        long_about = "Ingest document files as memory episodes.\n\n\
-            Text is split into 3-sentence chunks, each becoming a\n\
-            neighborhood of word occurrences placed on the S³ manifold\n\
-            with golden-angle phasor spacing. Supports .txt, .md, .html.",
-        after_help = "Examples:\n  \
-            am ingest README.md ARCHITECTURE.md\n  \
-            am ingest --dir ./docs\n  \
-            am ingest --dir ./docs notes.txt"
+        long_about = generated_help::INGEST_LONG_ABOUT,
+        after_help = generated_help::INGEST_AFTER_HELP,
     )]
     Ingest {
         /// File path(s) to ingest
@@ -139,22 +73,15 @@ enum Commands {
 
     #[command(
         about = generated_help::STATS_ABOUT,
-        long_about = "Display memory statistics.\n\n\
-            Shows total occurrences (N), episode count, conscious memory\n\
-            count, database size, and activation distribution.",
-        after_help = "Example:\n  \
-            am stats"
+        long_about = generated_help::STATS_LONG_ABOUT,
+        after_help = generated_help::STATS_AFTER_HELP,
     )]
     Stats,
 
     #[command(
         about = generated_help::EXPORT_ABOUT,
-        long_about = "Export the full memory state as v0.7.2-compatible JSON.\n\n\
-            The exported file contains all episodes, neighborhoods,\n\
-            occurrences, and conscious memories. Can be imported on\n\
-            another machine or into a different project.",
-        after_help = "Example:\n  \
-            am export backup.json"
+        long_about = generated_help::EXPORT_LONG_ABOUT,
+        after_help = generated_help::EXPORT_AFTER_HELP,
     )]
     Export {
         /// Output file path
@@ -163,34 +90,18 @@ enum Commands {
 
     #[command(
         about = generated_help::IMPORT_ABOUT,
-        long_about = "Import a previously exported memory state.\n\n\
-            Replaces the current memory with the imported state.\n\
-            All memories are stored in the unified brain database.",
-        after_help = "Example:\n  \
-            am import backup.json"
+        long_about = generated_help::IMPORT_LONG_ABOUT,
+        after_help = generated_help::IMPORT_AFTER_HELP,
     )]
     Import {
         /// Input file path
         path: PathBuf,
     },
 
-    /// Browse memories, episodes, and neighborhoods
     #[command(
-        long_about = "Inspect the contents of geometric memory.\n\n\
-            Five modes let you see exactly what's stored:\n\
-            • overview (default) - summary with top words and recent episodes\n\
-            • conscious - list all conscious (salient) memories\n\
-            • episodes - list subconscious episodes with stats\n\
-            • neighborhoods - all neighborhoods ranked by activation\n\
-            • --query - run a query and show the full recall breakdown\n\n\
-            Trust requires transparency. This command shows you\n\
-            what the AI remembers and why.",
-        after_help = "Examples:\n  \
-            am inspect                        # Overview\n  \
-            am inspect conscious              # List conscious memories\n  \
-            am inspect episodes --limit 50    # More episodes\n  \
-            am inspect neighborhoods --json   # Machine-readable\n  \
-            am inspect --query \"auth flow\"    # Query with full breakdown"
+        about = generated_help::INSPECT_ABOUT,
+        long_about = generated_help::INSPECT_LONG_ABOUT,
+        after_help = generated_help::INSPECT_AFTER_HELP,
     )]
     Inspect {
         /// What to inspect
@@ -210,22 +121,10 @@ enum Commands {
         json: bool,
     },
 
-    /// Ingest Claude Code session transcripts into memory
     #[command(
-        long_about = "Sync Claude Code session transcripts into geometric memory.\n\n\
-            Two modes:\n\
-            1. Stdin (hook-triggered): reads transcript_path + session_id from\n\
-               JSON on stdin and ingests that single session. Used by Claude Code\n\
-               PreCompact/Stop hooks.\n\
-            2. Discovery (--all): walks the filesystem to discover and re-ingest\n\
-               all session transcripts. For manual bulk re-sync.\n\n\
-            Replace semantics: if an episode with the same name already exists,\n\
-            it is replaced (not duplicated).",
-        after_help = "Examples:\n  \
-            echo '{...}' | am sync     # Ingest single session from hook stdin\n  \
-            am sync --all              # Discover and re-ingest all transcripts\n  \
-            am sync --all --dry-run    # Show what would be ingested\n  \
-            am sync --all --dir ~/.claude  # Custom Claude config directory"
+        about = generated_help::SYNC_ABOUT,
+        long_about = generated_help::SYNC_LONG_ABOUT,
+        after_help = generated_help::SYNC_AFTER_HELP,
     )]
     Sync {
         /// Discover and ingest all transcripts via filesystem walk
@@ -241,18 +140,10 @@ enum Commands {
         dir: Option<PathBuf>,
     },
 
-    /// Garbage collect: prune cold occurrences and compact storage
     #[command(
-        long_about = "Run garbage collection on the memory database.\n\n\
-            Removes low-activation occurrences (below the activation floor),\n\
-            cleans up empty neighborhoods and episodes, then VACUUMs the\n\
-            SQLite database to reclaim disk space.\n\n\
-            Conscious memories are never auto-evicted.",
-        after_help = "Examples:\n  \
-            am gc                     # Default: floor=1 (remove zero-activation)\n  \
-            am gc --floor 2           # Remove occurrences activated ≤2 times\n  \
-            am gc --dry-run           # Preview what would be removed\n  \
-            am gc --target-mb 10      # Shrink DB to ~10 MB"
+        about = generated_help::GC_ABOUT,
+        long_about = generated_help::GC_LONG_ABOUT,
+        after_help = generated_help::GC_AFTER_HELP,
     )]
     Gc {
         /// Activation floor: remove occurrences with count ≤ this value
@@ -268,18 +159,10 @@ enum Commands {
         dry_run: bool,
     },
 
-    /// Selectively forget memories by term, episode, or conscious ID
     #[command(
-        long_about = "Remove specific memories from the database.\n\n\
-            Three modes:\n\
-            • By term: removes all occurrences of a word across all episodes\n\
-            • By episode: removes an entire subconscious episode by UUID\n\
-            • By conscious ID: removes a specific conscious memory by UUID\n\n\
-            Use `am inspect` to find IDs before forgetting.",
-        after_help = "Examples:\n  \
-            am forget password            # Remove all occurrences of \"password\"\n  \
-            am forget --episode abc123    # Remove episode by ID\n  \
-            am forget --conscious def456  # Remove conscious memory by ID"
+        about = generated_help::FORGET_ABOUT,
+        long_about = generated_help::FORGET_LONG_ABOUT,
+        after_help = generated_help::FORGET_AFTER_HELP,
     )]
     Forget {
         /// Word/term to forget (removes all occurrences)
@@ -294,16 +177,10 @@ enum Commands {
         conscious: Option<String>,
     },
 
-    /// Generate a default .am.config.toml
     #[command(
-        long_about = "Generate a fully commented .am.config.toml with all fields\n\
-            and their compiled defaults. Writes to the current directory\n\
-            by default, or to ~/.attention-matters/ with --global.\n\
-            If a config file already exists, prompts before overwriting.",
-        after_help = "Examples:\n  \
-            am init                 # Write config to current directory\n  \
-            am init --global        # Write config to ~/.attention-matters/\n  \
-            am init --force         # Overwrite without prompting"
+        about = generated_help::INIT_ABOUT,
+        long_about = generated_help::INIT_LONG_ABOUT,
+        after_help = generated_help::INIT_AFTER_HELP,
     )]
     Init {
         /// Write to ~/.attention-matters/ instead of the current directory
