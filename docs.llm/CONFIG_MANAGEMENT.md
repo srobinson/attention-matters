@@ -49,6 +49,8 @@ impl Default for Config {
 2. `$<PROJECT>_DATA_DIR/.<project>.config.toml` - custom data directory
 3. `~/.<project>/.<project>.config.toml` - global fallback
 
+**Caveat:** CWD-first resolution is unpredictable in MCP stdio deployments where the parent process controls CWD. MCP server entry points should set the `<PROJECT>_DATA_DIR` env var explicitly rather than relying on file resolution.
+
 **Partial deserialization pattern:** Use a separate `FileConfig` struct where every field is `Option<T>`. This decouples the file schema from the resolved config and means missing keys silently pass through to defaults.
 
 ```rust
@@ -77,8 +79,31 @@ Apply file values with explicit `if let Some(v)` per field. This keeps the merge
 **Parsing rules:**
 - Use `env::var("NAME")` with `.ok()` or `if let Ok(val)` - missing vars are not errors
 - Parse typed values explicitly: `val.parse::<bool>()`, `val.parse::<u64>()`
-- If parse fails, silently skip (the file or default value stands)
+- If parse fails, log `tracing::warn!` with the var name, raw value, and expected type, then fall back to the file/default value
 - Path values support tilde expansion (`~/` replaced with `$HOME`)
+
+## Validation
+
+Config loading distinguishes two categories of error:
+
+- **Syntax/deserialization errors** (malformed TOML, unknown keys): warn and fall back to defaults. Fail open.
+- **Semantic validation errors** (parseable but nonsensical resolved values): return error. Fail closed.
+
+After `load()` merges all three layers, it calls `validate()` before returning. Validation rules catch values that would cause silent data loss or undefined behavior at runtime.
+
+### Required validation rules
+
+| Field | Rule | Rationale |
+|-------|------|-----------|
+| `db_size_mb` | >= 1 when `gc_enabled == true` | Zero-byte GC target evicts everything |
+| `data_dir` | Must not be empty | Empty string resolves to CWD |
+| `data_dir` | Must be absolute after tilde expansion | Relative paths write to unpredictable locations |
+
+### Error behavior
+
+Return `StoreError::InvalidData(String)` with a message naming the offending field and the rule it violated. Callers (CLI commands, MCP server startup) exit non-zero before opening the database.
+
+`am init` is exempt because it generates config rather than consuming it.
 
 ## Config Structs
 
@@ -115,23 +140,24 @@ struct FileConfig {
 
 ## Loading Function
 
-Every project exposes a single `pub fn load() -> Config` that orchestrates all three layers:
+Every project exposes a single `pub fn load() -> Result<Config>` that orchestrates all three layers and validates the result:
 
 ```rust
-pub fn load() -> Config {
-    let mut cfg = Config::default();           // Layer 1
+pub fn load() -> crate::error::Result<Config> {
+    let mut cfg = runtime_defaults()?;          // Layer 1 (fallible: home resolution)
 
-    if let Some(path) = find_config_file() {   // Layer 2
+    if let Some(path) = find_config_file() {    // Layer 2
         apply_file_config(&mut cfg, &path);
     }
 
     // Layer 3: env vars override everything
     if let Ok(dir) = env::var("PROJECT_DATA_DIR") {
-        cfg.data_dir = expand_tilde(&dir);
+        cfg.data_dir = expand_tilde(&dir)?;
     }
     // ... remaining env var overrides
 
-    cfg
+    cfg.validate()?;
+    Ok(cfg)
 }
 ```
 
@@ -139,6 +165,7 @@ pub fn load() -> Config {
 - Pure function of filesystem + environment state
 - No global mutable state
 - Can be called multiple times safely
+- Returns `Result<Config>` - validation errors are propagated, not swallowed
 - Returns owned `Config`, not a reference to a singleton
 
 ## Path Handling
@@ -146,21 +173,28 @@ pub fn load() -> Config {
 All path config values MUST support tilde expansion:
 
 ```rust
-fn expand_tilde(path: &str) -> PathBuf {
+fn resolve_home_dir() -> crate::error::Result<PathBuf> {
+    env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .map_err(|_| StoreError::InvalidData(
+            "Cannot resolve home directory: HOME is not set".into()
+        ))
+}
+
+fn expand_tilde(path: &str) -> crate::error::Result<PathBuf> {
     if let Some(rest) = path.strip_prefix("~/") {
-        let home = env::var("HOME")
-            .or_else(|_| env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home).join(rest)
+        Ok(resolve_home_dir()?.join(rest))
     } else {
-        PathBuf::from(path)
+        Ok(PathBuf::from(path))
     }
 }
 ```
 
 - `~/` expands to `$HOME` (Unix) or `$USERPROFILE` (Windows)
 - Absolute paths pass through unchanged
-- Fallback to `.` if neither home var is set
+- If neither home var is set, return an error. Do not fall back to CWD.
+- One shared `resolve_home_dir()` helper; no duplicated fallback logic
 
 ## Error Handling
 
@@ -169,10 +203,12 @@ fn expand_tilde(path: &str) -> PathBuf {
 | Config file missing | No error. Use defaults. |
 | Config file malformed | Log warning. Use defaults. |
 | Env var missing | Skip silently. |
-| Env var parse failure | Skip silently. File/default value stands. |
+| Env var parse failure | Log `tracing::warn!` with var name, raw value, and expected type. Fall back to file/default value. |
+| Semantic validation failure | Return `StoreError::InvalidData`. Caller exits non-zero. |
+| Home directory unresolvable | Return `StoreError::InvalidData`. No CWD fallback. |
 | Data directory missing | Create it (at database init time, not config load). |
 
-Config loading MUST NOT panic. Config loading MUST NOT return `Result` - it always succeeds by falling through to defaults.
+Config loading MUST NOT panic. Config loading returns `Result` - syntax/deserialization errors fall through to defaults (fail open), but semantic validation errors on the resolved config are returned as errors (fail closed).
 
 ## Init Command
 
@@ -181,8 +217,10 @@ Every CLI project SHOULD provide an `init` subcommand that generates a fully com
 ```
 project init          # writes .project.config.toml in CWD
 project init --global # writes to ~/.project/.project.config.toml
-project init --force  # overwrite existing
+project init --force  # overwrite existing (prints path being overwritten)
 ```
+
+`init --force` prints the path being overwritten. No diff or confirmation (that is the purpose of --force), but the user sees what was replaced.
 
 The generated file comments out all values with their defaults, serving as inline documentation:
 
@@ -210,10 +248,12 @@ PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 5000;
 PRAGMA wal_autocheckpoint = 100;
-PRAGMA wal_checkpoint(TRUNCATE);   -- startup only
+PRAGMA wal_checkpoint(TRUNCATE);   -- startup only, blocks readers
 ```
 
 Database path derives from `config.data_dir`, not from a separate config field. The convention is `{data_dir}/{db_name}.db`.
+
+**WAL checkpoint note:** `PRAGMA wal_checkpoint(TRUNCATE)` at startup blocks concurrent readers for the duration of the checkpoint. This is acceptable for single-writer use cases. Log checkpoint failures at `tracing::debug!` rather than swallowing them silently.
 
 ## Tracing Configuration
 
@@ -234,6 +274,8 @@ tracing_subscriber::fmt()
     .init();
 ```
 
+**Note on CLI arg overrides:** There is no `--data-dir` or `--config` CLI flag by design. Env vars serve this purpose. Adding CLI args would introduce a fourth precedence layer. If a fourth layer is needed in the future, it goes above env vars.
+
 All projects MUST:
 - Default to `WARN`
 - Support `--verbose` for `DEBUG`
@@ -245,10 +287,12 @@ All projects MUST:
 Config modules MUST include tests for:
 
 1. **Default sanity** - `Config::default()` produces valid, expected values
-2. **Tilde expansion** - `~/foo` expands, `/abs/path` passes through
+2. **Tilde expansion** - `~/foo` expands, `/abs/path` passes through, unset `$HOME` returns error
 3. **Partial TOML** - A file with one field set parses correctly
 4. **Nested sections** - Subsections (like `[retention]`) parse independently
 5. **Default anchoring** - Config defaults match core crate constants
+6. **Validation rules** - Each semantic validation rule (db_size_mb minimum, data_dir non-empty, data_dir absolute)
+7. **Startup failure** - At least one CLI integration test asserting non-zero exit on invalid resolved config
 
 ```rust
 #[test]
@@ -271,12 +315,14 @@ fn parse_toml_partial() {
 
 - [ ] `Config` struct with `Default` impl
 - [ ] `FileConfig` struct with all-`Option` fields
-- [ ] `load()` function with three-layer precedence
+- [ ] `load()` function returning `Result<Config>` with three-layer precedence
+- [ ] `validate()` with semantic checks (db_size_mb, data_dir)
 - [ ] `find_config_file()` with CWD-first resolution
-- [ ] `expand_tilde()` for path values
-- [ ] Env var overrides with `<PROJECT>_*` prefix
-- [ ] `init` subcommand generating commented defaults
-- [ ] Config tests (defaults, tilde, partial TOML, nested sections)
+- [ ] `resolve_home_dir()` shared helper (no CWD fallback)
+- [ ] `expand_tilde()` returning `Result<PathBuf>`
+- [ ] Env var overrides with `<PROJECT>_*` prefix (warn on parse failure)
+- [ ] `init` subcommand generating commented defaults (--force prints overwritten path)
+- [ ] Config tests (defaults, tilde, partial TOML, nested sections, validation rules, startup failure)
 - [ ] Tracing setup (WARN default, --verbose, RUST_LOG)
-- [ ] SQLite pragmas (if applicable)
+- [ ] SQLite pragmas (if applicable, log checkpoint failures at debug)
 - [ ] No panics in config loading path
