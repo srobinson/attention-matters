@@ -2,7 +2,6 @@
 
 Geometric memory for AI coding agents. No embeddings, no vectors, no cloud. Just math.
 
-**Version:** 0.1.18
 **License:** MIT
 **Repository:** https://github.com/srobinson/attention-matters
 **npm:** `npx -y attention-matters serve`
@@ -387,14 +386,9 @@ just fmt      # cargo fmt --all
 - SLERP near-parallel threshold: 0.9995
 - No magic numbers in am-core
 
-### Test Coverage
+### Key Test Files
 
-- **am-core:** 217 tests (unit + integration + property-based via `proptest.rs`)
-- **am-store:** 80 tests (store operations, schema migrations, config)
-- **am-cli:** 121 tests (CLI integration, MCP protocol via `mcp_protocol_test.rs`, shutdown contract)
-- **Total:** 418 tests across the workspace
-
-Key test files: `tests/proptest.rs` (quaternion invariants), `tests/mcp_protocol_test.rs` (JSON-RPC protocol compliance), `tests/shutdown.rs` (OS-level shutdown contract: WAL checkpoint, pidfile lifecycle, pre-handshake EOF).
+`tests/proptest.rs` (quaternion invariants), `tests/mcp_protocol_test.rs` (JSON-RPC protocol compliance), `tests/shutdown.rs` (OS-level shutdown contract: WAL checkpoint, pidfile lifecycle, pre-handshake EOF).
 
 ---
 
@@ -423,7 +417,6 @@ Issues from the March 2026 review, updated 2026-03-21. Fixed items removed.
 | `error.rs` | Missing `Io` variant - file I/O errors collapse into `InvalidData` |
 | `schema.rs` | Migration not version-gated - probes all columns on every startup |
 | `main.rs` | No unit tests; large handlers only covered by integration tests |
-| `main.rs` | ANSI escape codes unconditional in help strings - renders as garbage in CI/piped output |
 | CLI | `ingest --dir` + positional file in same directory creates duplicate episodes |
 
 ### Fixed since last review
@@ -437,6 +430,7 @@ Issues from the March 2026 review, updated 2026-03-21. Fixed items removed.
 | Missing indexes | Added in schema v6/v7: `idx_ep_conscious`, `idx_occ_activation`, `idx_nbhd_episode_epoch`, `idx_occ_nbhd_activation` |
 | `activation_count += 1` wrapping | Uses `saturating_add` |
 | `token_count()` Vec allocation | Uses `.count()` iterator |
+| ANSI escape codes in help strings | Help migrated to tools.toml; generated without ANSI |
 | `DefaultHasher` instability | Replaced with `FxHasher` (rustc-hash) |
 | No input size limits | `check_input_size` (1MB cap) on all text-accepting endpoints |
 | `pub fn conn()` raw exposure | Removed |
@@ -444,24 +438,3 @@ Issues from the March 2026 review, updated 2026-03-21. Fixed items removed.
 | Sync orchestration in `main.rs` | Extracted to `sync_dispatch.rs` |
 | `angular_distance` undocumented | Doc comments explain SO(3) vs S3 tradeoff |
 
----
-
-## Release History (recent)
-
-| Version | Highlights |
-|---|---|
-| 0.1.18 | Architecture alignment: rmcp replaced with custom JSON-RPC, AmStore trait, quality pass |
-| 0.1.17 | Incremental persistence, core math hardening, CLI/server fixes |
-| 0.1.16 | Scoring extraction, GC improvements, schema v6/v7 indexes |
-| 0.1.15 | Strip markdown from sync episode text; role headers |
-| 0.1.14 | Location-based config resolution for `.am.config.toml` |
-| 0.1.13 | `am init` command to generate default config |
-| 0.1.12 | `sync_log_dir` config option |
-| 0.1.11 | Transcript-based episode extraction on SessionEnd |
-| 0.1.10 | Epoch-aware retention policy for GC |
-| 0.1.9 | Configurable `.am.config.toml`, GC disabled by default |
-| 0.1.8 | Unified brain — single `brain.db`, removed per-project concept |
-| 0.1.7 | Recency-aware recall — timestamps, backfill, conscious boost |
-| 0.1.6 | Conscious recall pipeline fix — interference and vividness wired |
-| 0.1.5 | Feedback loop — recalled neighborhood IDs surfaced for feedback |
-| 0.1.4 | Unified brain — per-project concept removed |

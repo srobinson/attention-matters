@@ -89,7 +89,7 @@ Three crates, clean separation:
 
 | Crate      | What it does                                                                                                       |
 | ---------- | ------------------------------------------------------------------------------------------------------------------ |
-| `am-core`  | Pure math. Quaternions, phasors, drift, interference, Kuramoto coupling, context composition. Zero I/O, 217 tests. |
+| `am-core`  | Pure math. Quaternions, phasors, drift, interference, Kuramoto coupling, context composition. Zero I/O.             |
 | `am-store` | Persistence. SQLite-backed brain.db : one database per developer, queryable from any project.                      |
 | `am-cli`   | CLI + MCP server. Session sync, import/export, inspection tools.                                                   |
 
@@ -118,7 +118,7 @@ Rust 2024 edition. [just](https://github.com/casey/just) as task runner.
 ```bash
 just check    # clippy (warnings = errors)
 just build    # cargo build --workspace
-just test     # 418 tests
+just test     # nextest + doctests
 just fmt      # rustfmt
 ```
 

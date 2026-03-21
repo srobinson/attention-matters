@@ -102,6 +102,7 @@ After `load()` merges all three layers, it calls `validate()` before returning. 
 | `db_size_mb` | >= 1 when `gc_enabled == true` | Zero-byte GC target evicts everything |
 | `data_dir` | Must not be empty | Empty string resolves to CWD |
 | `data_dir` | Must be absolute after tilde expansion | Relative paths write to unpredictable locations |
+| `HOME`/`USERPROFILE` | Must be absolute and non-empty (in `resolve_home_dir`) | Relative or empty home dir causes tilde expansion to resolve unpredictably |
 
 ### Error behavior
 
@@ -188,16 +189,25 @@ All path config values MUST support tilde expansion:
 
 ```rust
 pub fn resolve_home_dir() -> crate::error::Result<PathBuf> {
-    env::var("HOME")
+    let home = env::var("HOME")
         .or_else(|_| env::var("USERPROFILE"))
-        .map(PathBuf::from)
         .map_err(|_| StoreError::InvalidData(
-            "Cannot resolve home directory: HOME is not set".into()
-        ))
+            "could not determine home directory: neither HOME nor USERPROFILE is set".into()
+        ))?;
+
+    let path = PathBuf::from(&home);
+    if home.is_empty() || !path.is_absolute() {
+        return Err(StoreError::InvalidData(format!(
+            "home directory must be an absolute path, got: {home:?}"
+        )));
+    }
+    Ok(path)
 }
 
 fn expand_tilde(path: &str) -> crate::error::Result<PathBuf> {
-    if let Some(rest) = path.strip_prefix("~/") {
+    if path == "~" {
+        resolve_home_dir()
+    } else if let Some(rest) = path.strip_prefix("~/") {
         Ok(resolve_home_dir()?.join(rest))
     } else {
         Ok(PathBuf::from(path))
@@ -205,9 +215,10 @@ fn expand_tilde(path: &str) -> crate::error::Result<PathBuf> {
 }
 ```
 
-- `~/` expands to `$HOME` (Unix) or `$USERPROFILE` (Windows)
+- `~` and `~/` expand to `$HOME` (Unix) or `$USERPROFILE` (Windows)
 - Absolute paths pass through unchanged
 - If neither home var is set, return an error. Do not fall back to CWD.
+- Reject empty or relative HOME/USERPROFILE values (prevents writing to unpredictable locations)
 - One shared `resolve_home_dir()` helper; no duplicated fallback logic
 
 ## Error Handling
@@ -301,7 +312,7 @@ All projects MUST:
 Config modules MUST include tests for:
 
 1. **Default sanity** - `Config::default()` produces valid, expected values
-2. **Tilde expansion** - `~/foo` expands, `/abs/path` passes through, unset `$HOME` returns error
+2. **Tilde expansion** - `~/foo` expands, bare `~` expands, `/abs/path` passes through, unset `$HOME` returns error, relative `$HOME` returns error
 3. **Partial TOML** - A file with one field set parses correctly
 4. **Nested sections** - Subsections (like `[retention]`) parse independently
 5. **Default anchoring** - Config defaults match core crate constants
