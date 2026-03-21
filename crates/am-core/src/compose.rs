@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::neighborhood::NeighborhoodType;
-use crate::query::{InterferenceResult, QueryResult};
+use crate::query::QueryResult;
 use crate::scoring::{MIN_SCORE_THRESHOLD, RankedCandidate, get_episode_name, rank_candidates};
 use crate::surface::SurfaceResult;
 use crate::system::DAESystem;
@@ -189,7 +189,7 @@ fn apply_diminishing_returns(
 /// // Query and compose
 /// let qr = QueryEngine::process_query(&mut system, "quaternions");
 /// let surface = compute_surface(&system, &qr);
-/// let ctx = compose_context(&mut system, &surface, &qr, &qr.interference, None);
+/// let ctx = compose_context(&mut system, &surface, &qr, None);
 ///
 /// // included_ids tracks which neighborhoods contributed to the result
 /// assert_eq!(ctx.included_ids.len(), ctx.recalled_ids.conscious.len()
@@ -199,10 +199,9 @@ pub fn compose_context(
     system: &mut DAESystem,
     surface: &SurfaceResult,
     query_result: &QueryResult,
-    interference: &[InterferenceResult],
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> ContextResult {
-    let candidates = rank_candidates(system, query_result, interference, surface);
+    let candidates = rank_candidates(system, query_result, &query_result.interference, surface);
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
@@ -333,11 +332,10 @@ pub fn compose_context_budgeted(
     system: &mut DAESystem,
     surface: &SurfaceResult,
     query_result: &QueryResult,
-    interference: &[InterferenceResult],
     budget: &BudgetConfig,
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> BudgetedContextResult {
-    let candidates = rank_candidates(system, query_result, interference, surface);
+    let candidates = rank_candidates(system, query_result, &query_result.interference, surface);
 
     let empty_map = HashMap::new();
     let recalled = session_recalled.unwrap_or(&empty_map);
@@ -596,14 +594,22 @@ pub struct IndexEntry {
 /// Result of index composition for two-phase retrieval.
 pub struct IndexResult {
     pub entries: Vec<IndexEntry>,
-    pub stats_snapshot: IndexStats,
+    total_candidates: usize,
+    total_tokens_if_fetched: usize,
 }
 
-/// Snapshot of manifold statistics for the index response.
-#[doc(hidden)]
-pub struct IndexStats {
-    pub total_candidates: usize,
-    pub total_tokens_if_fetched: usize,
+impl IndexResult {
+    /// Number of candidate neighborhoods before filtering and deduplication.
+    #[must_use]
+    pub fn total_candidates(&self) -> usize {
+        self.total_candidates
+    }
+
+    /// Estimated LLM tokens if all entries were fetched.
+    #[must_use]
+    pub fn total_tokens_if_fetched(&self) -> usize {
+        self.total_tokens_if_fetched
+    }
 }
 
 /// Compose a compact index of the best-matching neighborhoods without full content.
@@ -612,10 +618,9 @@ pub fn compose_index(
     system: &mut DAESystem,
     surface: &SurfaceResult,
     query_result: &QueryResult,
-    interference: &[InterferenceResult],
     session_recalled: Option<&HashMap<Uuid, u32>>,
 ) -> IndexResult {
-    let candidates = rank_candidates(system, query_result, interference, surface);
+    let candidates = rank_candidates(system, query_result, &query_result.interference, surface);
     let total_candidates = candidates.len();
 
     // Deduplicate: same neighborhood may appear in multiple categories,
@@ -684,10 +689,8 @@ pub fn compose_index(
 
     IndexResult {
         entries,
-        stats_snapshot: IndexStats {
-            total_candidates,
-            total_tokens_if_fetched,
-        },
+        total_candidates,
+        total_tokens_if_fetched,
     }
 }
 
@@ -800,7 +803,7 @@ mod tests {
         let mut sys = make_full_system();
         let result = QueryEngine::process_query(&mut sys, "quantum physics neural");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         assert!(ctx.context.contains("CONSCIOUS RECALL:"));
         assert!(ctx.context.contains("SUBCONSCIOUS RECALL"));
@@ -823,7 +826,7 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "alpha");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // No conscious recall since no conscious content matches
         assert!(!ctx.context.contains("CONSCIOUS RECALL:"));
@@ -834,7 +837,7 @@ mod tests {
         let mut sys = make_full_system();
         let result = QueryEngine::process_query(&mut sys, "quantum");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         assert!(ctx.metrics.conscious <= 1);
         assert!(ctx.metrics.subconscious <= 2);
@@ -884,12 +887,12 @@ mod tests {
         let mut sys1 = make_full_system();
         let result1 = QueryEngine::process_query(&mut sys1, "quantum");
         let surface1 = compute_surface(&sys1, &result1);
-        let ctx1 = compose_context(&mut sys1, &surface1, &result1, &result1.interference, None);
+        let ctx1 = compose_context(&mut sys1, &surface1, &result1, None);
 
         let mut sys2 = make_full_system();
         let result2 = QueryEngine::process_query(&mut sys2, "quantum");
         let surface2 = compute_surface(&sys2, &result2);
-        let ctx2 = compose_context(&mut sys2, &surface2, &result2, &result2.interference, None);
+        let ctx2 = compose_context(&mut sys2, &surface2, &result2, None);
 
         assert_eq!(ctx1.context, ctx2.context);
     }
@@ -908,14 +911,7 @@ mod tests {
             min_subconscious: 0,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         assert!(
             ctx.tokens_used <= ctx.tokens_budget,
@@ -937,14 +933,7 @@ mod tests {
             min_subconscious: 1,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         assert!(
             ctx.metrics.conscious >= 1,
@@ -971,14 +960,7 @@ mod tests {
             min_subconscious: 0,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         assert!(
             ctx.excluded_count > 0,
@@ -998,14 +980,7 @@ mod tests {
             min_subconscious: 1,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         // With huge budget, minimums should be filled; any exclusions are from
         // the MIN_SCORE_THRESHOLD filtering weak matches from the overflow phase.
@@ -1029,7 +1004,7 @@ mod tests {
         let mut sys = make_full_system();
         let result = QueryEngine::process_query(&mut sys, "quantum physics neural");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // Must contain expected sections
         assert!(ctx.context.contains("CONSCIOUS RECALL:"));
@@ -1046,7 +1021,7 @@ mod tests {
         let mut sys2 = make_full_system();
         let result2 = QueryEngine::process_query(&mut sys2, "quantum physics neural");
         let surface2 = compute_surface(&sys2, &result2);
-        let ctx2 = compose_context(&mut sys2, &surface2, &result2, &result2.interference, None);
+        let ctx2 = compose_context(&mut sys2, &surface2, &result2, None);
         assert_eq!(ctx.context, ctx2.context);
     }
 
@@ -1149,7 +1124,7 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "architecture event");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // The decision should appear in conscious recall with [DECIDED] prefix
         assert!(
@@ -1190,14 +1165,7 @@ mod tests {
             min_subconscious: 0,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         // The decision should surface with a positive score (no floor, but multiplier)
         let decision_entries: Vec<&IncludedFragment> = ctx
@@ -1248,14 +1216,7 @@ mod tests {
             min_subconscious: 1,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         // Check if the decision even activates - it shares no words with the query
         let decision_entries: Vec<&IncludedFragment> = ctx
@@ -1326,14 +1287,7 @@ mod tests {
             min_subconscious: 2,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            Some(&recalled),
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, Some(&recalled));
 
         let f1 = ctx.included.iter().find(|f| f.neighborhood_id == nbhd1_id);
         let f2 = ctx.included.iter().find(|f| f.neighborhood_id == nbhd2_id);
@@ -1382,14 +1336,7 @@ mod tests {
             min_subconscious: 1,
             min_novel: 0,
         };
-        let ctx1 = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx1 = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         // Build session recall map with count=1 for all returned IDs
         let mut recalled: HashMap<Uuid, u32> = HashMap::new();
@@ -1398,14 +1345,7 @@ mod tests {
         }
 
         // Second compose with same query result to isolate diminishing returns
-        let ctx2 = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            Some(&recalled),
-        );
+        let ctx2 = compose_context_budgeted(&mut sys, &surface, &result, &budget, Some(&recalled));
 
         // Decision should still appear (softer decay, not removed)
         assert!(
@@ -1472,7 +1412,7 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "alpha beta");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // Should have subconscious recall from at least one episode
         assert!(
@@ -1500,7 +1440,7 @@ mod tests {
         let mut sys = make_full_system();
         let result = QueryEngine::process_query(&mut sys, "quantum physics");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // included_ids should contain the neighborhood IDs that were included
         assert!(
@@ -1538,7 +1478,7 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "user prefers dark");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         assert!(
             ctx.context.contains("[PREFERENCE]"),
@@ -1570,7 +1510,7 @@ mod tests {
         // Query for deployment
         let result = QueryEngine::process_query(&mut sys, "deployment approach");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // The superseded memory (alpha) should not appear
         assert!(
@@ -1606,7 +1546,7 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "architecture pattern");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         assert!(
             !ctx.context.contains("monolith"),
@@ -1640,7 +1580,7 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "deployment strategy pattern services");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // The newer memory should surface; the older should be suppressed
         assert!(
@@ -1682,7 +1622,7 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "quantum physics");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // The quantum physics memory should surface
         assert!(
@@ -1715,7 +1655,7 @@ mod tests {
 
         let result = QueryEngine::process_query(&mut sys, "architecture");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // Both should be able to surface since they have low overlap
         // (only "architecture" is shared, rest is different)
@@ -1761,14 +1701,7 @@ mod tests {
             min_subconscious: 1,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         // The newer episode (postgres) should rank higher
         let sub_entries: Vec<&IncludedFragment> = ctx
@@ -1832,14 +1765,7 @@ mod tests {
             min_subconscious: 2,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         let sub_entries: Vec<&IncludedFragment> = ctx
             .included
@@ -1910,14 +1836,7 @@ mod tests {
             min_subconscious: 1, // Only need 1 minimum
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         // The strong match should be included as the minimum fill
         let strong = ctx.included.iter().find(|f| f.text.contains("keyword"));
@@ -1961,14 +1880,7 @@ mod tests {
             min_subconscious: 0,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         assert!(
             ctx.included.is_empty(),
@@ -2040,7 +1952,7 @@ mod tests {
         let qr = QueryEngine::process_query(&mut sys, "quantum physics particle");
         let surface = compute_surface(&sys, &qr);
 
-        let index = compose_index(&mut sys, &surface, &qr, &qr.interference, None);
+        let index = compose_index(&mut sys, &surface, &qr, None);
 
         assert!(
             !index.entries.is_empty(),
@@ -2060,7 +1972,7 @@ mod tests {
             assert!(entry.score > 0.0, "score should be positive");
         }
         assert!(
-            index.stats_snapshot.total_candidates > 0,
+            index.total_candidates() > 0,
             "total_candidates should be positive"
         );
     }
@@ -2071,7 +1983,7 @@ mod tests {
         let qr = QueryEngine::process_query(&mut sys, "quantum physics");
         let surface = compute_surface(&sys, &qr);
 
-        let index = compose_index(&mut sys, &surface, &qr, &qr.interference, None);
+        let index = compose_index(&mut sys, &surface, &qr, None);
 
         // Each neighborhood ID should appear at most once
         let mut seen: HashSet<Uuid> = HashSet::new();
@@ -2091,7 +2003,7 @@ mod tests {
         let qr = QueryEngine::process_query(&mut sys, "quantum physics particle wave");
         let surface = compute_surface(&sys, &qr);
 
-        let index = compose_index(&mut sys, &surface, &qr, &qr.interference, None);
+        let index = compose_index(&mut sys, &surface, &qr, None);
 
         for entry in &index.entries {
             assert!(
@@ -2158,12 +2070,12 @@ mod tests {
         let qr = QueryEngine::process_query(&mut sys, "quantum physics");
         let surface = compute_surface(&sys, &qr);
 
-        let index = compose_index(&mut sys, &surface, &qr, &qr.interference, None);
+        let index = compose_index(&mut sys, &surface, &qr, None);
 
         // total_tokens_if_fetched should be > 0 when there are entries
         if !index.entries.is_empty() {
             assert!(
-                index.stats_snapshot.total_tokens_if_fetched > 0,
+                index.total_tokens_if_fetched() > 0,
                 "total_tokens_if_fetched should be positive when entries exist"
             );
         }
@@ -2199,14 +2111,7 @@ mod tests {
             min_subconscious: 1,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         // The postgres decision should NOT appear - no meaningful overlap
         let decision_entries: Vec<&IncludedFragment> = ctx
@@ -2250,7 +2155,7 @@ mod tests {
         let result =
             QueryEngine::process_query(&mut sys, "garden plants soil water sunlight growing seeds");
         let surface = compute_surface(&sys, &result);
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // The preference about tools should not surface
         assert!(
@@ -2269,7 +2174,7 @@ mod tests {
         let surface = compute_surface(&sys, &result);
 
         // The interference vector is computed by the query engine
-        let ctx = compose_context(&mut sys, &surface, &result, &result.interference, None);
+        let ctx = compose_context(&mut sys, &surface, &result, None);
 
         // Should produce valid context (interference may or may not affect scores
         // depending on the test data, but the code path should work)
@@ -2293,14 +2198,7 @@ mod tests {
             min_subconscious: 2,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         // Verify the pipeline works - vivid boost is applied but may not be
         // observable in test data (few occurrences per neighborhood)
@@ -2410,14 +2308,7 @@ mod tests {
             min_subconscious: 1,
             min_novel: 0,
         };
-        let ctx = compose_context_budgeted(
-            &mut sys,
-            &surface,
-            &result,
-            &result.interference,
-            &budget,
-            None,
-        );
+        let ctx = compose_context_budgeted(&mut sys, &surface, &result, &budget, None);
 
         assert_eq!(
             ctx.metrics.conscious, 0,

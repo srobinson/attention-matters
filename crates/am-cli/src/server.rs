@@ -368,7 +368,6 @@ impl<S: AmStore> AmServer<S> {
                 system,
                 &surface,
                 &query_result,
-                &query_result.interference,
                 &budget,
                 Some(session_recalled),
             );
@@ -417,13 +416,7 @@ impl<S: AmStore> AmServer<S> {
             (json, ids)
         } else {
             // Default: fixed-size composition
-            let composed = compose_context(
-                system,
-                &surface,
-                &query_result,
-                &query_result.interference,
-                Some(session_recalled),
-            );
+            let composed = compose_context(system, &surface, &query_result, Some(session_recalled));
             let ids = composed.included_ids.clone();
             let recalled = &composed.recalled_ids;
             let json = serde_json::json!({
@@ -450,13 +443,7 @@ impl<S: AmStore> AmServer<S> {
         };
 
         // Compose compact index summary (top 10 entries, most recent first)
-        let index = compose_index(
-            system,
-            &surface,
-            &query_result,
-            &query_result.interference,
-            Some(session_recalled),
-        );
+        let index = compose_index(system, &surface, &query_result, Some(session_recalled));
         let mut sorted_entries = index.entries;
         sorted_entries.sort_by(|a, b| b.epoch.cmp(&a.epoch));
         let index_entries: Vec<serde_json::Value> = sorted_entries
@@ -507,13 +494,7 @@ impl<S: AmStore> AmServer<S> {
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
 
-        let index = compose_index(
-            system,
-            &surface,
-            &query_result,
-            &query_result.interference,
-            Some(session_recalled),
-        );
+        let index = compose_index(system, &surface, &query_result, Some(session_recalled));
 
         persist_manifest(store, system, &query_result.manifest, "query_index");
 
@@ -535,8 +516,8 @@ impl<S: AmStore> AmServer<S> {
 
         let result = serde_json::json!({
             "entries": entries_json,
-            "total_candidates": index.stats_snapshot.total_candidates,
-            "total_tokens_if_fetched": index.stats_snapshot.total_tokens_if_fetched,
+            "total_candidates": index.total_candidates(),
+            "total_tokens_if_fetched": index.total_tokens_if_fetched(),
             "stats": Self::stats_json(system),
         });
 
@@ -605,12 +586,11 @@ impl<S: AmStore> AmServer<S> {
             .copied()
             .collect();
         let mut drifted = QueryEngine::drift_and_consolidate(system, &all_refs);
-        let (_, word_groups) = QueryEngine::compute_interference(
+        drifted.extend(QueryEngine::couple_phases(
             system,
             &activation.subconscious,
             &activation.conscious,
-        );
-        drifted.extend(QueryEngine::apply_kuramoto_coupling(system, &word_groups));
+        ));
 
         let manifest = QueryManifest {
             drifted,

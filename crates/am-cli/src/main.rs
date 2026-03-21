@@ -392,13 +392,7 @@ fn cmd_query(cli: &Cli, text: &str) -> Result<()> {
 
     let query_result = QueryEngine::process_query(&mut system, text);
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(
-        &mut system,
-        &surface,
-        &query_result,
-        &query_result.interference,
-        None,
-    );
+    let composed = compose_context(&mut system, &surface, &query_result, None);
 
     if composed.context.is_empty() {
         println!("(no memories found)");
@@ -896,13 +890,7 @@ fn cmd_inspect_query(cli: &Cli, text: &str) -> Result<()> {
 
     let query_result = QueryEngine::process_query(&mut system, text);
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(
-        &mut system,
-        &surface,
-        &query_result,
-        &query_result.interference,
-        None,
-    );
+    let composed = compose_context(&mut system, &surface, &query_result, None);
 
     let colors::Colors {
         bold, dim, reset, ..

@@ -60,7 +60,6 @@ impl NeighborhoodRef {
 }
 
 /// Result of activating a word across both manifolds.
-#[doc(hidden)]
 pub struct ActivationResult {
     pub subconscious: Vec<OccurrenceRef>,
     pub conscious: Vec<OccurrenceRef>,

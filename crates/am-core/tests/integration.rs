@@ -65,13 +65,7 @@ fn ingest_query_roundtrip() {
 
     let query_result = QueryEngine::process_query(&mut system, "quantum particles wave function");
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(
-        &mut system,
-        &surface,
-        &query_result,
-        &query_result.interference,
-        None,
-    );
+    let composed = compose_context(&mut system, &surface, &query_result, None);
 
     // Should have non-empty context since query terms overlap with ingested text
     assert!(
@@ -115,13 +109,7 @@ fn conscious_memory_flow() {
     let query_result =
         QueryEngine::process_query(&mut system, "quantum entanglement teleportation");
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(
-        &mut system,
-        &surface,
-        &query_result,
-        &query_result.interference,
-        None,
-    );
+    let composed = compose_context(&mut system, &surface, &query_result, None);
 
     assert!(
         composed.context.contains("CONSCIOUS RECALL:"),
@@ -151,13 +139,7 @@ fn multi_episode_recall() {
     let query_result =
         QueryEngine::process_query(&mut system, "particles sugars temperature reaction");
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(
-        &mut system,
-        &surface,
-        &query_result,
-        &query_result.interference,
-        None,
-    );
+    let composed = compose_context(&mut system, &surface, &query_result, None);
 
     assert!(
         !composed.context.is_empty(),
@@ -248,20 +230,8 @@ fn serde_roundtrip_with_query() {
     let surface1 = compute_surface(&system, &result1);
     let surface2 = compute_surface(&system2, &result2);
 
-    let composed1 = compose_context(
-        &mut system,
-        &surface1,
-        &result1,
-        &result1.interference,
-        None,
-    );
-    let composed2 = compose_context(
-        &mut system2,
-        &surface2,
-        &result2,
-        &result2.interference,
-        None,
-    );
+    let composed1 = compose_context(&mut system, &surface1, &result1, None);
+    let composed2 = compose_context(&mut system2, &surface2, &result2, None);
 
     assert_eq!(
         composed1.context, composed2.context,
@@ -316,13 +286,7 @@ fn empty_system_query() {
 
     let query_result = QueryEngine::process_query(&mut system, "anything at all");
     let surface = compute_surface(&system, &query_result);
-    let composed = compose_context(
-        &mut system,
-        &surface,
-        &query_result,
-        &query_result.interference,
-        None,
-    );
+    let composed = compose_context(&mut system, &surface, &query_result, None);
 
     assert!(
         composed.context.is_empty(),
