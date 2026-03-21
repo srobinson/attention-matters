@@ -331,7 +331,9 @@ pub fn resolve_home_dir() -> crate::error::Result<PathBuf> {
 }
 
 fn expand_tilde(path: &str) -> crate::error::Result<PathBuf> {
-    if let Some(rest) = path.strip_prefix("~/") {
+    if path == "~" {
+        resolve_home_dir()
+    } else if let Some(rest) = path.strip_prefix("~/") {
         let home = resolve_home_dir()?;
         Ok(home.join(rest))
     } else {
@@ -356,6 +358,14 @@ mod tests {
         let expanded = expand_tilde("~/foo/bar").unwrap();
         assert!(!expanded.to_string_lossy().starts_with("~/"));
         assert!(expanded.to_string_lossy().ends_with("foo/bar"));
+    }
+
+    #[test]
+    fn expand_tilde_bare() {
+        let expanded = expand_tilde("~").unwrap();
+        assert!(expanded.is_absolute());
+        // Bare ~ should resolve to just the home directory
+        assert!(!expanded.to_string_lossy().contains('~'));
     }
 
     #[test]
