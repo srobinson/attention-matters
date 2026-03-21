@@ -21,7 +21,7 @@ Rust workspace implementing the DAE (Daemon Attention Engine) geometric memory s
 ```sh
 just check    # clippy with warnings-as-errors
 just build    # cargo build --workspace
-just test     # cargo test --workspace
+just test     # cargo nextest run --workspace && cargo test --workspace --doc
 just fmt      # cargo fmt
 ```
 
@@ -46,5 +46,12 @@ This project has persistent geometric memory via the `am` MCP server. Query memo
 | `compose`      | Context composition: conscious/subconscious/novel recall     |
 | `batch`        | Batch query engine for amortized IDF across multiple queries |
 | `feedback`     | Feedback signals (boost/demote) for recalled neighborhoods   |
+| `scoring`      | Composite scoring: activation, recency, interference, IDF    |
+| `recency`      | Recency-aware scoring with epoch and timestamp normalization  |
+| `salient`      | Salient neighborhood extraction for conscious promotion      |
+| `activation_stats` | Activation statistics aggregation                        |
+| `store_trait`  | `AmStore` trait: hexagonal port for persistence abstraction   |
 | `time`         | Timestamp utilities (ISO8601, Unix seconds conversion)       |
 | `serde_compat` | v0.7.2 JSON wire format import/export                        |
+
+

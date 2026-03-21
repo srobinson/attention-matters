@@ -2,7 +2,7 @@
 
 Geometric memory for AI coding agents. No embeddings, no vectors, no cloud. Just math.
 
-**Version:** 0.1.15
+**Version:** 0.1.18
 **License:** MIT
 **Repository:** https://github.com/srobinson/attention-matters
 **npm:** `npx -y attention-matters serve`
@@ -60,11 +60,16 @@ Pure math engine. 74 public exports. No I/O.
 | `batch` | `BatchQueryEngine` — amortized IDF across multiple concurrent queries |
 | `feedback` | `apply_feedback` — boost (SLERP toward query centroid) / demote (activation decay) |
 | `time` | ISO8601 and Unix second timestamp utilities |
+| `scoring` | Composite scoring: activation, recency, interference, IDF weighting |
+| `recency` | Recency-aware scoring with epoch and timestamp normalization |
+| `salient` | Salient neighborhood extraction for conscious promotion |
+| `activation_stats` | Activation statistics aggregation |
+| `store_trait` | `AmStore` trait: hexagonal port for persistence abstraction |
 | `serde_compat` | v0.7.2 JSON wire format import/export |
 
 ### am-store
 
-SQLite-backed persistence. Schema version 5. WAL mode with 5-second busy timeout and 400KB autocheckpoint.
+SQLite-backed persistence. Schema version 7. WAL mode with 5-second busy timeout and 400KB autocheckpoint.
 
 | Module | Purpose |
 |---|---|
@@ -73,6 +78,7 @@ SQLite-backed persistence. Schema version 5. WAL mode with 5-second busy timeout
 | `config` | `Config` + `RetentionPolicy` — TOML config loading with env var overrides |
 | `schema` | DDL, pragma setup, additive ALTER TABLE migrations |
 | `json_bridge` | Serialization bridge for v0.7.2 JSON import/export |
+| `memory_store` | `MemoryStore` - concrete `AmStore` impl wrapping `Store` + `DAESystem` |
 | `error` | `StoreError`, `Result` |
 
 ### am-cli
@@ -82,8 +88,13 @@ Binary: `am`. 11 CLI subcommands and an MCP server over stdio.
 | Module | Purpose |
 |---|---|
 | `main` | Clap command definitions, CLI handler implementations |
-| `server` | `AmServer` — rmcp `#[tool_router]`, 12 MCP tool handlers |
+| `server` | `AmServer` - 12 MCP tool handlers over JSON-RPC 2.0 |
+| `jsonrpc` | Custom JSON-RPC 2.0 server (stdio transport, MCP protocol) |
 | `sync` | Claude Code `.jsonl` transcript parsing and episode extraction |
+| `sync_dispatch` | Sync orchestration: session discovery, dispatch, logging |
+| `colors` | ANSI color constants for CLI output |
+| `generated_help` | Pre-rendered help strings for MCP tool descriptions |
+| `generated_schema` | JSON Schema definitions for MCP tool parameters |
 
 ---
 
@@ -135,13 +146,13 @@ Two manifolds coexist in one `DAESystem`:
 - **Subconscious** — all ingested episodes. Words here compete by IDF weight and activation count.
 - **Conscious** — single `conscious_episode`. Neighborhoods marked salient via `am_salient` live here. Conscious memories persist globally across all projects and are never auto-evicted by GC.
 
-The special sentinel `episode_idx = usize::MAX` in `OccurrenceRef` identifies conscious occurrences.
+The `EpisodeRef::Conscious` variant in `OccurrenceRef` and `NeighborhoodRef` identifies conscious occurrences (replaces the former `usize::MAX` sentinel).
 
 ---
 
 ## Database Schema
 
-Schema version 5. SQLite with WAL journal mode.
+Schema version 7. SQLite with WAL journal mode.
 
 ```sql
 metadata          (key TEXT PK, value TEXT)
@@ -174,11 +185,10 @@ Startup sequence: WAL mode → foreign keys → busy timeout 5s → autocheckpoi
 
 ## Configuration
 
-Location resolution order:
-1. `AM_DATA_DIR` environment variable
-2. `~/.attention-matters/.am.config.toml`
-3. `.am.config.toml` in the current working directory (walks upward)
-4. Compiled defaults
+Precedence (highest wins):
+1. Environment variables (`AM_DATA_DIR`, `AM_GC_ENABLED`, `AM_DB_SIZE_MB`, `AM_SYNC_LOG_DIR`)
+2. Config file (first found): `$CWD/.am.config.toml` > `$AM_DATA_DIR/.am.config.toml` > `~/.attention-matters/.am.config.toml`
+3. Compiled defaults
 
 ```toml
 # ~/.attention-matters/.am.config.toml
@@ -229,7 +239,7 @@ am inspect --query "auth flow"    Full query recall breakdown
 
 ## MCP Server
 
-`am serve` starts a JSON-RPC 2.0 server on stdio using [rmcp](https://github.com/modelcontextprotocol/rust-sdk) 0.15. Claude Code spawns the process and owns the pipe. Zero network exposure. No authentication surface.
+`am serve` starts a JSON-RPC 2.0 server on stdio using a custom protocol implementation (`jsonrpc.rs`). Claude Code spawns the process and owns the pipe. Zero network exposure. No authentication surface.
 
 ### Lifecycle Protocol
 
@@ -344,15 +354,14 @@ npx -y attention-matters query "..."  # Query from command line
 ```sh
 just check    # cargo clippy --workspace -- -D warnings
 just build    # cargo build --workspace
-just test     # cargo test --workspace
-just fmt      # cargo fmt
+just test     # cargo nextest run --workspace && cargo test --workspace --doc
+just fmt      # cargo fmt --all
 ```
 
 ### Dependencies
 
 | Crate | Version | Purpose |
 |---|---|---|
-| rmcp | 0.15 | MCP server, stdio transport |
 | tokio | 1 | Async runtime (multi-thread, io-std, signal, time) |
 | clap | 4 | CLI argument parsing (derive) |
 | rusqlite | 0.32 (bundled) | SQLite storage |
@@ -364,8 +373,9 @@ just fmt      # cargo fmt
 | tracing / tracing-subscriber | 0.1 / 0.3 | Structured logging |
 | toml | 0.8 | Config file parsing |
 | pulldown-cmark | 0.13 | Markdown stripping in sync |
-| schemars | 1 | MCP tool JSON schema generation |
 | libc | 0.2 | Unix process signaling (PID check) |
+| rustc-hash | 2 | FxHasher for stable, fast deduplication |
+| thiserror | 2 | Error type derivation for StoreError |
 | approx | 0.5 (dev) | Float comparison in am-core tests |
 
 ### Conventions
@@ -379,57 +389,60 @@ just fmt      # cargo fmt
 
 ### Test Coverage
 
-- **am-core:** 164 unit tests + 7 integration tests (331 LOC in `tests/integration.rs`)
-- **am-cli:** 40+ integration tests split across `tests/cli.rs` (619 LOC) and `tests/shutdown.rs` (216 LOC)
-- **Total:** 282+ tests across the workspace
+- **am-core:** 217 tests (unit + integration + property-based via `proptest.rs`)
+- **am-store:** 80 tests (store operations, schema migrations, config)
+- **am-cli:** 121 tests (CLI integration, MCP protocol via `mcp_protocol_test.rs`, shutdown contract)
+- **Total:** 418 tests across the workspace
 
-`tests/shutdown.rs` validates the production shutdown contract: 5-second hard timeout, WAL TRUNCATE checkpoint, pidfile lifecycle, pre-handshake EOF handling — all at the OS process level.
+Key test files: `tests/proptest.rs` (quaternion invariants), `tests/mcp_protocol_test.rs` (JSON-RPC protocol compliance), `tests/shutdown.rs` (OS-level shutdown contract: WAL checkpoint, pidfile lifecycle, pre-handshake EOF).
 
 ---
 
 ## Known Issues
 
-Issues identified in the March 2026 codebase review, ordered by priority.
+Issues from the March 2026 review, updated 2026-03-21. Fixed items removed.
 
 ### High
 
 | Location | Issue |
 |---|---|
-| `compose.rs:337,361,389,457,463,469,569` | `partial_cmp().unwrap()` panics on NaN scores — crashes MCP server mid-query. Fix: `f64::total_cmp()` |
-| `store.rs:233–277` | N+1 load: `load_system` issues up to 2101 queries for 100 episodes. Collapsible to one 3-way JOIN |
 | `query.rs` / `system.rs` | `retrieve_by_ids` does linear scan despite `neighborhood_index` providing O(1) lookup |
-| `batch.rs` | Batch activation inflation — words shared across N batch queries get `activation_count` bumped N times |
-| `store.rs` | Full O(N) serialize-to-SQLite on every write — primary scaling constraint for large systems |
+| `batch.rs` | Batch activation inflation - words shared across N batch queries get `activation_count` bumped N times |
+| `store.rs` | Full O(N) serialize-to-SQLite on every write - primary scaling constraint for large systems |
 
 ### Medium
 
 | Location | Issue |
 |---|---|
-| `store.rs:686–698, 778–800` | `format!()` for SQL construction — `NaN`/`inf` f64 values produce invalid SQL |
-| `store.rs:414–423` | `drain_buffer` SELECT then DELETE — crash window silently drops buffered turns |
-| `schema.rs` | Missing indexes: `episodes(is_conscious)`, `occurrences(activation_count)`, `neighborhoods(episode_id, epoch)` |
-| `occurrence.rs:41` | `activation_count += 1` wraps at ~4B in release mode; `feedback.rs` already uses `saturating_add` |
-| `tokenizer.rs:27–29` | `token_count()` allocates full `Vec<String>` just to count — hot path allocation |
-| `server.rs` | `DefaultHasher` for dedup window — not stable across Rust releases; use `FxHasher` |
-| `server.rs` | No input size limit on `am_ingest`, `am_buffer`, `am_salient` |
-| `feedback.rs` + `query.rs` | Duplicate centroid computation (R⁴ weighted sum + normalize-to-S³) |
-| `server.rs` | `am_feedback` and `am_batch_query` have no tests |
+| `feedback.rs` + `query.rs` | Duplicate centroid computation (R4 weighted sum + normalize-to-S3) |
 
 ### Low
 
 | Location | Issue |
 |---|---|
-| `quaternion.rs` | `angular_distance` uses `abs(dot)` — antipodal pairs collapse to distance 0. Semantically correct for SO(3) but inconsistent with SLERP; needs documentation |
-| `error.rs` | Missing `Io` variant — file I/O errors collapse into `InvalidData` |
-| `schema.rs` | Migration not version-gated — probes all columns on every startup |
-| `store.rs:78` | `pub fn conn()` exposes raw SQLite connection, bypassing store abstraction |
-| `compose.rs` | God module (2959 LOC, 1276 production). Extraction candidates: `scoring.rs`, `salient.rs`, `recency.rs` |
-| `main.rs` | ~340 lines of sync orchestration belong in `sync.rs` |
+| `error.rs` | Missing `Io` variant - file I/O errors collapse into `InvalidData` |
+| `schema.rs` | Migration not version-gated - probes all columns on every startup |
 | `main.rs` | No unit tests; large handlers only covered by integration tests |
-| `am-core` | 163 clippy::pedantic warnings (41 `#[must_use]`, 35 doc backticks, 29 `usize as f64` casts) |
-| `am-core` | No criterion benchmarks for O(n²) pairwise drift or O(n) centroid drift |
-| `main.rs` | ANSI escape codes unconditional in help strings — renders as garbage in CI/piped output |
+| `main.rs` | ANSI escape codes unconditional in help strings - renders as garbage in CI/piped output |
 | CLI | `ingest --dir` + positional file in same directory creates duplicate episodes |
+
+### Fixed since last review
+
+| Issue | Resolution |
+|---|---|
+| `partial_cmp().unwrap()` NaN panics | Replaced with `f64::total_cmp()` throughout `compose.rs` |
+| N+1 `load_system` (2101 queries) | Single 3-way JOIN in `store.rs` |
+| `format!()` SQL injection surface | All SQL now uses parameterized queries |
+| `drain_buffer` crash window | Atomic transaction with range-based DELETE |
+| Missing indexes | Added in schema v6/v7: `idx_ep_conscious`, `idx_occ_activation`, `idx_nbhd_episode_epoch`, `idx_occ_nbhd_activation` |
+| `activation_count += 1` wrapping | Uses `saturating_add` |
+| `token_count()` Vec allocation | Uses `.count()` iterator |
+| `DefaultHasher` instability | Replaced with `FxHasher` (rustc-hash) |
+| No input size limits | `check_input_size` (1MB cap) on all text-accepting endpoints |
+| `pub fn conn()` raw exposure | Removed |
+| `compose.rs` god module (2,959 LOC) | Extracted to `scoring.rs`, `recency.rs`, `salient.rs` (now 2,478 LOC) |
+| Sync orchestration in `main.rs` | Extracted to `sync_dispatch.rs` |
+| `angular_distance` undocumented | Doc comments explain SO(3) vs S3 tradeoff |
 
 ---
 
@@ -437,6 +450,9 @@ Issues identified in the March 2026 codebase review, ordered by priority.
 
 | Version | Highlights |
 |---|---|
+| 0.1.18 | Architecture alignment: rmcp replaced with custom JSON-RPC, AmStore trait, quality pass |
+| 0.1.17 | Incremental persistence, core math hardening, CLI/server fixes |
+| 0.1.16 | Scoring extraction, GC improvements, schema v6/v7 indexes |
 | 0.1.15 | Strip markdown from sync episode text; role headers |
 | 0.1.14 | Location-based config resolution for `.am.config.toml` |
 | 0.1.13 | `am init` command to generate default config |
