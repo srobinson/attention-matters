@@ -34,9 +34,9 @@ bench-baseline:
 bench-gate:
     ./scripts/bench-gate.sh
 
-# Homebrew LLVM paths (cargo-llvm-cov needs llvm-cov and llvm-profdata)
-export LLVM_COV := env("LLVM_COV", "/opt/homebrew/Cellar/llvm/22.1.0/bin/llvm-cov")
-export LLVM_PROFDATA := env("LLVM_PROFDATA", "/opt/homebrew/Cellar/llvm/22.1.0/bin/llvm-profdata")
+# cargo-llvm-cov needs llvm-cov and llvm-profdata on PATH.
+# Override via env vars if your LLVM install is not on PATH:
+#   LLVM_COV=/path/to/llvm-cov LLVM_PROFDATA=/path/to/llvm-profdata just coverage
 
 coverage:
     cargo llvm-cov nextest --workspace
