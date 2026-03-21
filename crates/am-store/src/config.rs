@@ -502,33 +502,18 @@ recency_weight = 3.0
 
     #[test]
     fn expand_tilde_fails_without_home() {
-        // Temporarily unset HOME/USERPROFILE to test error path.
-        // SAFETY: nextest runs each test in a separate process, so env
-        // manipulation does not affect other tests.
-        let saved_home = env::var("HOME").ok();
-        let saved_profile = env::var("USERPROFILE").ok();
-        unsafe {
-            env::remove_var("HOME");
-            env::remove_var("USERPROFILE");
-        }
+        temp_env::with_vars(
+            [("HOME", None::<&str>), ("USERPROFILE", None::<&str>)],
+            || {
+                let result = expand_tilde("~/foo/bar");
+                assert!(result.is_err());
+                assert!(result.unwrap_err().to_string().contains("home directory"));
 
-        let result = expand_tilde("~/foo/bar");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("home directory"));
-
-        // Non-tilde paths still work without HOME
-        let abs = expand_tilde("/absolute/path").unwrap();
-        assert_eq!(abs, PathBuf::from("/absolute/path"));
-
-        // Restore
-        unsafe {
-            if let Some(h) = saved_home {
-                env::set_var("HOME", h);
-            }
-            if let Some(p) = saved_profile {
-                env::set_var("USERPROFILE", p);
-            }
-        }
+                // Non-tilde paths still work without HOME
+                let abs = expand_tilde("/absolute/path").unwrap();
+                assert_eq!(abs, PathBuf::from("/absolute/path"));
+            },
+        );
     }
 
     #[test]
