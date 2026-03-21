@@ -1,3 +1,10 @@
+mod activation;
+mod core;
+mod gc;
+mod load;
+mod persist;
+mod query;
+
 use std::path::Path;
 
 use rusqlite::{Connection, params};
