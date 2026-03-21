@@ -1,5 +1,5 @@
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{env, fs};
 
 use am_core::{
     ActivationStats, AmStore, DAESystem, DaemonPhasor, Episode, Neighborhood, Quaternion,
@@ -11,15 +11,10 @@ use crate::error::{Result, StoreError};
 use crate::store::Store;
 
 /// Default base directory for all am storage.
-pub fn default_base_dir() -> PathBuf {
-    dirs_home().join(".attention-matters")
-}
-
-fn dirs_home() -> PathBuf {
-    env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("."))
+///
+/// Returns an error if the home directory cannot be determined.
+pub fn default_base_dir() -> crate::error::Result<PathBuf> {
+    Ok(crate::config::resolve_home_dir()?.join(".attention-matters"))
 }
 
 // ---------------------------------------------------------------------------

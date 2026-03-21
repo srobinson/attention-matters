@@ -396,17 +396,17 @@ fn main() -> Result<()> {
 // Advisory pidfile for observability
 // ---------------------------------------------------------------------------
 
-fn pidfile_path() -> PathBuf {
+fn pidfile_path() -> Option<PathBuf> {
     let base = std::env::var("AM_DATA_DIR")
         .ok()
         .map(PathBuf::from)
-        .unwrap_or_else(am_store::default_base_dir);
-    base.join("am-serve.pid")
+        .or_else(|| am_store::default_base_dir().ok())?;
+    Some(base.join("am-serve.pid"))
 }
 
 /// Check for an existing pidfile and log accordingly, then write our own.
 fn acquire_pidfile() -> Option<PathBuf> {
-    let path = pidfile_path();
+    let path = pidfile_path()?;
     if let Ok(content) = std::fs::read_to_string(&path)
         && let Ok(pid) = content.trim().parse::<u32>()
     {
@@ -1165,7 +1165,7 @@ fn cmd_forget(
 
 fn cmd_init(global: bool, force: bool) -> Result<()> {
     let dir = if global {
-        am_store::project::default_base_dir()
+        am_store::project::default_base_dir().context("cannot determine global config directory")?
     } else {
         std::env::current_dir().context("failed to get current directory")?
     };

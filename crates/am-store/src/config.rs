@@ -62,8 +62,10 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
+        let data_dir = crate::project::default_base_dir()
+            .unwrap_or_else(|_| PathBuf::from("~/.attention-matters"));
         Self {
-            data_dir: crate::project::default_base_dir(),
+            data_dir,
             gc_enabled: false,
             db_size_mb: DEFAULT_DB_SIZE_MB,
             sync_log_dir: None,
@@ -116,17 +118,28 @@ impl Config {
 /// The config file's `data_dir` field controls where the database lives.
 /// `AM_DATA_DIR` overrides `data_dir` from the file.
 pub fn load() -> crate::error::Result<Config> {
-    let mut cfg = Config::default();
+    // Build runtime defaults. If home is unresolvable, use an empty data_dir
+    // placeholder. File config or env vars may override it before validation.
+    let mut cfg = match runtime_defaults() {
+        Ok(defaults) => defaults,
+        Err(_) => Config {
+            data_dir: PathBuf::new(),
+            gc_enabled: false,
+            db_size_mb: DEFAULT_DB_SIZE_MB,
+            sync_log_dir: None,
+            retention: RetentionPolicy::default(),
+        },
+    };
 
     // Find config file: CWD first, then global fallback
     let config_path = find_config_file();
     if let Some(path) = &config_path {
-        apply_file_config(&mut cfg, path);
+        apply_file_config(&mut cfg, path)?;
     }
 
     // Env vars override everything
     if let Ok(dir) = env::var("AM_DATA_DIR") {
-        cfg.data_dir = expand_tilde(&dir);
+        cfg.data_dir = expand_tilde(&dir)?;
     }
     if let Ok(val) = env::var("AM_GC_ENABLED") {
         match val.parse::<bool>() {
@@ -147,11 +160,25 @@ pub fn load() -> crate::error::Result<Config> {
         }
     }
     if let Ok(val) = env::var("AM_SYNC_LOG_DIR") {
-        cfg.sync_log_dir = Some(expand_tilde(&val));
+        cfg.sync_log_dir = Some(expand_tilde(&val)?);
     }
 
     cfg.validate()?;
     Ok(cfg)
+}
+
+/// Runtime defaults with home-directory resolution.
+///
+/// Unlike `Config::default()`, this resolves `~/.attention-matters` via
+/// the live environment. Returns an error if home cannot be determined.
+fn runtime_defaults() -> crate::error::Result<Config> {
+    Ok(Config {
+        data_dir: crate::project::default_base_dir()?,
+        gc_enabled: false,
+        db_size_mb: DEFAULT_DB_SIZE_MB,
+        sync_log_dir: None,
+        retention: RetentionPolicy::default(),
+    })
 }
 
 /// Find the config file (first match wins):
@@ -169,27 +196,31 @@ fn find_config_file() -> Option<PathBuf> {
         }
     }
 
-    // Check AM_DATA_DIR
-    if let Ok(dir) = env::var("AM_DATA_DIR") {
-        let project = expand_tilde(&dir).join(CONFIG_NAME);
+    // Check AM_DATA_DIR (skip if tilde expansion fails)
+    if let Ok(dir) = env::var("AM_DATA_DIR")
+        && let Ok(expanded) = expand_tilde(&dir)
+    {
+        let project = expanded.join(CONFIG_NAME);
         if project.exists() {
             return Some(project);
         }
     }
 
-    // Fall back to global
-    let global = crate::project::default_base_dir().join(CONFIG_NAME);
-    if global.exists() {
-        return Some(global);
+    // Fall back to global (skip if home is unresolvable)
+    if let Ok(base) = crate::project::default_base_dir() {
+        let global = base.join(CONFIG_NAME);
+        if global.exists() {
+            return Some(global);
+        }
     }
 
     None
 }
 
-fn apply_file_config(cfg: &mut Config, path: &Path) {
+fn apply_file_config(cfg: &mut Config, path: &Path) -> crate::error::Result<()> {
     if let Some(file_cfg) = read_config_file(path) {
         if let Some(dir) = file_cfg.data_dir {
-            cfg.data_dir = expand_tilde(&dir);
+            cfg.data_dir = expand_tilde(&dir)?;
         }
         if let Some(gc) = file_cfg.gc_enabled {
             cfg.gc_enabled = gc;
@@ -198,7 +229,7 @@ fn apply_file_config(cfg: &mut Config, path: &Path) {
             cfg.db_size_mb = size;
         }
         if let Some(dir) = file_cfg.sync_log_dir {
-            cfg.sync_log_dir = Some(expand_tilde(&dir));
+            cfg.sync_log_dir = Some(expand_tilde(&dir)?);
         }
         if let Some(ret) = file_cfg.retention {
             if let Some(v) = ret.grace_epochs {
@@ -215,6 +246,7 @@ fn apply_file_config(cfg: &mut Config, path: &Path) {
             }
         }
     }
+    Ok(())
 }
 
 fn read_config_file(path: &Path) -> Option<FileConfig> {
@@ -229,13 +261,12 @@ fn read_config_file(path: &Path) -> Option<FileConfig> {
 }
 
 /// Generate a fully commented default config file.
+///
+/// Uses literal documented default paths rather than resolving the live
+/// environment. This ensures the template is always valid regardless of
+/// whether $HOME is set.
 pub fn generate_default_toml() -> String {
-    let defaults = Config::default();
-    let ret = &defaults.retention;
-    let data_dir = defaults
-        .data_dir
-        .to_string_lossy()
-        .replace(&std::env::var("HOME").unwrap_or_default(), "~");
+    let ret = RetentionPolicy::default();
 
     format!(
         r#"# attention-matters configuration
@@ -250,19 +281,19 @@ pub fn generate_default_toml() -> String {
 # Directory where the database and state files are stored.
 # This is how you point a project at a specific brain.
 # Override with AM_DATA_DIR env var.
-# data_dir = "{data_dir}"
+# data_dir = "~/.attention-matters"
 
 # Enable automatic garbage collection.
 # Override with AM_GC_ENABLED env var.
-# gc_enabled = {gc_enabled}
+# gc_enabled = false
 
 # Database size limit in MB for GC target sizing.
 # Override with AM_DB_SIZE_MB env var.
-# db_size_mb = {db_size_mb}
+# db_size_mb = {DEFAULT_DB_SIZE_MB}
 
 # Directory to write sync logs into. Disabled when unset.
 # Override with AM_SYNC_LOG_DIR env var.
-# sync_log_dir = "{data_dir}/sync-logs"
+# sync_log_dir = "~/.attention-matters/sync-logs"
 
 [retention]
 # Neighborhoods within this many epochs of the max are GC-exempt.
@@ -277,9 +308,6 @@ pub fn generate_default_toml() -> String {
 # Recency bonus weight in composite eviction scoring.
 # recency_weight = {recency_weight}
 "#,
-        data_dir = data_dir,
-        gc_enabled = defaults.gc_enabled,
-        db_size_mb = defaults.db_size_mb,
         grace_epochs = ret.grace_epochs,
         retention_days = ret.retention_days,
         min_neighborhoods = ret.min_neighborhoods,
@@ -287,14 +315,27 @@ pub fn generate_default_toml() -> String {
     )
 }
 
-fn expand_tilde(path: &str) -> PathBuf {
+/// Resolve the user's home directory.
+///
+/// Checks $HOME, then $USERPROFILE. Returns an error if neither is set.
+/// This is the single source of truth for home resolution in am-store.
+pub fn resolve_home_dir() -> crate::error::Result<PathBuf> {
+    env::var("HOME")
+        .or_else(|_| env::var("USERPROFILE"))
+        .map(PathBuf::from)
+        .map_err(|_| {
+            crate::error::StoreError::InvalidData(
+                "could not determine home directory: neither HOME nor USERPROFILE is set".into(),
+            )
+        })
+}
+
+fn expand_tilde(path: &str) -> crate::error::Result<PathBuf> {
     if let Some(rest) = path.strip_prefix("~/") {
-        let home = env::var("HOME")
-            .or_else(|_| env::var("USERPROFILE"))
-            .unwrap_or_else(|_| ".".to_string());
-        PathBuf::from(home).join(rest)
+        let home = resolve_home_dir()?;
+        Ok(home.join(rest))
     } else {
-        PathBuf::from(path)
+        Ok(PathBuf::from(path))
     }
 }
 
@@ -312,14 +353,14 @@ mod tests {
 
     #[test]
     fn expand_tilde_works() {
-        let expanded = expand_tilde("~/foo/bar");
+        let expanded = expand_tilde("~/foo/bar").unwrap();
         assert!(!expanded.to_string_lossy().starts_with("~/"));
         assert!(expanded.to_string_lossy().ends_with("foo/bar"));
     }
 
     #[test]
     fn expand_tilde_absolute_passthrough() {
-        let p = expand_tilde("/absolute/path");
+        let p = expand_tilde("/absolute/path").unwrap();
         assert_eq!(p, PathBuf::from("/absolute/path"));
     }
 
@@ -440,5 +481,51 @@ recency_weight = 3.0
             ..Config::default()
         };
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn resolve_home_dir_succeeds_with_home_set() {
+        // HOME is set in normal test environments
+        let home = resolve_home_dir().unwrap();
+        assert!(home.is_absolute());
+    }
+
+    #[test]
+    fn expand_tilde_fails_without_home() {
+        // Temporarily unset HOME/USERPROFILE to test error path.
+        // SAFETY: nextest runs each test in a separate process, so env
+        // manipulation does not affect other tests.
+        let saved_home = env::var("HOME").ok();
+        let saved_profile = env::var("USERPROFILE").ok();
+        unsafe {
+            env::remove_var("HOME");
+            env::remove_var("USERPROFILE");
+        }
+
+        let result = expand_tilde("~/foo/bar");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("home directory"));
+
+        // Non-tilde paths still work without HOME
+        let abs = expand_tilde("/absolute/path").unwrap();
+        assert_eq!(abs, PathBuf::from("/absolute/path"));
+
+        // Restore
+        unsafe {
+            if let Some(h) = saved_home {
+                env::set_var("HOME", h);
+            }
+            if let Some(p) = saved_profile {
+                env::set_var("USERPROFILE", p);
+            }
+        }
+    }
+
+    #[test]
+    fn generate_default_toml_is_deterministic() {
+        let toml = generate_default_toml();
+        assert!(toml.contains("~/.attention-matters"));
+        assert!(toml.contains("gc_enabled = false"));
+        assert!(toml.contains(&format!("db_size_mb = {DEFAULT_DB_SIZE_MB}")));
     }
 }

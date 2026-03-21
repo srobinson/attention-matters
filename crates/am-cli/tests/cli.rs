@@ -744,3 +744,73 @@ fn config_validation_malformed_toml_still_works() {
         .success()
         .stdout(predicate::str::contains("N:"));
 }
+
+// -- P3: Home resolution integration tests --
+
+#[test]
+fn no_home_with_absolute_data_dir_succeeds() {
+    let dir = TempDir::new().unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.env("AM_DATA_DIR", dir.path())
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("N:"));
+}
+
+#[test]
+fn no_home_with_tilde_data_dir_fails() {
+    let _dir = TempDir::new().unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.env("AM_DATA_DIR", "~/am-test")
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .args(["stats"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("home directory"));
+}
+
+#[test]
+fn no_home_with_absolute_file_config_succeeds() {
+    let dir = TempDir::new().unwrap();
+    // Write a config file with an absolute data_dir in the CWD of the test
+    let config_dir = dir.path().join("workdir");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::write(
+        config_dir.join(".am.config.toml"),
+        format!("data_dir = \"{}\"", dir.path().join("data").display()),
+    )
+    .unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.current_dir(&config_dir)
+        .env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .env_remove("AM_DATA_DIR")
+        .args(["stats"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("N:"));
+}
+
+#[test]
+fn no_home_init_global_fails() {
+    let _dir = TempDir::new().unwrap();
+    #[allow(deprecated)]
+    let mut cmd = Command::cargo_bin("am").unwrap();
+    cmd.env_remove("HOME")
+        .env_remove("USERPROFILE")
+        .env_remove("AM_DATA_DIR")
+        .args(["init", "--global"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("home directory")
+                .or(predicate::str::contains("global config")),
+        );
+}
