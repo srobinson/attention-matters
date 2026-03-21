@@ -22,7 +22,7 @@ pub const CURRENT_VERSION: &str = "0.7.2";
 // --- Wire format types ---
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WireExport {
+pub(crate) struct WireExport {
     pub version: String,
     pub timestamp: String,
     pub system: WireSystem,
@@ -33,13 +33,13 @@ pub struct WireExport {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct ConversationMessage {
+pub(crate) struct ConversationMessage {
     pub role: String,
     pub content: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WireSystem {
+pub(crate) struct WireSystem {
     pub episodes: Vec<WireEpisode>,
     #[serde(rename = "consciousEpisode")]
     pub conscious_episode: WireEpisode,
@@ -52,7 +52,7 @@ pub struct WireSystem {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WireEpisode {
+pub(crate) struct WireEpisode {
     pub name: String,
     #[serde(rename = "isConscious", default)]
     pub is_conscious: bool,
@@ -63,7 +63,7 @@ pub struct WireEpisode {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WireNeighborhood {
+pub(crate) struct WireNeighborhood {
     pub seed: [f64; 4],
     pub id: String,
     #[serde(rename = "sourceText", default)]
@@ -82,7 +82,7 @@ pub struct WireNeighborhood {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct WireOccurrence {
+pub(crate) struct WireOccurrence {
     pub word: String,
     pub position: [f64; 4],
     /// Phase angle - accepts both "phasor" and "theta" field names.

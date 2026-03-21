@@ -2,7 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use am_core::{
-    ActivationStats, AmStore, DAESystem, DaemonPhasor, Episode, Neighborhood, Quaternion,
+    activation_stats::ActivationStats, episode::Episode, neighborhood::Neighborhood,
+    phasor::DaemonPhasor, quaternion::Quaternion, store_trait::AmStore, system::DAESystem,
 };
 use uuid::Uuid;
 
@@ -36,13 +37,13 @@ pub(crate) fn run_gc(store: &Store, config: &Config) {
     );
 
     // Phase 1: evict occurrences with zero activation
-    match store.gc_pass(am_core::ACTIVATION_FLOOR, &config.retention) {
+    match store.gc_pass(am_core::constants::ACTIVATION_FLOOR, &config.retention) {
         Ok(result) => {
             tracing::info!(
                 "GC phase 1: evicted {} occurrences (activation <= {}), \
                  removed {} empty episodes. DB: {}MB -> {}MB",
                 result.evicted_occurrences,
-                am_core::ACTIVATION_FLOOR,
+                am_core::constants::ACTIVATION_FLOOR,
                 result.removed_episodes,
                 result.before_size / (1024 * 1024),
                 result.after_size / (1024 * 1024),
@@ -50,7 +51,7 @@ pub(crate) fn run_gc(store: &Store, config: &Config) {
 
             // Phase 2: if still over limit, aggressively evict coldest
             if result.after_size >= limit {
-                let target = (limit as f64 * am_core::DB_GC_TARGET_RATIO) as u64;
+                let target = (limit as f64 * am_core::constants::DB_GC_TARGET_RATIO) as u64;
                 match store.gc_to_target_size(target, &config.retention) {
                     Ok(r2) => {
                         tracing::info!(
@@ -264,8 +265,8 @@ impl BrainStore {
     /// row if needed.
     pub fn save_neighborhood(
         &self,
-        episode: &am_core::Episode,
-        neighborhood: &am_core::Neighborhood,
+        episode: &am_core::episode::Episode,
+        neighborhood: &am_core::neighborhood::Neighborhood,
     ) -> Result<()> {
         self.store.save_neighborhood(episode, neighborhood)
     }
@@ -283,7 +284,11 @@ impl BrainStore {
     /// Persist position and phasor updates for a batch of occurrences.
     pub fn save_occurrence_positions(
         &self,
-        batch: &[(uuid::Uuid, am_core::Quaternion, am_core::DaemonPhasor)],
+        batch: &[(
+            uuid::Uuid,
+            am_core::quaternion::Quaternion,
+            am_core::phasor::DaemonPhasor,
+        )],
     ) -> Result<()> {
         self.store.save_occurrence_positions(batch)
     }
@@ -404,7 +409,7 @@ impl AmStore for BrainStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use am_core::{Episode, Neighborhood};
+    use am_core::{episode::Episode, neighborhood::Neighborhood};
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 

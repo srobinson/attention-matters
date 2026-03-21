@@ -50,7 +50,7 @@ pub struct BatchQueryOutput {
 /// # Examples
 ///
 /// ```
-/// use am_core::{DAESystem, BatchQueryEngine, BatchQueryRequest, ingest_text};
+/// use am_core::{system::DAESystem, batch::{BatchQueryEngine, BatchQueryRequest}, tokenizer::ingest_text};
 /// use rand::SeedableRng;
 /// use rand::rngs::SmallRng;
 ///
@@ -172,11 +172,12 @@ impl BatchQueryEngine {
             .collect();
         let mut drifted = QueryEngine::drift_and_consolidate(system, &all_refs);
 
-        // Step 4: Compute interference once for the full set
-        let (_, word_groups) =
-            QueryEngine::compute_interference(system, &all_subconscious, &all_conscious);
-        let kuramoto_drifted = QueryEngine::apply_kuramoto_coupling(system, &word_groups);
-        drifted.extend(kuramoto_drifted);
+        // Step 4: Compute interference and Kuramoto coupling for the full set
+        drifted.extend(QueryEngine::couple_phases(
+            system,
+            &all_subconscious,
+            &all_conscious,
+        ));
 
         // Build aggregate manifest
         let manifest = QueryManifest {
@@ -204,8 +205,7 @@ impl BatchQueryEngine {
             let activated_count = sub_refs.len() + con_refs.len();
 
             // Build a per-query QueryResult for compose_context
-            let (interference, word_groups) =
-                QueryEngine::compute_interference(system, &sub_refs, &con_refs);
+            let (interference, _) = QueryEngine::compute_interference(system, &sub_refs, &con_refs);
 
             let query_result = QueryResult {
                 activation: crate::system::ActivationResult {
@@ -213,7 +213,6 @@ impl BatchQueryEngine {
                     conscious: con_refs,
                 },
                 interference,
-                word_groups,
                 query_token_count: query_tokens.len(),
                 manifest: QueryManifest::default(),
             };
@@ -227,14 +226,7 @@ impl BatchQueryEngine {
                 min_novel: 0,
             };
 
-            let context = compose_context_budgeted(
-                system,
-                &surface,
-                &query_result,
-                &query_result.interference,
-                &budget,
-                None,
-            );
+            let context = compose_context_budgeted(system, &surface, &query_result, &budget, None);
 
             results.push(BatchQueryResult {
                 query: req.query.clone(),
@@ -425,14 +417,7 @@ mod tests {
             min_subconscious: 1,
             min_novel: 0,
         };
-        let direct = compose_context_budgeted(
-            &mut sys2,
-            &surface,
-            &query_result,
-            &query_result.interference,
-            &budget,
-            None,
-        );
+        let direct = compose_context_budgeted(&mut sys2, &surface, &query_result, &budget, None);
 
         // Same number of included fragments (the drift/interference may differ
         // slightly because batch activates union, but structure should match)

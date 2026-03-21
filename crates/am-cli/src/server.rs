@@ -9,10 +9,21 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use am_core::{
-    AmStore, BatchQueryEngine, BatchQueryRequest, BudgetConfig, DAESystem, DaemonPhasor,
-    FeedbackSignal, Quaternion, QueryEngine, QueryManifest, RecallCategory, apply_feedback,
-    compose_context, compose_context_budgeted, compose_index, compute_surface, export_json,
-    extract_salient, import_json, ingest_text, mark_salient_typed, retrieve_by_ids,
+    batch::{BatchQueryEngine, BatchQueryRequest},
+    compose::{
+        BudgetConfig, RecallCategory, compose_context, compose_context_budgeted, compose_index,
+        retrieve_by_ids,
+    },
+    feedback::{FeedbackSignal, apply_feedback},
+    phasor::DaemonPhasor,
+    quaternion::Quaternion,
+    query::{QueryEngine, QueryManifest},
+    salient::{extract_salient, mark_salient_typed},
+    serde_compat::{export_json, import_json},
+    store_trait::AmStore,
+    surface::compute_surface,
+    system::DAESystem,
+    tokenizer::ingest_text,
 };
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -357,7 +368,6 @@ impl<S: AmStore> AmServer<S> {
                 system,
                 &surface,
                 &query_result,
-                &query_result.interference,
                 &budget,
                 Some(session_recalled),
             );
@@ -406,13 +416,7 @@ impl<S: AmStore> AmServer<S> {
             (json, ids)
         } else {
             // Default: fixed-size composition
-            let composed = compose_context(
-                system,
-                &surface,
-                &query_result,
-                &query_result.interference,
-                Some(session_recalled),
-            );
+            let composed = compose_context(system, &surface, &query_result, Some(session_recalled));
             let ids = composed.included_ids.clone();
             let recalled = &composed.recalled_ids;
             let json = serde_json::json!({
@@ -439,13 +443,7 @@ impl<S: AmStore> AmServer<S> {
         };
 
         // Compose compact index summary (top 10 entries, most recent first)
-        let index = compose_index(
-            system,
-            &surface,
-            &query_result,
-            &query_result.interference,
-            Some(session_recalled),
-        );
+        let index = compose_index(system, &surface, &query_result, Some(session_recalled));
         let mut sorted_entries = index.entries;
         sorted_entries.sort_by(|a, b| b.epoch.cmp(&a.epoch));
         let index_entries: Vec<serde_json::Value> = sorted_entries
@@ -496,13 +494,7 @@ impl<S: AmStore> AmServer<S> {
         let query_result = QueryEngine::process_query(system, &req.text);
         let surface = compute_surface(system, &query_result);
 
-        let index = compose_index(
-            system,
-            &surface,
-            &query_result,
-            &query_result.interference,
-            Some(session_recalled),
-        );
+        let index = compose_index(system, &surface, &query_result, Some(session_recalled));
 
         persist_manifest(store, system, &query_result.manifest, "query_index");
 
@@ -524,8 +516,8 @@ impl<S: AmStore> AmServer<S> {
 
         let result = serde_json::json!({
             "entries": entries_json,
-            "total_candidates": index.stats_snapshot.total_candidates,
-            "total_tokens_if_fetched": index.stats_snapshot.total_tokens_if_fetched,
+            "total_candidates": index.total_candidates(),
+            "total_tokens_if_fetched": index.total_tokens_if_fetched(),
             "stats": Self::stats_json(system),
         });
 
@@ -594,12 +586,11 @@ impl<S: AmStore> AmServer<S> {
             .copied()
             .collect();
         let mut drifted = QueryEngine::drift_and_consolidate(system, &all_refs);
-        let (_, word_groups) = QueryEngine::compute_interference(
+        drifted.extend(QueryEngine::couple_phases(
             system,
             &activation.subconscious,
             &activation.conscious,
-        );
-        drifted.extend(QueryEngine::apply_kuramoto_coupling(system, &word_groups));
+        ));
 
         let manifest = QueryManifest {
             drifted,
@@ -985,7 +976,7 @@ impl<S: AmStore> AmServer<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use am_store::BrainStore;
+    use am_store::project::BrainStore;
 
     fn make_server() -> AmServer<BrainStore> {
         let store = BrainStore::open_in_memory().unwrap();

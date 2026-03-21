@@ -25,14 +25,14 @@ pub struct QueryManifest {
 }
 
 /// Single interference result between a subconscious and conscious occurrence.
-pub struct InterferenceResult {
+pub(crate) struct InterferenceResult {
     pub sub_ref: OccurrenceRef,
     pub con_ref: OccurrenceRef,
     pub interference: f64,
 }
 
 /// Word group for Kuramoto coupling - a word present in both manifolds.
-pub struct WordGroup {
+pub(crate) struct WordGroup {
     pub word: String,
     pub sub_refs: Vec<OccurrenceRef>,
     pub con_refs: Vec<OccurrenceRef>,
@@ -41,8 +41,7 @@ pub struct WordGroup {
 /// Full result from `process_query`.
 pub struct QueryResult {
     pub activation: ActivationResult,
-    pub interference: Vec<InterferenceResult>,
-    pub word_groups: Vec<WordGroup>,
+    pub(crate) interference: Vec<InterferenceResult>,
     /// Number of unique tokens in the original query (for density scoring).
     pub query_token_count: usize,
     /// Manifest of all mutations applied to the system during this query.
@@ -90,7 +89,7 @@ impl QueryEngine {
     /// # Examples
     ///
     /// ```
-    /// use am_core::{DAESystem, QueryEngine, ingest_text};
+    /// use am_core::{system::DAESystem, query::QueryEngine, tokenizer::ingest_text};
     /// use rand::SeedableRng;
     /// use rand::rngs::SmallRng;
     ///
@@ -152,13 +151,11 @@ impl QueryEngine {
         let (interference, word_groups) =
             Self::compute_interference(system, &activation.subconscious, &activation.conscious);
 
-        let coupled = Self::apply_kuramoto_coupling(system, &word_groups);
-        drifted.extend(coupled);
+        drifted.extend(Self::apply_kuramoto_coupling(system, &word_groups));
 
         QueryResult {
             activation,
             interference,
-            word_groups,
             query_token_count,
             manifest: QueryManifest {
                 drifted,
@@ -351,10 +348,24 @@ impl QueryEngine {
         drifted_ids
     }
 
+    /// Compute interference and apply Kuramoto phase coupling in one step.
+    ///
+    /// Combines `compute_interference` and `apply_kuramoto_coupling` into a
+    /// single public method, keeping the intermediate types crate-internal.
+    /// Returns UUIDs of occurrences whose phasor was modified by coupling.
+    pub fn couple_phases(
+        system: &mut DAESystem,
+        subconscious: &[OccurrenceRef],
+        conscious: &[OccurrenceRef],
+    ) -> Vec<Uuid> {
+        let (_, word_groups) = Self::compute_interference(system, subconscious, conscious);
+        Self::apply_kuramoto_coupling(system, &word_groups)
+    }
+
     /// Compute interference between subconscious and conscious occurrences.
     /// Returns interference results and word groups for Kuramoto.
     #[must_use]
-    pub fn compute_interference(
+    pub(crate) fn compute_interference(
         system: &DAESystem,
         subconscious: &[OccurrenceRef],
         conscious: &[OccurrenceRef],
@@ -420,7 +431,10 @@ impl QueryEngine {
     /// Apply Kuramoto phase coupling across manifolds.
     ///
     /// Returns UUIDs of occurrences whose phasor was modified.
-    pub fn apply_kuramoto_coupling(system: &mut DAESystem, word_groups: &[WordGroup]) -> Vec<Uuid> {
+    pub(crate) fn apply_kuramoto_coupling(
+        system: &mut DAESystem,
+        word_groups: &[WordGroup],
+    ) -> Vec<Uuid> {
         if word_groups.is_empty() {
             return Vec::new();
         }

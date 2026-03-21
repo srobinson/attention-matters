@@ -2,7 +2,7 @@
 
 use std::f64::consts::{PI, TAU};
 
-use am_core::{DaemonPhasor, Quaternion};
+use am_core::{phasor::DaemonPhasor, quaternion::Quaternion};
 use proptest::prelude::*;
 
 const EPSILON: f64 = 1e-10;

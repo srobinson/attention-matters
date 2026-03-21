@@ -1,6 +1,6 @@
 use uuid::Uuid;
 
-use am_core::{DaemonPhasor, Occurrence, Quaternion};
+use am_core::{occurrence::Occurrence, phasor::DaemonPhasor, quaternion::Quaternion};
 
 use crate::error::Result;
 

@@ -80,7 +80,7 @@ const DEMOTE_DECAY: u32 = 2;
 /// # Examples
 ///
 /// ```
-/// use am_core::{DAESystem, QueryEngine, FeedbackSignal, apply_feedback, ingest_text};
+/// use am_core::{system::DAESystem, query::QueryEngine, feedback::{FeedbackSignal, apply_feedback}, tokenizer::ingest_text};
 /// use rand::SeedableRng;
 /// use rand::rngs::SmallRng;
 ///

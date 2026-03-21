@@ -14,7 +14,7 @@ use crate::constants::{EPSILON, SLERP_THRESHOLD};
 /// # Examples
 ///
 /// ```
-/// use am_core::Quaternion;
+/// use am_core::quaternion::Quaternion;
 /// use rand::SeedableRng;
 /// use rand::rngs::SmallRng;
 ///
@@ -146,7 +146,7 @@ impl Quaternion {
     /// # Examples
     ///
     /// ```
-    /// use am_core::Quaternion;
+    /// use am_core::quaternion::Quaternion;
     ///
     /// let q1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
     /// let q2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);
@@ -167,7 +167,7 @@ impl Quaternion {
     /// # Examples
     ///
     /// ```
-    /// use am_core::Quaternion;
+    /// use am_core::quaternion::Quaternion;
     ///
     /// let q1 = Quaternion::new(1.0, 0.0, 0.0, 0.0);
     /// let q2 = Quaternion::new(0.0, 1.0, 0.0, 0.0);

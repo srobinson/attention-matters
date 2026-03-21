@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use am_core::{export_json, import_json};
+use am_core::serde_compat::{export_json, import_json};
 
 use crate::error::{Result, StoreError};
 use crate::store::Store;
@@ -43,7 +43,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use am_core::{DAESystem, Episode, Neighborhood};
+    use am_core::{episode::Episode, neighborhood::Neighborhood, system::DAESystem};
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 

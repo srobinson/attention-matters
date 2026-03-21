@@ -1,6 +1,9 @@
 use uuid::Uuid;
 
-use crate::{ActivationStats, DAESystem, DaemonPhasor, Episode, Neighborhood, Quaternion};
+use crate::{
+    activation_stats::ActivationStats, episode::Episode, neighborhood::Neighborhood,
+    phasor::DaemonPhasor, quaternion::Quaternion, system::DAESystem,
+};
 
 /// Hexagonal port for DAE persistence.
 ///

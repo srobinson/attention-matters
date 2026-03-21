@@ -1,18 +1,16 @@
 mod activation;
 mod core;
 mod forget;
-mod gc;
+pub mod gc;
 mod load;
 mod persist;
 mod query;
-
-pub use gc::GcResult;
 
 use rusqlite::Connection;
 use uuid::Uuid;
 
 #[cfg(test)]
-use am_core::{DaemonPhasor, Quaternion};
+use am_core::{phasor::DaemonPhasor, quaternion::Quaternion};
 
 use crate::error::{Result, StoreError};
 
@@ -64,7 +62,7 @@ pub(crate) fn parse_uuid(s: &str) -> Result<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use am_core::{DAESystem, Episode, Neighborhood};
+    use am_core::{episode::Episode, neighborhood::Neighborhood, system::DAESystem};
     use rand::SeedableRng;
     use rand::rngs::SmallRng;
 

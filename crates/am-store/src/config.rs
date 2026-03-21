@@ -42,10 +42,10 @@ pub struct RetentionPolicy {
 impl Default for RetentionPolicy {
     fn default() -> Self {
         Self {
-            grace_epochs: am_core::DEFAULT_GRACE_EPOCHS,
-            retention_days: am_core::DEFAULT_RETENTION_DAYS,
-            min_neighborhoods: am_core::DEFAULT_MIN_NEIGHBORHOODS,
-            recency_weight: am_core::DEFAULT_RECENCY_WEIGHT,
+            grace_epochs: am_core::constants::DEFAULT_GRACE_EPOCHS,
+            retention_days: am_core::constants::DEFAULT_RETENTION_DAYS,
+            min_neighborhoods: am_core::constants::DEFAULT_MIN_NEIGHBORHOODS,
+            recency_weight: am_core::constants::DEFAULT_RECENCY_WEIGHT,
         }
     }
 }
@@ -428,10 +428,19 @@ recency_weight = 3.0
     #[test]
     fn retention_defaults() {
         let policy = RetentionPolicy::default();
-        assert_eq!(policy.grace_epochs, am_core::DEFAULT_GRACE_EPOCHS);
-        assert_eq!(policy.retention_days, am_core::DEFAULT_RETENTION_DAYS);
-        assert_eq!(policy.min_neighborhoods, am_core::DEFAULT_MIN_NEIGHBORHOODS);
-        assert!((policy.recency_weight - am_core::DEFAULT_RECENCY_WEIGHT).abs() < 1e-10);
+        assert_eq!(
+            policy.grace_epochs,
+            am_core::constants::DEFAULT_GRACE_EPOCHS
+        );
+        assert_eq!(
+            policy.retention_days,
+            am_core::constants::DEFAULT_RETENTION_DAYS
+        );
+        assert_eq!(
+            policy.min_neighborhoods,
+            am_core::constants::DEFAULT_MIN_NEIGHBORHOODS
+        );
+        assert!((policy.recency_weight - am_core::constants::DEFAULT_RECENCY_WEIGHT).abs() < 1e-10);
     }
 
     #[test]

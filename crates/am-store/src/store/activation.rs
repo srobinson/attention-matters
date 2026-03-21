@@ -1,7 +1,7 @@
 use rusqlite::params;
 use uuid::Uuid;
 
-use am_core::ActivationStats;
+use am_core::activation_stats::ActivationStats;
 
 use crate::error::{Result, StoreError};
 
