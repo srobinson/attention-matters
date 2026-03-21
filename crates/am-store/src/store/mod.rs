@@ -788,6 +788,203 @@ mod tests {
         assert!(second.is_empty(), "second drain should return empty");
     }
 
+    // --- Tests for ALP-1645: 7 untested store methods ---
+
+    #[test]
+    fn test_open_file_based() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // First open: creates DB and schema
+        {
+            let store = Store::open(&db_path).unwrap();
+            let sys = make_system();
+            store.save_system(&sys).unwrap();
+        }
+        // File should exist
+        assert!(db_path.exists(), "DB file should be created on disk");
+
+        // Re-open: reads back saved data
+        {
+            let store = Store::open(&db_path).unwrap();
+            let loaded = store.load_system().unwrap();
+            assert_eq!(loaded.agent_name, "test-agent");
+            assert_eq!(loaded.episodes.len(), 1);
+            assert_eq!(loaded.episodes[0].neighborhoods[0].occurrences.len(), 3);
+        }
+    }
+
+    #[test]
+    fn test_checkpoint_truncate() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        // checkpoint_truncate should succeed without error
+        store.checkpoint_truncate().unwrap();
+
+        // Data should still be intact after checkpoint
+        let loaded = store.load_system().unwrap();
+        assert_eq!(loaded.agent_name, "test-agent");
+        assert_eq!(loaded.episodes.len(), 1);
+    }
+
+    #[test]
+    fn test_save_episode_incremental() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        // Verify baseline: 1 subconscious episode
+        let loaded = store.load_system().unwrap();
+        assert_eq!(loaded.episodes.len(), 1);
+
+        // Incrementally add a second episode
+        let mut rng = rng();
+        let mut ep2 = Episode::new("episode-2");
+        let tokens = to_tokens(&["extra", "data"]);
+        let n = Neighborhood::from_tokens(&tokens, None, "extra data", &mut rng);
+        ep2.add_neighborhood(n);
+        store.save_episode(&ep2).unwrap();
+
+        // Reload and verify both episodes present
+        let reloaded = store.load_system().unwrap();
+        assert_eq!(reloaded.episodes.len(), 2);
+        let names: Vec<&str> = reloaded.episodes.iter().map(|e| e.name.as_str()).collect();
+        assert!(names.contains(&"episode-1"));
+        assert!(names.contains(&"episode-2"));
+    }
+
+    #[test]
+    fn test_save_neighborhood_incremental() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        // Baseline: conscious episode has 1 neighborhood
+        let loaded = store.load_system().unwrap();
+        let conscious_occs_before: usize = loaded
+            .conscious_episode
+            .neighborhoods
+            .iter()
+            .map(|n| n.occurrences.len())
+            .sum();
+        assert!(conscious_occs_before > 0);
+
+        // Add a new neighborhood to the conscious episode
+        let mut rng = rng();
+        let tokens = to_tokens(&["new", "insight"]);
+        let nbhd = Neighborhood::from_tokens(&tokens, None, "new insight", &mut rng);
+        store
+            .save_neighborhood(&loaded.conscious_episode, &nbhd)
+            .unwrap();
+
+        // Reload and verify occurrence count grew
+        let reloaded = store.load_system().unwrap();
+        let conscious_occs_after: usize = reloaded
+            .conscious_episode
+            .neighborhoods
+            .iter()
+            .map(|n| n.occurrences.len())
+            .sum();
+        assert!(
+            conscious_occs_after > conscious_occs_before,
+            "occurrence count should grow: {conscious_occs_before} -> {conscious_occs_after}"
+        );
+        assert_eq!(reloaded.conscious_episode.neighborhoods.len(), 2);
+    }
+
+    #[test]
+    fn test_mark_superseded() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system();
+        store.save_system(&sys).unwrap();
+
+        let old_id = sys.episodes[0].neighborhoods[0].id;
+        let new_id = Uuid::new_v4();
+
+        // Before: superseded_by is None
+        let loaded = store.load_system().unwrap();
+        assert!(loaded.episodes[0].neighborhoods[0].superseded_by.is_none());
+
+        store.mark_superseded(old_id, new_id).unwrap();
+
+        // After: superseded_by points to new_id
+        let reloaded = store.load_system().unwrap();
+        assert_eq!(
+            reloaded.episodes[0].neighborhoods[0].superseded_by,
+            Some(new_id)
+        );
+    }
+
+    #[test]
+    fn test_mark_superseded_not_found() {
+        let store = Store::open_in_memory().unwrap();
+        let result = store.mark_superseded(Uuid::new_v4(), Uuid::new_v4());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_gc_eligible_count() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system_with_activations();
+        store.save_system(&sys).unwrap();
+
+        // Floor 0: only activation_count == 0 are eligible (3 cold occurrences)
+        let count = store.gc_eligible_count(0).unwrap();
+        assert_eq!(count, 3, "3 cold occurrences with activation_count=0");
+
+        // Floor 4: cold (0) + warm are still <= 4? No, warm has activation=5
+        // So only the 3 cold are eligible at floor=4
+        let count4 = store.gc_eligible_count(4).unwrap();
+        assert_eq!(count4, 3, "warm (activation=5) not eligible at floor=4");
+
+        // Floor 5: all subconscious eligible (3 cold + 2 warm with activation=5)
+        let count5 = store.gc_eligible_count(5).unwrap();
+        assert_eq!(
+            count5, 5,
+            "all subconscious occurrences eligible at floor=5"
+        );
+
+        // Verify this is a dry run: data unchanged
+        let loaded = store.load_system().unwrap();
+        let total: usize = loaded
+            .episodes
+            .iter()
+            .map(|e| {
+                e.neighborhoods
+                    .iter()
+                    .map(|n| n.occurrences.len())
+                    .sum::<usize>()
+            })
+            .sum();
+        assert_eq!(
+            total, 5,
+            "no occurrences should be mutated by gc_eligible_count"
+        );
+    }
+
+    #[test]
+    fn test_gc_to_target_size() {
+        let store = Store::open_in_memory().unwrap();
+        let sys = make_system_with_activations();
+        store.save_system(&sys).unwrap();
+
+        // Set target to 0 bytes, forcing maximum eviction
+        let result = store.gc_to_target_size(0, &no_retention()).unwrap();
+        assert!(
+            result.evicted_occurrences > 0,
+            "should evict some occurrences"
+        );
+
+        // Conscious memory must survive
+        let loaded = store.load_system().unwrap();
+        assert!(
+            !loaded.conscious_episode.neighborhoods.is_empty(),
+            "conscious should survive aggressive GC"
+        );
+    }
+
     /// Regression test for ALP-1239: drain_buffer atomicity.
     ///
     /// The pre-fix implementation performed SELECT then DELETE without a
