@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.19](https://github.com/srobinson/attention-matters/compare/v0.1.18...v0.1.19) (2026-03-21)
+
+
+### Bug Fixes
+
+* **am-store:** fail-closed config validation and safe path resolution ([#33](https://github.com/srobinson/attention-matters/issues/33)) ([e60713d](https://github.com/srobinson/attention-matters/commit/e60713d898f8c0e1d274d0ea5001cbc5e1034f23))
+
 ## [0.1.18](https://github.com/srobinson/attention-matters/compare/v0.1.17...v0.1.18) (2026-03-18)
 
 
