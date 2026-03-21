@@ -8,6 +8,8 @@
 *.swp
 *~
 /.nancy
+/coverage
 /target
+lcov.info
 npm/*/scripts/am
 
