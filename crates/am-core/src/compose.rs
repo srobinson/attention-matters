@@ -600,6 +600,7 @@ pub struct IndexResult {
 }
 
 /// Snapshot of manifold statistics for the index response.
+#[doc(hidden)]
 pub struct IndexStats {
     pub total_candidates: usize,
     pub total_tokens_if_fetched: usize,

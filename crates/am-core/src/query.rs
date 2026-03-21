@@ -25,6 +25,7 @@ pub struct QueryManifest {
 }
 
 /// Single interference result between a subconscious and conscious occurrence.
+#[doc(hidden)]
 pub struct InterferenceResult {
     pub sub_ref: OccurrenceRef,
     pub con_ref: OccurrenceRef,
@@ -32,6 +33,7 @@ pub struct InterferenceResult {
 }
 
 /// Word group for Kuramoto coupling - a word present in both manifolds.
+#[doc(hidden)]
 pub struct WordGroup {
     pub word: String,
     pub sub_refs: Vec<OccurrenceRef>,
