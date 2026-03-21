@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0](https://github.com/srobinson/attention-matters/compare/v0.1.19...v0.2.0) (2026-03-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* **am-core:** Public API of am-core and am-store has changed. All symbols are now accessed via their defining module rather than crate root re-exports.
+
+### Refactoring
+
+* **am-core:** resolve fmm shadow warnings via explicit API migration ([#36](https://github.com/srobinson/attention-matters/issues/36)) ([a978c82](https://github.com/srobinson/attention-matters/commit/a978c82f5fdaaf0cba7f55fd4245ec20e7aea1db))
+
 ## [0.1.19](https://github.com/srobinson/attention-matters/compare/v0.1.18...v0.1.19) (2026-03-21)
 
 
