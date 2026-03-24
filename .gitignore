@@ -1,15 +1,15 @@
 .claude/
 .DS_Store
 .fmm.db
-.fmm.db-shm
-.fmm.db-wal
 *.fmm
 *.swo
 *.swp
 *~
 /.nancy
-/coverage
 /target
-lcov.info
 npm/*/scripts/am
 
+# Chat frontend
+chat/node_modules/
+chat/.next/
+chat/.env.local

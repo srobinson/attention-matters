@@ -1,7 +1,9 @@
 mod colors;
 #[path = "generated_help.rs"]
 mod generated_help;
+mod http_server;
 mod jsonrpc;
+mod llm_proxy;
 mod server;
 mod sync;
 mod sync_dispatch;
@@ -47,7 +49,11 @@ enum Commands {
         long_about = generated_help::SERVE_LONG_ABOUT,
         after_help = generated_help::SERVE_AFTER_HELP,
     )]
-    Serve,
+    Serve {
+        /// Start an HTTP/SSE server on this port (e.g. 3001)
+        #[arg(long)]
+        http: Option<u16>,
+    },
 
     #[command(
         about = generated_help::QUERY_ABOUT,
@@ -238,7 +244,7 @@ fn main() -> Result<()> {
     init_tracing(cli.verbose);
 
     match &cli.command {
-        Commands::Serve => cmd_serve(&cli),
+        Commands::Serve { http } => cmd_serve(&cli, *http),
         Commands::Query { text } => cmd_query(&cli, text),
         Commands::Ingest { files, dir } => cmd_ingest(&cli, files, dir.as_deref()),
         Commands::Stats => cmd_stats(&cli),
@@ -332,20 +338,50 @@ fn is_process_alive(_pid: u32) -> bool {
     false // conservative: assume dead on non-unix
 }
 
-fn cmd_serve(cli: &Cli) -> Result<()> {
+fn cmd_serve(cli: &Cli, http_port: Option<u16>) -> Result<()> {
     let store = open_store(cli)?;
     tracing::info!("starting MCP server");
 
     let pidfile = acquire_pidfile();
 
-    let server = server::AmServer::new(store).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let server =
+        std::sync::Arc::new(server::AmServer::new(store).map_err(|e| anyhow::anyhow!("{e}"))?);
 
     // Install signal handlers that close stdin to unblock the stdio loop.
-    // Without this, SIGTERM would kill the process before cleanup runs.
     install_signal_handlers();
+
+    // If --http is requested, spin up a tokio runtime for the HTTP server
+    // alongside the sync JSON-RPC stdio loop.
+    let _http_guard = if let Some(port) = http_port {
+        let server_clone = std::sync::Arc::clone(&server);
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let cancel_clone = cancel.clone();
+
+        let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
+        let listener = rt.block_on(http_server::bind_http(port))?;
+
+        let handle = std::thread::spawn(move || {
+            rt.block_on(async {
+                if let Err(e) = http_server::serve_http(listener, server_clone, cancel_clone).await
+                {
+                    tracing::error!("HTTP server error: {e}");
+                }
+            });
+        });
+
+        Some((handle, cancel))
+    } else {
+        None
+    };
 
     // Run the JSON-RPC stdio loop. Blocks until stdin closes or I/O error.
     let result = jsonrpc::run_stdio_loop(|name, args| server.dispatch_tool(name, args));
+
+    // Signal HTTP server to shut down
+    if let Some((_handle, cancel)) = _http_guard {
+        cancel.cancel();
+        // The thread will finish once the HTTP server shuts down
+    }
 
     // Clean shutdown: WAL checkpoint + pidfile cleanup
     server.checkpoint_wal();
