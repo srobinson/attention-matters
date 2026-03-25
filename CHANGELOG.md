@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/srobinson/attention-matters/compare/v0.2.1...v0.2.2) (2026-03-25)
+
+
+### Bug Fixes
+
+* **ci:** switch reqwest to rustls-tls for cross-compilation ([#44](https://github.com/srobinson/attention-matters/issues/44)) ([a7f7082](https://github.com/srobinson/attention-matters/commit/a7f708243dc741abb532d209cb21757d6061c34c))
+
 ## [0.2.1](https://github.com/srobinson/attention-matters/compare/v0.2.0...v0.2.1) (2026-03-25)
 
 
