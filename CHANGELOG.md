@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/srobinson/attention-matters/compare/v0.2.0...v0.2.1) (2026-03-25)
+
+
+### Features
+
+* **chat:** add AM Chat frontend with memory explorer and LLM proxy [ALP-1127] ([#40](https://github.com/srobinson/attention-matters/issues/40)) ([1ba4dfc](https://github.com/srobinson/attention-matters/commit/1ba4dfcd953df31f03b00b932eb328f7329e55aa))
+
 ## [0.2.0](https://github.com/srobinson/attention-matters/compare/v0.1.19...v0.2.0) (2026-03-21)
 
 
