@@ -1,4 +1,5 @@
 mod activation;
+mod episodes;
 mod ingestion;
 mod query;
 mod system;
@@ -204,6 +205,8 @@ impl<S: AmStore> AmServer<S> {
             "am_import" => self.am_import(args),
             "am_feedback" => self.am_feedback(args),
             "am_batch_query" => self.am_batch_query(args),
+            "am_episodes" => self.am_episodes(),
+            "am_episode_neighborhoods" => self.am_episode_neighborhoods(args),
             _ => Err(format!("unknown tool: {name}")),
         }
     }

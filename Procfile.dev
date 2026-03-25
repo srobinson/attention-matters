@@ -1,0 +1,2 @@
+am: cargo run -p am-cli -- serve --http 3001
+web: cd chat && npm run dev

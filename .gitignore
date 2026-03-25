@@ -8,8 +8,10 @@
 *.swp
 *~
 /.nancy
-/coverage
 /target
-lcov.info
 npm/*/scripts/am
 
+# Chat frontend
+chat/node_modules/
+chat/.next/
+chat/.env.local
